@@ -17,6 +17,7 @@
 | 使用来源与研究版本保管 | [版本保管与合成CLI](docs/architecture/versioned-store.md) · [公开records分支绑定](docs/architecture/github-store.md#topology) |
 | 恢复已保存的Quick/Full及其来源 | [只读研究接续与分页](docs/research/continuation.md) |
 | 准备研究方法、逐题记录并提交成果修订 | [研究工作入口与权限边界](docs/research/workflow.md) |
+| 通过已认证宿主保存研究、读取与对账 | [显式研究运行通路](docs/research/runtime.md) |
 | 看完整 CI、验证继承和自举 | [CI 合同](docs/engineering/ci-contract.md) · [实现与运行说明](docs/engineering/ci-implementation.md) |
 | 暂停、接管、换对话 | [交接格式与恢复步骤](docs/engineering/handoff.md) |
 

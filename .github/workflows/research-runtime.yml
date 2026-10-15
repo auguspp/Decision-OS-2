@@ -1,0 +1,82 @@
+name: decision-os-research-runtime
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Explicit public research I/O; never execute AI or a source URL'
+        type: choice
+        options: [prepare, resume, read-source, put-source, checkpoint, reconcile-source, reconcile-checkpoint]
+        default: prepare
+        required: true
+      payload:
+        description: 'Public-authorized UTF-8 JSON only, at most 60 KiB; no tokens or private material'
+        type: string
+        required: true
+      code_sha:
+        description: 'Exact main SHA inspected by the caller; abort if main changed before dispatch'
+        type: string
+        required: true
+      submission_id:
+        description: 'Stable original intent for saves or reconciliation; empty for reads'
+        type: string
+        default: ''
+      expected_head:
+        description: 'Exact records SHA read before a new save; retained on original-input reconciliation'
+        type: string
+        default: ''
+permissions: {}
+jobs:
+  read:
+    if: github.ref == 'refs/heads/main' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Read or reconcile without write permission
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_RESEARCH_MODE: read
+        run: python -m decision_kernel.interfaces.research_runtime --out "$RUNNER_TEMP/dos2-research"
+      - name: Preserve original input and exact result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-research-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-research/
+          if-no-files-found: error
+          retention-days: 30
+  write:
+    if: github.ref == 'refs/heads/main' && (inputs.operation == 'put-source' || inputs.operation == 'checkpoint')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Save supplied public material with native conditional commit and readback
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_RESEARCH_MODE: write
+        run: python -m decision_kernel.interfaces.research_runtime --out "$RUNNER_TEMP/dos2-research"
+      - name: Preserve original intent and confirmed or unknown result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-research-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-research/
+          if-no-files-found: error
+          retention-days: 30

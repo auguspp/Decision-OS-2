@@ -1,2 +1,0 @@
-tests/contracts/test_ci_evidence.py
-tests/contracts/test_ci_routing.py

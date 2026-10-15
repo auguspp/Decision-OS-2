@@ -38,7 +38,11 @@ def test_large_complete_workpaper_is_saved_read_and_resumed_without_truncation(h
     assert progress.challenges[0].argument == "合成竞争解释"
     assert row["source_page"]["items"][0]["view"]["data"] == src["text"]
     resumed = packed_call(host, tmp_path / "prepare", "prepare", {"case_id": "example"})["result"]
-    assert resumed["request"]["questions"] == questions and len(resumed["continuation"]["actions"]) == 8
+    assert encoded(resumed["request"]["questions"]) == encoded(questions)
+    actions = resumed["continuation"]["actions"]
+    assert len(actions) == 8 and {a["question_id"] for a in actions} == {q["question_id"] for q in questions}
+    assert all(a["action"] == "analyse-available-evidence" and a["next_action"] == "继续原分析" for a in actions)
+    assert encoded(resumed["continuation"]["unresolved_challenges"]) == encoded(payload["progress"]["challenges"])
     assert saved["payload_sha256"] == digest(encoded(payload))
     assert host.writes == 2
 
@@ -70,7 +74,7 @@ def test_lost_receipt_recovers_original_large_payload_without_new_write(host, tm
     with pytest.raises(UnknownWrite):
         packed_call(host, tmp_path / "lost", operation, payload, "original", original_head)
     native = json.loads((tmp_path / "lost/inputs.json").read_text())
-    assert decode_payload(native["payload"]) == payload
+    assert encoded(decode_payload(native["payload"])) == encoded(payload)
     published = host.git.head()
     host.after_write = None
     invoke(host, tmp_path / "later", "put-source", source(source_id="later"), "later")

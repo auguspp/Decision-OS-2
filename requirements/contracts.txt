@@ -1,0 +1,8 @@
+# Python 3.12 CI environment. Install with uv pip sync, not an unbounded resolve.
+# Shared versions are identical in dev.txt; application runtime has no dependency.
+setuptools==82.0.1
+packaging==25.0
+pytest==9.1.1
+iniconfig==2.3.0
+pluggy==1.6.0
+Pygments==2.20.0

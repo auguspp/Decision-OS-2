@@ -1,0 +1,29 @@
+name: CI Python environment
+description: Exact Python, isolated version-locked dependencies, no persistent cache.
+inputs:
+  profile:
+    required: true
+    description: contracts or dev
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12.15'
+    - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      with:
+        version: '0.12.17'
+        enable-cache: false
+    - name: Install the declared environment
+      shell: bash
+      env:
+        CI_PROFILE: ${{ inputs.profile }}
+        UV_NO_CACHE: '1'
+      run: |
+        set -euo pipefail
+        case "$CI_PROFILE" in contracts|dev) ;; *) exit 2 ;; esac
+        uv venv --python "$pythonLocation/bin/python" .venv
+        uv pip sync --python .venv/bin/python "requirements/$CI_PROFILE.txt"
+        uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e .
+        uv pip check --python .venv/bin/python
+        printf '%s\n' "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"

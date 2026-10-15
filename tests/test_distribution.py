@@ -84,3 +84,34 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     assert last["next_cursor"] is None
     assert command("resume-research", "--ref", str(ref_file))["research"]["reference"] == revision
     assert command("current", "--case-id", "sample")["reference"] == newest
+
+    # Method/workpaper consumer in the SAME cold wheel, outside the checkout.
+    request_file = outside / "work-request.json"
+    initial_request = {"case_id": "work", "kind": "full", "mandate": "合成直接Full，不是投资任务",
+                       "questions": [{"question_id": "q1", "text": "如何区分解释"}]}
+    request_file.write_text(json.dumps(initial_request, ensure_ascii=False), encoding="utf-8")
+    prepared = command("prepare-research", "--request", str(request_file))
+    assert prepared["method"]["kind"] == "full" and prepared["method"]["sha256"]
+    assert prepared["previous_context"] is None and prepared["persistence"] == "not-written"
+    partial = {"body": "合成阶段分析", "findings": [{"question_id": "q1", "status": "open", "finding": "仍需核对",
+               "evidence": [0], "remaining_kind": "acquired-unanalysed", "next_action": "完成合成计算"}],
+               "sources": [reference], "stop": "continue", "stop_reason": "已取得材料还有重要工作"}
+    input_file.write_text(json.dumps(partial, ensure_ascii=False), encoding="utf-8")
+    checkpoint = command("checkpoint-research", "--request", str(request_file), "--input", str(input_file),
+                         "--submission-id", "work-one", "--revision-id", "r1")
+    assert checkpoint["research_assessment"] == "not-performed"
+    resumed = command("prepare-research", "--case-id", "work")
+    assert resumed["request"]["predecessor"] == checkpoint["reference"]
+    assert resumed["request"]["questions"] == initial_request["questions"]
+    request_file.write_text(json.dumps(resumed["request"], ensure_ascii=False), encoding="utf-8")
+    finished = {**partial, "body": "合成修订：论证缩小到证据支持范围",
+                "findings": [{"question_id": "q1", "status": "answered", "finding": "限定回答", "evidence": [0]}],
+                "challenges": [{"question_id": "q1", "argument": "竞争解释", "disposition": "changed", "response": "已据此调整论证", "evidence": [0]}],
+                "stop": "concluded", "stop_reason": "声明范围内已回答，不是系统认证"}
+    input_file.write_text(json.dumps(finished, ensure_ascii=False), encoding="utf-8")
+    second_work = command("checkpoint-research", "--request", str(request_file), "--input", str(input_file),
+                          "--submission-id", "work-two", "--revision-id", "r2")
+    assert command("checkpoint-research", "--request", str(request_file), "--input", str(input_file),
+                   "--submission-id", "work-two", "--revision-id", "r2") == second_work
+    assert command("current", "--case-id", "work")["reference"] == second_work["reference"]
+    assert second_work["human_acceptance"] == "not-confirmed"

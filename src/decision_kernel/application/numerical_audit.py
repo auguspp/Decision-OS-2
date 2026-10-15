@@ -2,6 +2,7 @@
 
 Only declared inputs/calculations and generated excerpts are checked. A matching
 stored field does not authenticate the publisher or certify its economic meaning.
+Text boundary limits: docs/research/numeric-text-boundaries.md.
 """
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ from dataclasses import asdict
 from decimal import Decimal
 import json
 import re
+import unicodedata
 from typing import TYPE_CHECKING
 
 from decision_kernel.domain.records import (
@@ -39,6 +41,46 @@ def _context(item: dict) -> tuple[str, str, str]:
     return tuple(checked_text(item[key], limit=256) for key in CONTEXT_FIELDS)
 
 
+def _check_numeric_span(data: str, start: int, end: int) -> None:
+    """Reject cropped/ambiguous tokens without normalizing the selected source bytes."""
+    selected = data[start:end]
+    token = selected.strip()
+    require(bool(token), "NUMERIC_SPAN_NOT_AVAILABLE")
+    # Boundary checks must see past padding INSIDE the requested span as well.
+    left = start + len(selected) - len(selected.lstrip())
+    right = left + len(token)
+
+    def folded(char: str) -> str:
+        return unicodedata.normalize("NFKC", char)
+
+    for index, punctuation in ((left - 1, ".,+-eE"), (right, ".,eE")):
+        if 0 <= index < len(data):
+            char = data[index]
+            require(not char.isdigit() and folded(char) not in punctuation,
+                    "PARTIAL_NUMERIC_TOKEN")
+
+    def neighbor(index: int, step: int) -> str:
+        # PDF/text representations can separate a sign using horizontal whitespace
+        # or a formatting mark. Do not silently cross into another source line.
+        while 0 <= index < len(data):
+            char = data[index]
+            if char in "\n\r\v\f\x85\u2028\u2029":
+                return ""
+            if not (char.isspace() or unicodedata.category(char) == "Cf"):
+                return char
+            index += step
+        return ""
+
+    before, after = neighbor(left - 1, -1), neighbor(right, 1)
+    for char in (before, after):
+        if char:
+            require(folded(char) not in ("+", "-", "−", "±", "➖")
+                    and unicodedata.category(char) != "Pd", "PARTIAL_NUMERIC_TOKEN")
+    # Parentheses may encode an accounting negative. Refuse the ambiguity rather
+    # than reinterpret '(50)' as +50 or auto-convert it to -50.
+    require(folded(before) != "(" and folded(after) != ")", "PARTIAL_NUMERIC_TOKEN")
+
+
 def _extract(data, locator: dict, *, numeric: bool = False) -> str:
     require(isinstance(locator, dict), "INVALID_NUMERIC_LOCATOR")
     if isinstance(data, list):
@@ -53,10 +95,7 @@ def _extract(data, locator: dict, *, numeric: bool = False) -> str:
         require(type(start) is int and type(end) is int and 0 <= start < end <= len(data),
                 "NUMERIC_SPAN_NOT_AVAILABLE")
         if numeric:
-            # Do not accept the '5' extracted from '-50', '2.5', or '5e3'.
-            require((start == 0 or data[start - 1] not in "0123456789.,+-eE")
-                    and (end == len(data) or data[end] not in "0123456789.,eE"),
-                    "PARTIAL_NUMERIC_TOKEN")
+            _check_numeric_span(data, start, end)
         value = data[start:end]
     else:
         raise RecordError("SOURCE_VALUE_NOT_STORED")

@@ -1,0 +1,74 @@
+name: decision-os-relay-source-runtime
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'plan is offline; capture calls the existing Relay with the selected scope'
+        type: choice
+        options: [plan, capture]
+        default: plan
+        required: true
+      code_sha:
+        description: 'Exact inspected main SHA; reject a changed code version'
+        type: string
+        required: true
+      codes:
+        description: 'Explicit securities separated by spaces or commas; no credentials'
+        type: string
+        required: true
+      periods:
+        description: 'Explicit quarter-end YYYYMMDD periods separated by spaces or commas'
+        type: string
+        required: true
+      apis:
+        description: 'Space-separated financial API names; empty selects the eight implemented APIs'
+        type: string
+        default: ''
+      page_size:
+        description: 'Per-page size, validated by the existing source CLI'
+        type: string
+        default: '100'
+      max_pages:
+        description: 'Per-query safety bound; not a purchased-use quota'
+        type: string
+        default: '100'
+      public_rights_confirmed:
+        description: 'Capture only: I authorize querying and retaining these data in this public repository artifacts'
+        type: boolean
+        default: false
+        required: true
+permissions: {}
+concurrency:
+  group: decision-os-relay-source
+  cancel-in-progress: false
+jobs:
+  source:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Validate selection and prepare without source credentials
+        id: prepare
+        run: python -m decision_kernel.interfaces.relay_source_runtime prepare --out "$RUNNER_TEMP/dos2-relay-source"
+      - name: Explicit source capture with the repository secret
+        if: inputs.operation == 'capture'
+        env:
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+        run: python -m decision_kernel.interfaces.relay_source_runtime capture --out "$RUNNER_TEMP/dos2-relay-source"
+      - name: Preserve selected plan and authorized complete or partial capture
+        if: always() && steps.prepare.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-relay-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-relay-source/
+          if-no-files-found: error
+          retention-days: 7

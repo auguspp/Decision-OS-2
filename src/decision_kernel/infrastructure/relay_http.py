@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from decision_kernel.domain.records import RecordError, require
+from decision_kernel.infrastructure.relay_failure import http_failure, transport_failure
 
 ROOT = "https://pcd.mobcvb.cn/tushare/pro"
 CAPABILITIES = "https://pcd.mobcvb.cn/tushare/capabilities"
@@ -37,6 +38,7 @@ class RelayHTTP:
         self.requests = 0
         self.last_response_meta = None
         self.last_response_bytes = None
+        self.last_error_meta = None
 
     def validate_credential(self):
         key = self._credential
@@ -73,6 +75,7 @@ class RelayHTTP:
         require(type(max_bytes) is int and 1 <= max_bytes <= MAX_BODY, "RELAY_RESPONSE_BOUND_INVALID")
         self.last_response_meta = None
         self.last_response_bytes = None
+        self.last_error_meta = None
         key = self.validate_credential()
         self.requests += 1
         request = Request(exact, method="GET", headers={"X-API-Key": key,
@@ -96,9 +99,10 @@ class RelayHTTP:
                 meta = {"http_status": 200, "x_request_id": safe_header("X-Request-ID"),
                         "x_cache": safe_header("X-Cache"), "wire_sha256": sha256(raw).hexdigest()}
         except HTTPError as exc:
-            exc.close()
+            self.last_error_meta = http_failure(exc, key)
             raise RecordError("RELAY_HTTP_" + str(exc.code)) from None
-        except (URLError, OSError, TimeoutError, HTTPException):
+        except (URLError, OSError, TimeoutError, HTTPException) as exc:
+            self.last_error_meta = transport_failure(exc)
             raise RecordError("RELAY_HTTP_UNAVAILABLE") from None
         require(key.encode("ascii") not in raw, "RELAY_SECRET_REFLECTED")
         try:

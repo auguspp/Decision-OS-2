@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 
+from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.application.versioned_store import VersionedStore
@@ -22,7 +23,7 @@ from decision_kernel.methods.research import research_method
 
 WRITE_OPERATIONS = {"put-source", "checkpoint"}
 RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint"}
-READ_OPERATIONS = {"prepare", "resume", "read-source"} | RECONCILE_OPERATIONS
+READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue"} | RECONCILE_OPERATIONS
 MAX_PAYLOAD_BYTES = 60 * 1024
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
@@ -84,6 +85,9 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation == "catalogue":
+        require(set(payload) <= {"cursor", "limit"}, "INVALID_CATALOGUE_PAYLOAD")
+        return ResearchCatalogue(store).page(**payload)
     if operation in ("put-source", "reconcile-source"):
         ref = store.put_source(command["submission_id"], SourceInput.from_dict(payload))
         return {"reference": asdict(ref)}

@@ -1,11 +1,12 @@
 """Research method/workpaper commands composed inside the existing store CLI."""
 from pathlib import Path
 
+from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.domain.records import BlobRef
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 
-COMMANDS = ("prepare-research", "checkpoint-research")
+COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue")
 
 
 def configure(actions) -> None:
@@ -20,9 +21,14 @@ def configure(actions) -> None:
     checkpoint.add_argument("--input", type=Path, required=True, help="progress JSON; cannot select case, kind or permissions")
     checkpoint.add_argument("--submission-id", required=True)
     checkpoint.add_argument("--revision-id", required=True)
+    catalogue = actions.add_parser("research-catalogue", help="browse saved research and remaining work; read only")
+    catalogue.add_argument("--cursor", type=Path, help="exact catalogue next_cursor JSON, not a source cursor")
+    catalogue.add_argument("--limit", type=int, default=4, help="case cards per page, 1 to 8")
 
 
 def execute(args, store, load) -> dict:
+    if args.store_command == "research-catalogue":
+        return ResearchCatalogue(store).page(cursor=load(args.cursor) if args.cursor else None, limit=args.limit)
     workflow = ResearchWorkflow(store)
     if args.store_command == "prepare-research":
         return workflow.prepare(

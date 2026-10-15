@@ -137,3 +137,25 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     assert completed["continuation"]["actions"] == []
     assert completed["continuation"]["research_assessment"] == "not-performed"
     assert completed["continuation"]["review_flags"] == ["DECLARED_CONCLUSION_REQUIRES_SUBSTANTIVE_REVIEW"]
+
+    # Same installed wheel: discover cases without IDs, then open pinned revisions.
+    catalogue = command("research-catalogue", "--limit", "1")
+    assert catalogue["total_cases"] == 2 and catalogue["items"][0]["case_id"] == "sample"
+    assert catalogue["items"][0]["reference"] == newest
+    catalogue_cursor = outside / "catalogue-cursor.json"
+    catalogue_cursor.write_text(json.dumps(catalogue["next_cursor"]), encoding="utf-8")
+    # A new alphabetically earlier case must not displace items on the existing page.
+    input_file.write_text(json.dumps({"case_id": "late", "revision_id": "r1", "kind": "quick",
+        "body": "较晚保存的合成研究", "mandate": "合成委托", "method": "synthetic", "sources": [reference]}, ensure_ascii=False), encoding="utf-8")
+    command("submit-revision", "--submission-id", "late", "--input", str(input_file))
+    tail = command("research-catalogue", "--cursor", str(catalogue_cursor))
+    assert tail["total_cases"] == 2 and tail["snapshot"] == catalogue["snapshot"]
+    card, = tail["items"]
+    assert card["case_id"] == "work" and card["reference"] == second_work["reference"]
+    assert card["continuation"]["actions"] == []
+    assert card["open_operation"] == "prepare" and card["research_assessment"] == "not-performed"
+    open_ref = outside / "catalogue-open.json"
+    open_ref.write_text(json.dumps(card["reference"]), encoding="utf-8")
+    opened = command("prepare-research", "--ref", str(open_ref))
+    assert opened["previous_context"]["research"]["reference"] == card["reference"]
+    assert command("research-catalogue")["total_cases"] == 3

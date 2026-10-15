@@ -12,10 +12,11 @@
 
 普通研究保存属于已有获准范围，不要求每个阶段另请求一次批准；公开保管权利仍单独成立，用户明确限制公开时必须尊重。公司/问题与判断目标、Quick 探索范围从实际委托恢复，已经给出的内容不要求重报。`request.mandate`、`actor=human`、模板或代码通过不能自授任务。没有公开授权只限制相应公开写入，不自动停止仍可进行的分析；不得借 #6 工程运维上传口绕过。
 
-## 2. 七个有限操作
+## 2. 八个有限操作
 
 | operation | payload（作为 JSON 字符串） | 效果 |
 |---|---|---|
+| `catalogue` | 可选 `cursor`、`limit` | 固定快照分页浏览已存研究、未决工作及精确打开入口；详见[研究目录](../delivery/research-catalogue.md) |
 | `prepare` | 恰好一个 `request`、`case_id` 或 `reference`；可附 `source_limit` | 返回完整方法、原问题/来源上下文及从已有底稿派生的未完成工作/挑战；不执行或保存 |
 | `resume` | 恰好一个 `case_id`、`reference` 或 `cursor`；可附 `source_limit` | 读取固定研究版本；后继游标不跳到较新 current |
 | `read-source` | 已保存的完整 `SourceRef` | 精确读回，保管等级与限制不升级 |
@@ -79,6 +80,6 @@ payload 原始与规范 UTF-8 字节均最多 **60 KiB**，结果8 MiB，job最�
 
 ## 6. 复用与维护
 
-采用已核官方 [workflow_dispatch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch) 与 [job token 最小权限](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) 及现有原生运行、事件输入、产物和固定依赖，无新 SDK/数据库/模型 worker。本组未更改 workflow 或凭据范围。
+采用已核官方 [workflow_dispatch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch) 与 [job token 最小权限](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) 及现有原生运行、事件输入、产物和固定依赖，无新 SDK/数据库/模型 worker。目录增量只增加 catalogue 只读选项，不改变各 job 的权限、写入口或凭据范围。
 
 #7维护本宿主、方法版本与说明；停用执行入口不删除研究或取消历史读取/对账责任。方法更换须保留仍被已存成果引用的确切文本与重建政策；退出历史支持必须另有实际迁移/消费者处置，不随升级静默删除。共同引用/幂等/前驱由原 owner 维护，#6运维及#12来源分工不变。

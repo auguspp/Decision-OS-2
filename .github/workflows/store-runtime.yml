@@ -1,0 +1,73 @@
+name: decision-os-store-runtime
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Explicit public records operation; no research or source acquisition'
+        type: choice
+        options: [backup, retain-guide]
+        default: backup
+        required: true
+      expected_head:
+        description: 'Exact records commit read before dispatch; reuse original run for reconciliation'
+        type: string
+        required: true
+permissions: {}
+concurrency:
+  group: dos2-store-runtime-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'backup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Inspect, export and independently restore the pinned public snapshot
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_EXPECTED_HEAD: ${{ inputs.expected_head }}
+        run: python -m decision_kernel.interfaces.store_runtime operate --operation backup --expected-head "$DOS2_EXPECTED_HEAD" --out "$RUNNER_TEMP/dos2-store"
+      - name: Retain the finite recovery snapshot and actual result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-store-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-store/
+          if-no-files-found: error
+          retention-days: 30
+  retain-guide:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'retain-guide'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Retain only the reviewed guide using this runtime job token, then restore backup
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_EXPECTED_HEAD: ${{ inputs.expected_head }}
+        run: python -m decision_kernel.interfaces.store_runtime operate --operation retain-guide --expected-head "$DOS2_EXPECTED_HEAD" --out "$RUNNER_TEMP/dos2-store"
+      - name: Preserve original intent and confirmed or unknown write result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-store-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-store/
+          if-no-files-found: error
+          retention-days: 30

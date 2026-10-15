@@ -159,3 +159,22 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     opened = command("prepare-research", "--ref", str(open_ref))
     assert opened["previous_context"]["research"]["reference"] == card["reference"]
     assert command("research-catalogue")["total_cases"] == 3
+
+    # Same cold wheel: a complete large payload packs offline and reaches the host parser intact.
+    transport_input = outside / "long-source.json"
+    long_source = {**payload, "text": "合成完整资料，保留全部正文。\n" * 10000}
+    transport_input.write_text(json.dumps(long_source, ensure_ascii=False), encoding="utf-8")
+    packed = subprocess.run([str(python), "-I", "-m", "decision_kernel.interfaces.research_payload",
+                             "--input", str(transport_input)], cwd=outside, env=no_host,
+                            check=True, capture_output=True, text=True)
+    assert transport_input.stat().st_size > 60 * 1024 and len(packed.stdout.encode()) <= 60 * 1024
+    wire = outside / "packed-source.json"
+    wire.write_text(packed.stdout, encoding="utf-8")
+    parsed = subprocess.run([str(python), "-I", "-c",
+        "import json,sys; from pathlib import Path; "
+        "from decision_kernel.interfaces.research_runtime import parse_inputs; "
+        "v=parse_inputs(dict(operation='put-source',payload=Path(sys.argv[1]).read_text(encoding='utf-8'),"
+        "code_sha='a'*40,submission_id='long-source',expected_head='b'*40)); "
+        "print(json.dumps(v['payload'],ensure_ascii=False))", str(wire)],
+        cwd=outside, env=no_host, check=True, capture_output=True, text=True)
+    assert json.loads(parsed.stdout) == long_source

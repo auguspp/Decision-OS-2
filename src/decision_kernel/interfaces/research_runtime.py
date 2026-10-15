@@ -20,30 +20,15 @@ from decision_kernel.domain.records import (
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.methods.research import research_method
+from decision_kernel.interfaces.research_payload import (
+    MAX_PAYLOAD_BYTES, decode_payload, json_object as _object,
+)
 
 WRITE_OPERATIONS = {"put-source", "checkpoint"}
 RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint"}
 READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue"} | RECONCILE_OPERATIONS
-MAX_PAYLOAD_BYTES = 60 * 1024
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
-
-
-def _object(raw: bytes) -> dict:
-    def unique(pairs):
-        out = {}
-        for key, value in pairs:
-            require(key not in out, "DUPLICATE_JSON_KEY")
-            out[key] = value
-        return out
-    try:
-        value = json.loads(raw, object_pairs_hook=unique,
-                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-        require(isinstance(value, dict), "JSON_OBJECT_REQUIRED")
-        encoded(value)  # Reject non-finite exponent results and invalid UTF-8, too.
-        return value
-    except (ValueError, UnicodeError, RecursionError):
-        raise RecordError("INVALID_COMMAND_JSON") from None
 
 
 def _file(path: Path) -> dict:
@@ -62,13 +47,7 @@ def parse_inputs(inputs: dict) -> dict:
     operation = inputs["operation"]
     require(operation in WRITE_OPERATIONS | READ_OPERATIONS, "UNSUPPORTED_RESEARCH_OPERATION")
     require(bool(SHA.fullmatch(inputs["code_sha"])), "EXPECTED_CODE_SHA_REQUIRED")
-    try:
-        raw = inputs["payload"].encode("utf-8")
-    except UnicodeError:
-        raise RecordError("INVALID_COMMAND_UTF8") from None
-    require(len(raw) <= MAX_PAYLOAD_BYTES, "DISPATCH_PAYLOAD_TOO_LARGE")
-    payload = _object(raw)
-    require(len(encoded(payload)) <= MAX_PAYLOAD_BYTES, "DISPATCH_PAYLOAD_TOO_LARGE")
+    payload = decode_payload(inputs["payload"])
     submission = inputs.get("submission_id", "")
     expected = inputs.get("expected_head", "")
     if operation in WRITE_OPERATIONS | RECONCILE_OPERATIONS:

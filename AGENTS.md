@@ -6,9 +6,9 @@
 
 1. 读取本仓当前 `main` 的确切 commit，按该版本读取本文件和任务相关规则；不要把上次聊天的 SHA 当当前版本。
 2. 进入 [B0—B2 阶段导航 #3](https://github.com/auguspp/Decision-OS-2/issues/3)，再读当前有限任务、最新有效交接、活动 PR 和实际检查。导航只给顺序，真实任务状态以原事项和原生记录为准。
-3. 按 [认领与接管规则](WORKING-PROTOCOLS.md#collaboration)确定本次 owner、分支和范围，读回认领后再写；已有施工先接续，已合并的不重做。评论/标签不是原子锁。
+3. 按 [认领与接管规则](WORKING-PROTOCOLS.md#collaboration)确定本次 owner、分支和范围，读回认领后再写；“继续”先接续有效任务。若前对话失效且用户要求恢复，按[异常中断接管](WORKING-PROTOCOLS.md#interrupted-recovery)核在途效果、在原任务明确重分配，不因旧认领直接跳到下一Issue。评论/标签不是原子锁。
 4. 只读适用合同和已有证据。旧 Kernel 是技术参考，不沿旧 #297/#508 队列开工，不恢复旧业务兼容，不重新证明已成立的 GitHub 读写。
-5. 按 [短交接格式](docs/engineering/handoff.md)留真实 head、检查、未知效果和下一步。对话结束不是任务完成；PR 合并也不自动完成产品验收。
+5. 按 [短交接格式](docs/engineering/handoff.md)留真实 head、检查、未知效果和下一步；重要提交/PR、CI、前提变化或未知效果及时留[增量检查点](docs/engineering/handoff.md#checkpoint)，不能等会话正常结束。对话结束不是任务完成；PR 合并也不自动完成产品验收。
 
 不能假设宿主自动加载 AGENTS 或子目录指令。未读到入口时如实报告，只暂停依赖该信息的写入；用户不需要搬 SHA、复制旧报告或逐文件重新授权。
 

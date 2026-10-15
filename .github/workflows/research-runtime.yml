@@ -5,7 +5,7 @@ on:
       operation:
         description: 'Explicit public research I/O; never execute AI or a source URL'
         type: choice
-        options: [prepare, resume, read-source, put-source, checkpoint, reconcile-source, reconcile-checkpoint]
+        options: [prepare, resume, read-source, catalogue, put-source, checkpoint, reconcile-source, reconcile-checkpoint]
         default: prepare
         required: true
       payload:

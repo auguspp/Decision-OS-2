@@ -1,21 +1,27 @@
 # Decision OS 2.0
 
-新项目代码与规范仓库：`auguspp/Decision-OS-2`。
-
 > 新项目从零建立业务状态，不从零假设技术能力。
 
-## 当前文档入口
+这是 `auguspp/Decision-OS-2` 的代码与工程规范入口。产品帮助用户主动发现现实/产业变化、开展 Quick 与 Full Research、持续检验判断，并支持独立人工 Decision；不推断持仓、不自动交易。
 
-**[最终目标设计 v1.2-final](docs/decision-os-2.0-design.md)** 是唯一完整目标正文，包含 26 章、4 个附录、35 条经验教训及 58 项验证责任处置。
+## 从这里开始
 
-[最终评审采纳记录](docs/reviews/v1.2-finalization.md)说明本次局部改动及其边界；[AGENTS.md](AGENTS.md)是新会话接续入口。[文档归档事项 #1](https://github.com/auguspp/Decision-OS-2/issues/1)保存实际 PR、检查与读回记录，不是长期工程总队列。
+| 你要做什么 | 唯一入口 |
+|---|---|
+| 新对话接手施工 | [AGENTS.md](AGENTS.md) → [当前阶段 #3](https://github.com/auguspp/Decision-OS-2/issues/3) → 具体任务/PR |
+| 看完整产品与目标架构 | [最终目标设计 v1.2-final](docs/decision-os-2.0-design.md) |
+| 看实施顺序、依赖和收口 | [实施基线 v0.1](docs/implementation-baseline.md) |
+| 看统一施工与协作规则 | [WORKING-PROTOCOLS.md](WORKING-PROTOCOLS.md) |
+| 看命名、文件归属和首批引用 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
+| 看完整 CI、验证继承和自举 | [CI 合同](docs/engineering/ci-contract.md) |
+| 暂停、接管、换对话 | [交接格式与恢复步骤](docs/engineering/handoff.md) |
 
-## 范围与下一阶段
+实时状态只在 #3 和其有限子事项，不在 README 维护第二份进度。历史目标归档见 [#1](https://github.com/auguspp/Decision-OS-2/issues/1) 与 [评审采纳记录](docs/reviews/v1.2-finalization.md)，不要重开已完成归档。
 
-Quick 与 Full Research 是首版双核心；Decision 完整设计、专门建设后序。行情沿用现有 Tushare Relay；完整 CI 优化体系从 B1 工程起点交付。旧 Kernel／旧 OS 的研究状态与格式不要求兼容，已有技术、成功验收及失败反例按适用范围复用。
+## 基础与边界
 
-本次仅归档目标设计与接续文档。B0/B1 实施基线、业务代码、运行服务及完整 CI 尚未交付；没有启动采集、Quick／Full、通知或生产切换。下一阶段是提炼短的 B0/B1 基线，不再重写全系统方案，不重做已成立的 GitHub 研究读写试验。
+新会话使用同一主线规则、原生阶段标签和 Issue/PR 模板；记录认领分支、实际 head、验证和未知效果。模板与文档不是服务端权限或代码验收，GitHub/宿主未读取规则时也不会自动遵守。
 
-## 公开仓库边界
+首个代码责任是完整 CI 与可安装骨架；后续最小研究保管支撑直接 Full 和最小发现链共同收口。文档/规则已落地、CI已配置、产品已使用分别成立，实际结果读对应任务。
 
-本仓在本次归档时为公开仓库，只存获准公开的代码与工程文档。私人研究、人工决定、账户信息、密钥、私人运行数据及未经许可的原文，不因本仓被指定为项目仓而取得公开发布许可。实际研究数据的权威保管与读取通路在 B0 按用途明确。
+本仓公开。仅提交获准工程内容和合成/脱敏样例；私人运行数据、研究、人工决定和密钥在独立获准位置保管。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。

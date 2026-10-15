@@ -6,6 +6,7 @@ No source fallback, cookies, redirects, credentials, proxy or retry orchestratio
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from http.client import HTTPException
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -13,7 +14,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.observations.broker_report_catalog import (
-    ReportScope, PAGE_SIZE, normalize_catalog, request_spec,
+    ReportScope, PAGE_SIZE, normalize_catalog, request_spec, checked_capture_day, checked_page,
 )
 
 MAX_BODY = 512 * 1024
@@ -54,11 +55,16 @@ class EastmoneyReportTransport:
                 require(mime in ("application/json", "text/json", "text/plain")
                         and response.headers.get("Content-Encoding", "identity").lower() in ("", "identity"),
                         "BROKER_HTTP_CONTENT_INVALID")
+                length = response.headers.get("Content-Length")
+                require(length is None or length.isascii() and length.isdigit()
+                        and len(length) <= 10 and int(length) <= MAX_BODY, "BROKER_HTTP_LENGTH_INVALID")
                 raw = response.read(MAX_BODY+1)
                 require(0 < len(raw) <= MAX_BODY, "BROKER_HTTP_SIZE_INVALID")
+                require(length is None or int(length) == len(raw), "BROKER_HTTP_LENGTH_INVALID")
         except HTTPError as exc:
+            exc.close()
             raise RecordError("BROKER_HTTP_" + str(exc.code)) from None
-        except (OSError, URLError, TimeoutError) as exc:
+        except (OSError, URLError, TimeoutError, HTTPException) as exc:
             raise RecordError("BROKER_HTTP_UNAVAILABLE") from None
         try:
             def unique(pairs):
@@ -75,18 +81,19 @@ class EastmoneyReportTransport:
 
 
 def fetch_catalog(scope: ReportScope, *, transport=None):
-    """Only an explicitly requested source-window. Reject partial pages; no automatic retry."""
-    require(isinstance(scope, ReportScope), "BROKER_SCOPE_INVALID")
+    """Reject an invalid page before any subsequent request; never retry a source failure."""
+    started_at = datetime.now(timezone.utc).isoformat()
+    capture_day = checked_capture_day(scope, started_at)
     own_transport = transport if transport is not None else EastmoneyReportTransport()
-    pages=[]
-    for i in range(1,scope.max_pages+1):
-        page=own_transport(request_spec(scope,i))
-        require(isinstance(page,dict) and type(page.get("hits")) is int and page["hits"]>=0,
-                "BROKER_COUNTER_INVALID")
+    pages = []
+    expected = None
+    for number in range(1, scope.max_pages + 1):
+        page = own_transport(request_spec(scope, number))
+        count, implied, _ = checked_page(scope, page, number, capture_day)
+        require(expected is None or expected == (count, implied), "BROKER_TOTAL_DRIFT")
+        expected = (count, implied)
         pages.append(page)
-        implied=max(1,(page["hits"]+PAGE_SIZE-1)//PAGE_SIZE)
-        require(implied<=scope.max_pages,"BROKER_PAGE_BUDGET_EXCEEDED")
-        if i>=implied:
+        if number >= implied:
             break
-    return normalize_catalog(scope,pages=pages,captured_at=datetime.now(timezone.utc).isoformat(),
+    return normalize_catalog(scope, pages=pages, captured_at=datetime.now(timezone.utc).isoformat(),
                              source_mode="https-live")

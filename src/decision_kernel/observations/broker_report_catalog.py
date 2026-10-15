@@ -38,7 +38,7 @@ class ReportScope:
     industry_code: str | None = None
 
     def __post_init__(self):
-        require(self.kind in KINDS, "BROKER_KIND_INVALID")
+        require(isinstance(self.kind, str) and self.kind in KINDS, "BROKER_KIND_INVALID")
         require(isinstance(self.begin, str) and isinstance(self.end, str)
                 and bool(_DATE.fullmatch(self.begin)) and bool(_DATE.fullmatch(self.end)), "BROKER_DATE_INVALID")
         try:
@@ -109,7 +109,7 @@ class BrokerCatalog:
     provider_pages: int
     duplicate_rows: int
     reports: tuple[ReportListing, ...]
-    coverage: str = "REQUEST_WINDOW_COMPLETE_NOT_FULL_MARKET"
+    coverage: str = "PROVIDER_PAGES_READ_NOT_CORPUS_COMPLETENESS"
 
 
 def _listing(row: object, scope: ReportScope, page_number: int, captured_day: date) -> ReportListing:
@@ -146,19 +146,44 @@ def _listing(row: object, scope: ReportScope, page_number: int, captured_day: da
                          _field(row, "ratingName", 100), detail, (page_number,))
 
 
-def normalize_catalog(scope: ReportScope, *, pages: object, captured_at: str,
-                      source_mode: str) -> BrokerCatalog:
-    """Require every declared provider page before a complete catalog is saved.
-
-    A response/page budget gap is an explicit failure, never zero research reports.
-    """
+def checked_capture_day(scope: ReportScope, captured_at: str) -> date:
+    """Use the same date/window gate before live I/O and during offline reading."""
     require(isinstance(scope, ReportScope), "BROKER_SCOPE_INVALID")
     source_time(captured_at)
     require(isinstance(captured_at, str) and "T" in captured_at and
             datetime.fromisoformat(captured_at.replace("Z", "+00:00")).utcoffset() is not None,
             "BROKER_CAPTURE_CLOCK_INVALID")
-    capture_day = datetime.fromisoformat(captured_at.replace("Z", "+00:00")).astimezone(SHANGHAI).date()
-    require(date.fromisoformat(scope.end) <= capture_day, "BROKER_FUTURE_WINDOW")
+    day = datetime.fromisoformat(captured_at.replace("Z", "+00:00")).astimezone(SHANGHAI).date()
+    require(date.fromisoformat(scope.end) <= day, "BROKER_FUTURE_WINDOW")
+    return day
+
+
+def checked_page(scope: ReportScope, page: object, number: int,
+                 captured_day: date) -> tuple[int, int, tuple[ReportListing, ...]]:
+    """Qualify each page before another provider call; also used by final normalization."""
+    require(type(number) is int and 1 <= number <= scope.max_pages, "BROKER_PAGE_INVALID")
+    require(isinstance(page, dict), "BROKER_PAGE_INVALID")
+    rows = page.get("data")
+    count, listed_pages, actual_number = page.get("hits"), page.get("TotalPage"), page.get("pageNo")
+    require(page.get("success", True) is True and
+            (page.get("code") is None or type(page["code"]) is int and page["code"] in (0, 200)),
+            "BROKER_PROVIDER_FAILURE")
+    require(type(count) is int and count >= 0 and type(listed_pages) is int and
+            listed_pages >= 0 and type(actual_number) is int and actual_number == number,
+            "BROKER_COUNTER_INVALID")
+    expected_pages = max(1, (count + PAGE_SIZE - 1) // PAGE_SIZE)
+    require(listed_pages == (0 if count == 0 else expected_pages) or
+            (count == 0 and listed_pages == 1), "BROKER_COUNTER_MISMATCH")
+    require(expected_pages <= scope.max_pages, "BROKER_PAGE_BUDGET_EXCEEDED")
+    require(isinstance(rows, list) and len(rows) == min(PAGE_SIZE, max(0, count - (number-1)*PAGE_SIZE)),
+            "BROKER_PAGE_INCOMPLETE")
+    return count, expected_pages, tuple(_listing(row, scope, number, captured_day) for row in rows)
+
+
+def normalize_catalog(scope: ReportScope, *, pages: object, captured_at: str,
+                      source_mode: str) -> BrokerCatalog:
+    """Prove provider-page consistency, not unique coverage or a complete report corpus."""
+    capture_day = checked_capture_day(scope, captured_at)
     require(source_mode in ("offline-unverified", "https-live"), "BROKER_SOURCE_MODE_INVALID")
     require(isinstance(pages, list) and 1 <= len(pages) <= scope.max_pages, "BROKER_PAGES_INVALID")
     total: int | None = None
@@ -166,25 +191,10 @@ def normalize_catalog(scope: ReportScope, *, pages: object, captured_at: str,
     unique: dict[tuple[str, str], ReportListing] = {}
     raw_count = 0
     for number, page in enumerate(pages, start=1):
-        require(isinstance(page, dict), "BROKER_PAGE_INVALID")
-        rows = page.get("data")
-        count, listed_pages, actual_number = page.get("hits"), page.get("TotalPage"), page.get("pageNo")
-        require(page.get("success", True) is True and
-                (page.get("code") is None or type(page["code"]) is int and page["code"] in (0, 200)),
-                "BROKER_PROVIDER_FAILURE")
-        require(type(count) is int and count >= 0 and type(listed_pages) is int and
-                listed_pages >= 0 and type(actual_number) is int and actual_number == number,
-                "BROKER_COUNTER_INVALID")
-        expected_pages = max(1, (count + PAGE_SIZE - 1) // PAGE_SIZE)
-        require(listed_pages == (0 if count == 0 else expected_pages) or
-                (count == 0 and listed_pages == 1), "BROKER_COUNTER_MISMATCH")
-        require(expected_pages <= scope.max_pages, "BROKER_PAGE_BUDGET_EXCEEDED")
+        count, expected_pages, items = checked_page(scope, page, number, capture_day)
         require(total is None or (total == count and provider_pages == expected_pages), "BROKER_TOTAL_DRIFT")
-        require(isinstance(rows, list) and len(rows) == min(PAGE_SIZE, max(0, count - (number-1)*PAGE_SIZE)),
-                "BROKER_PAGE_INCOMPLETE")
         total, provider_pages = count, expected_pages
-        for row in rows:
-            item = _listing(row, scope, number, capture_day)
+        for item in items:
             raw_count += 1
             key = (item.report_key, item.version_hash)
             if key in unique:
@@ -214,6 +224,14 @@ def source_for(report: ReportListing, catalog: BrokerCatalog) -> SourceInput:
         "CATALOG_WINDOW: " + catalog.scope.begin + "/" + catalog.scope.end,
         "ORIGINAL_PDF_NOT_READ; ANALYST_ESTIMATE_NOT_VERIFIED; HISTORICAL_AVAILABLE_AT_UNKNOWN",
     )
+    # Retain attribution in the existing source manifest, not just the transient view.
+    for label, value in (("INSTITUTION", report.institution),
+                         ("INSTITUTION_CODE", report.institution_code),
+                         ("INDUSTRY", report.industry),
+                         ("RATING_RAW_NOT_RECOMMENDATION", report.rating)):
+        if value is not None:
+            limitations += (label + ": " + value,)
+    limitations += ("PROVIDER_PAGES_READ; WINDOW_COMPLETENESS_NOT_ESTABLISHED",)
     return SourceInput(source_id=source_id, kind="content", title=report.title,
                        origin=report.detail_url, text=None, custody="external", entities=(),
                        published_at=report.publication_date, acquired_at=catalog.captured_at,

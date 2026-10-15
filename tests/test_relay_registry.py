@@ -18,11 +18,11 @@ REGISTRY = ROOT/'docs/sources/relay-registry.json'
 
 def test_all_documented_interfaces_once_with_original_rows():
     reader = RelayRegistry(REGISTRY)
-    rows = reader.select()
+    rows = [r for r in reader.select() if r['manual_present']]
     assert len(rows) == len({r['api'] for r in rows}) == 271
     assert sum(r['manual_enabled'] is True for r in rows) == 258
     assert sum(r['manual_enabled'] is False for r in rows) == 13
-    assert all(r['live_enabled'] is None and r['required'] is None for r in rows)
+    assert all(type(r['live_enabled']) is bool and isinstance(r['required'], list) for r in rows)
     assert all(r['api'] in r['raw_row'] and r['source_line'] > 350 for r in rows)
     assert len(reader.groups) == 14
 
@@ -31,7 +31,7 @@ def test_three_distinct_evidence_layers():
     reader = RelayRegistry(REGISTRY)
     income = reader.lookup('income')
     assert income['manual_enabled'] and income['shared_relay_client_admits_api']
-    assert income['live_enabled'] is None
+    assert income['live_enabled'] is True
     assert income['scoped_business_evidence']['nonempty'] == 3
     assert reader.lookup('forecast')['scoped_business_evidence']['nonempty'] == 0
     assert reader.lookup('daily')['scoped_business_evidence'] is None
@@ -54,7 +54,8 @@ def test_ambiguous_manual_cells_and_unknown_function_remain_unknown():
     row = reader.lookup('adj_factor')
     assert row['table_shape'] == 'ambiguous-see-original'
     assert row['provider_note'] is None and row['parameter_note'] is None
-    assert reader.lookup('npr')['group'] == 'needs-review'
+    assert reader.lookup('npr')['group'] == 'content-events'
+    assert reader.lookup('the_member')['group'] == 'needs-review'
     assert reader.lookup('income')['parameter_note']
 
 
@@ -71,6 +72,7 @@ def test_consumers_receive_metadata_not_a_live_request(monkeypatch):
 def copy_registry(tmp_path):
     (tmp_path/'vendor').mkdir()
     shutil.copy(REGISTRY.parent/'vendor/tushare-relay-v0.5.61.md', tmp_path/'vendor/')
+    shutil.copytree(REGISTRY.parent/'snapshots', tmp_path/'snapshots')
     dest = tmp_path/'registry.json'
     shutil.copy(REGISTRY, dest)
     return dest
@@ -115,4 +117,4 @@ def test_cli_outside_repository_no_key(tmp_path):
         capture_output=True, text=True, check=False, timeout=15)
     assert run.returncode == 0, run.stderr
     item = json.loads(run.stdout)
-    assert item['private_or_write_scope'] and item['live_enabled'] is None
+    assert item['private_or_write_scope'] and item['live_enabled'] is True

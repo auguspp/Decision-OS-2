@@ -1,74 +1,51 @@
-name: decision-os-relay-archive-transfer
+name: decision-os-relay-capabilities
 on:
   workflow_dispatch:
     inputs:
       code_sha:
-        description: 'Exact reviewed temporary branch commit'
+        description: 'Exact inspected main SHA'
         type: string
         required: true
       public_rights_confirmed:
-        description: 'Archive previously captured public capability metadata only'
+        description: 'I authorize retaining service capability metadata in this public repository artifacts'
         type: boolean
         required: true
         default: false
+      retries:
+        description: 'Maximum retries of the same metadata GET; honors Retry-After, no business calls'
+        type: choice
+        options: ['0', '1', '2']
+        default: '0'
 permissions: {}
+concurrency:
+  group: decision-os-relay-source
+  cancel-in-progress: false
 jobs:
-  archive:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/feat/12-relay-live-registry' && inputs.public_rights_confirmed
+  catalogue:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.public_rights_confirmed
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     permissions:
-      actions: read
-      contents: write
+      contents: read
     steps:
-      - name: Verify existing artifact and create immutable Git blob objects, never move refs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Read service metadata with explicit bounded recovery, not business endpoints
         env:
-          GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ inputs.code_sha }}
-        run: |
-          python3 - <<'PY'
-          import base64, hashlib, io, json, os, pathlib, subprocess, zipfile
-          assert os.environ['GITHUB_SHA'] == os.environ['EXPECTED_SHA']
-          assert os.environ['GITHUB_REPOSITORY'] == 'auguspp/Decision-OS-2'
-          repo = 'repos/auguspp/Decision-OS-2/'
-          def get(path):
-              return subprocess.run(['gh','api',repo+path],check=True,capture_output=True).stdout
-          meta = json.loads(get('actions/artifacts/12012602500'))
-          assert meta['workflow_run']['id'] == 38819858325
-          assert meta['workflow_run']['head_sha'] == 'f2277883de090070c87191e7f2dcb3405a1cab0e'
-          rawzip = get('actions/artifacts/12012602500/zip')
-          assert len(rawzip) == 14918
-          assert hashlib.sha256(rawzip).hexdigest() == '167ae1ba48340faa8a5b1da514d3c4edf9e260a030dc209c095bd1f96eb510da'
-          with zipfile.ZipFile(io.BytesIO(rawzip)) as archive:
-              assert set(archive.namelist()) == {'capabilities.raw.json','receipt.json'}
-              assert archive.testzip() is None
-              raw = archive.read('capabilities.raw.json')
-              receipt_raw = archive.read('receipt.json')
-          assert len(raw) == 134194
-          assert hashlib.sha256(raw).hexdigest() == 'f541ddd2efbe50fe0c77a47e49d00d6c8e6c949d24a31feb20c59520fd6111c1'
-          receipt = json.loads(receipt_raw)
-          assert receipt['status'] == 'captured' and receipt['business_requests'] == 0
-          assert receipt['run_id'] == '38819858325' and receipt['run_attempt'] == '1'
-          assert receipt['sha256'] == hashlib.sha256(raw).hexdigest()
-          result = {'schema':'exact-relay-archive-blob-transfer-v1','source_run_id':38819858325,
-                    'source_artifact_id':12012602500,'code_sha':os.environ['GITHUB_SHA'],
-                    'ref_updates':0,'source_requests':0,'blobs':{}}
-          for name, content in [('capabilities.raw.json',raw),('receipt.json',receipt_raw)]:
-              payload = json.dumps({'content':base64.b64encode(content).decode(),'encoding':'base64'}).encode()
-              answer = subprocess.run(['gh','api','--method','POST',repo+'git/blobs','--input','-'],
-                                      input=payload,check=True,capture_output=True)
-              blob = json.loads(answer.stdout)['sha']
-              assert blob == hashlib.sha1(('blob '+str(len(content))+'\0').encode()+content).hexdigest()
-              result['blobs'][name] = {'sha':blob,'bytes':len(content),'sha256':hashlib.sha256(content).hexdigest()}
-          out = pathlib.Path(os.environ['RUNNER_TEMP'])/'archive-result.json'
-          out.write_text(json.dumps(result,indent=2)+'\n')
-          print(json.dumps(result))
-          PY
-      - name: Keep transfer identities
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+          INSPECTED_SHA: ${{ inputs.code_sha }}
+          METADATA_RETRIES: ${{ inputs.retries }}
+        run: python -m decision_kernel.interfaces.relay_capabilities_cli --live --code-sha "$INSPECTED_SHA" --public-rights-confirmed --retries "$METADATA_RETRIES" --out "$RUNNER_TEMP/relay-capabilities"
+      - name: Preserve exact response and safe receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: relay-archive-transfer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/archive-result.json
+          name: dos2-relay-capabilities-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/relay-capabilities/
           if-no-files-found: error
           retention-days: 7

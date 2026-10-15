@@ -14,12 +14,17 @@ def main(argv=None):
     parser.add_argument('--api')
     parser.add_argument('--group')
     parser.add_argument('--module', help='consumer issue, for example #12')
+    parser.add_argument('--summary', action='store_true', help='show snapshot counts and manual differences')
+    status = parser.add_mutually_exclusive_group()
+    status.add_argument('--enabled', dest='enabled', action='store_true', default=None)
+    status.add_argument('--disabled', dest='enabled', action='store_false')
     args = parser.parse_args(argv)
     try:
-        if args.api and (args.group or args.module):
+        if args.api and (args.group or args.module or args.summary or args.enabled is not None) or args.summary and (args.group or args.module or args.enabled is not None):
             raise RecordError('RELAY_REGISTRY_ONE_SELECTOR')
         reader = RelayRegistry(args.registry)
-        result = reader.lookup(args.api) if args.api else reader.select(group=args.group, module=args.module)
+        result = reader.summary() if args.summary else (reader.lookup(args.api) if args.api else
+            reader.select(group=args.group, module=args.module, enabled=args.enabled))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except RecordError as exc:

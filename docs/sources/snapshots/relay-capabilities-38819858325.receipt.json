@@ -1,0 +1,36 @@
+{
+  "schema": "relay-capability-receipt-v1",
+  "code_sha": "f2277883de090070c87191e7f2dcb3405a1cab0e",
+  "endpoint": "https://pcd.mobcvb.cn/tushare/capabilities",
+  "requested_at": "2026-10-15T22:51:11.225779+00:00",
+  "business_requests": 0,
+  "status": "captured",
+  "run_id": "38819858325",
+  "run_attempt": "1",
+  "qualification": "service-metadata-not-business-validation-or-execution-authority",
+  "attempts": [
+    {
+      "attempt": 1,
+      "requested_at": "2026-10-15T22:51:11.226039+00:00",
+      "status": "captured",
+      "received_at": "2026-10-15T22:51:29.274280+00:00",
+      "transport": {
+        "http_status": 200,
+        "x_request_id": "bbe065e3-64f0-4c77-ab75-dbc88295b44b",
+        "x_cache": null,
+        "wire_sha256": "f541ddd2efbe50fe0c77a47e49d00d6c8e6c949d24a31feb20c59520fd6111c1"
+      }
+    }
+  ],
+  "retries_allowed": 2,
+  "total_wait_seconds": 0,
+  "received_at": "2026-10-15T22:51:29.274280+00:00",
+  "bytes": 134194,
+  "sha256": "f541ddd2efbe50fe0c77a47e49d00d6c8e6c949d24a31feb20c59520fd6111c1",
+  "transport": {
+    "http_status": 200,
+    "x_request_id": "bbe065e3-64f0-4c77-ab75-dbc88295b44b",
+    "x_cache": null,
+    "wire_sha256": "f541ddd2efbe50fe0c77a47e49d00d6c8e6c949d24a31feb20c59520fd6111c1"
+  }
+}

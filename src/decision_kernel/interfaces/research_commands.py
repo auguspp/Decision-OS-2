@@ -1,0 +1,36 @@
+"""Research method/workpaper commands composed inside the existing store CLI."""
+from pathlib import Path
+
+from decision_kernel.application.research_workflow import ResearchWorkflow
+from decision_kernel.domain.records import BlobRef
+from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
+
+COMMANDS = ("prepare-research", "checkpoint-research")
+
+
+def configure(actions) -> None:
+    prepare = actions.add_parser("prepare-research", help="prepare researcher guidance and exact context; no execution")
+    select = prepare.add_mutually_exclusive_group(required=True)
+    select.add_argument("--request", type=Path, help="caller-selected scope JSON; not a permission grant")
+    select.add_argument("--case-id", help="continue the saved workpaper's scope, selecting current once")
+    select.add_argument("--ref", type=Path, help="exact saved workpaper BlobRef JSON")
+    prepare.add_argument("--source-limit", type=int, default=4)
+    checkpoint = actions.add_parser("checkpoint-research", help="save substantive work via the existing authorized store")
+    checkpoint.add_argument("--request", type=Path, required=True)
+    checkpoint.add_argument("--input", type=Path, required=True, help="progress JSON; cannot select case, kind or permissions")
+    checkpoint.add_argument("--submission-id", required=True)
+    checkpoint.add_argument("--revision-id", required=True)
+
+
+def execute(args, store, load) -> dict:
+    workflow = ResearchWorkflow(store)
+    if args.store_command == "prepare-research":
+        return workflow.prepare(
+            ResearchRequest.from_dict(load(args.request)) if args.request else None,
+            case_id=args.case_id, reference=BlobRef(**load(args.ref)) if args.ref else None,
+            source_limit=args.source_limit,
+        )
+    return workflow.checkpoint(
+        ResearchRequest.from_dict(load(args.request)), ResearchProgress.from_dict(load(args.input)),
+        submission_id=args.submission_id, revision_id=args.revision_id,
+    )

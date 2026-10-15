@@ -14,10 +14,24 @@
 | 看雷达、资料、研究与交付的完整施工落点 | [36项能力地图](docs/implementation-baseline.md#coverage) · [工作组与依赖](docs/implementation-baseline.md#work-packages) |
 | 看统一施工与协作规则 | [WORKING-PROTOCOLS.md](WORKING-PROTOCOLS.md) |
 | 看命名、文件归属和首批引用 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
-| 看完整 CI、验证继承和自举 | [CI 合同](docs/engineering/ci-contract.md) |
+| 看完整 CI、验证继承和自举 | [CI 合同](docs/engineering/ci-contract.md) · [实现与运行说明](docs/engineering/ci-implementation.md) |
 | 暂停、接管、换对话 | [交接格式与恢复步骤](docs/engineering/handoff.md) |
 
 实时状态只在 #3 和其有限子事项，不在 README 维护第二份进度。历史目标归档见 [#1](https://github.com/auguspp/Decision-OS-2/issues/1) 与 [评审采纳记录](docs/reviews/v1.2-finalization.md)，不要重开已完成归档。
+
+## 安装与工程入口
+
+使用 Python 3.12 或更高版本，在仓库根目录执行：
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install .
+decision-os --version
+decision-os info --json
+```
+
+`decision-os` 与 `python -m decision_kernel` 仅提供安装信息，不声称研究、来源、保管或部署已配置，也不会启动这些操作。当前运行包没有第三方依赖；工程依赖锁与测试方式见 [CI实现说明](docs/engineering/ci-implementation.md)。不保证旧 `decision-kernel` 命令或业务API兼容。
 
 ## 基础与边界
 

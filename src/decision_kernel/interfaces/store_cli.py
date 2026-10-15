@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 
+from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef
 from decision_kernel.infrastructure.git_store import GitStore
@@ -32,6 +33,12 @@ def configure(commands) -> None:
     search.add_argument("--entity-id")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--cursor", type=Path)
+    resume = actions.add_parser("resume-research", help="read a saved Quick/Full context; never execute research")
+    selector = resume.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--case-id", help="select current revision once")
+    selector.add_argument("--ref", type=Path, help="exact saved research BlobRef JSON")
+    selector.add_argument("--cursor", type=Path, help="next_cursor JSON from a previous source page")
+    resume.add_argument("--source-limit", type=int, default=4, help="sources per page, 1 to 8")
 
 
 def _load(path: Path) -> dict:
@@ -83,6 +90,10 @@ def execute(args: argparse.Namespace) -> int:
                 result = store.read_source(SourceRef.from_dict(_load(args.ref)))
             elif args.store_command == "read-revision":
                 result = store.read_revision(BlobRef(**_load(args.ref)))
+            elif args.store_command == "resume-research":
+                result = ResearchReader(store).resume(
+                    args.case_id, reference=BlobRef(**_load(args.ref)) if args.ref else None,
+                    cursor=_load(args.cursor) if args.cursor else None, source_limit=args.source_limit)
             elif args.store_command == "current":
                 current = store.current(args.case_id)
                 result = {"reference": asdict(current) if current else None}

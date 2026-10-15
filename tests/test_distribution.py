@@ -59,3 +59,28 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     ref_file.write_text(json.dumps(revision), encoding="utf-8")
     assert command("read-revision", "--ref", str(ref_file))["body"] == "合成工程检查，不是投资研究。"
     assert command("current", "--case-id", "sample")["reference"] == revision
+
+    # Separate installed CLI processes resume and revise the same saved research.
+    context = command("resume-research", "--case-id", "sample")
+    assert context["research"]["reference"] == revision
+    assert context["source_page"]["items"][0]["view"]["data"] == payload["text"]
+    input_file.write_text(json.dumps({**payload, "source_id": "second", "text": "第二份合成材料。"}, ensure_ascii=False), encoding="utf-8")
+    second = command("put-source", "--submission-id", "three", "--input", str(input_file))
+    full = {"case_id": "sample", "revision_id": "r2", "kind": "full", "body": "合成修订，仍有未决问题。",
+            "mandate": "synthetic:mandate", "method": "synthetic:method", "sources": [reference, second],
+            "predecessor": revision, "unresolved": ["合成待核问题"]}
+    input_file.write_text(json.dumps(full, ensure_ascii=False), encoding="utf-8")
+    full_ref = command("submit-revision", "--submission-id", "four", "--input", str(input_file))
+    page = command("resume-research", "--case-id", "sample", "--source-limit", "1")
+    assert page["research"]["record"]["input"]["kind"] == "full"
+    cursor_file = outside / "cursor.json"
+    cursor_file.write_text(json.dumps(page["next_cursor"]), encoding="utf-8")
+    input_file.write_text(json.dumps({**full, "revision_id": "r3", "predecessor": full_ref,
+                                     "body": "较新合成修订。"}, ensure_ascii=False), encoding="utf-8")
+    newest = command("submit-revision", "--submission-id", "five", "--input", str(input_file))
+    last = command("resume-research", "--cursor", str(cursor_file))
+    assert last["research"]["reference"] == full_ref and last["source_page"]["offset"] == 1
+    assert last["source_page"]["items"][0]["view"]["data"] == "第二份合成材料。"
+    assert last["next_cursor"] is None
+    assert command("resume-research", "--ref", str(ref_file))["research"]["reference"] == revision
+    assert command("current", "--case-id", "sample")["reference"] == newest

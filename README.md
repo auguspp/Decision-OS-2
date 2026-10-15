@@ -14,6 +14,7 @@
 | 看雷达、资料、研究与交付的完整施工落点 | [36项能力地图](docs/implementation-baseline.md#coverage) · [工作组与依赖](docs/implementation-baseline.md#work-packages) |
 | 看统一施工与协作规则 | [WORKING-PROTOCOLS.md](WORKING-PROTOCOLS.md) |
 | 看命名、文件归属和首批引用 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
+| 使用来源与研究版本保管 | [版本保管与合成CLI](docs/architecture/versioned-store.md) |
 | 看完整 CI、验证继承和自举 | [CI 合同](docs/engineering/ci-contract.md) · [实现与运行说明](docs/engineering/ci-implementation.md) |
 | 暂停、接管、换对话 | [交接格式与恢复步骤](docs/engineering/handoff.md) |
 
@@ -31,7 +32,7 @@ decision-os --version
 decision-os info --json
 ```
 
-`decision-os` 与 `python -m decision_kernel` 仅提供安装信息，不声称研究、来源、保管或部署已配置，也不会启动这些操作。当前运行包没有第三方依赖；工程依赖锁与测试方式见 [CI实现说明](docs/engineering/ci-implementation.md)。不保证旧 `decision-kernel` 命令或业务API兼容。
+`decision-os` 与 `python -m decision_kernel` 的默认帮助、version/info提供安装信息；显式 `store` 子命令支持[本地合成版本保管](docs/architecture/versioned-store.md)，需要PATH中可用的Git，不代表私人远端目标或研究执行已配置。CLI不会启动采集、Quick/Full、通知或部署。当前运行包没有第三方Python依赖；工程依赖锁与测试方式见 [CI实现说明](docs/engineering/ci-implementation.md)。不保证旧 `decision-kernel` 命令或业务API兼容。
 
 ## 基础与边界
 

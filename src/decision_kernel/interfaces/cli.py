@@ -1,4 +1,4 @@
-"""Installation information only; no network, persistent writes or task execution."""
+"""Installation metadata and explicit local storage; no source/model/task execution."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +14,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command")
     info = commands.add_parser("info", help="show installation metadata, not runtime health")
     info.add_argument("--json", action="store_true", dest="as_json")
+    from decision_kernel.interfaces.store_cli import configure, execute
+    configure(commands)
     args = parser.parse_args(argv)
     if not args.version and args.command is None:
         parser.print_help()
@@ -24,6 +26,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("decision-os-2 is not installed; install the project before using this entry")
     if args.version:
         print(f"decision-os {installed}")
+    elif args.command == "store":
+        return execute(args)
     else:
         data = {"distribution": "decision-os-2", "version": installed,
                 "python": platform.python_version(), "import_package": "decision_kernel"}

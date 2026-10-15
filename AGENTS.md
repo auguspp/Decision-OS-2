@@ -17,6 +17,7 @@
 | 任务 | 读取入口 |
 |---|---|
 | 实施、认领、审阅、关闭 | [工作协议](WORKING-PROTOCOLS.md)；[实施基线](docs/implementation-baseline.md)；#3 指定任务 |
+| 雷达、资料、研究与交付排期 | [能力地图](docs/implementation-baseline.md#coverage)与[有限工作组](docs/implementation-baseline.md#work-packages)；只读本任务对应范围，不重新全表审计 |
 | 目录、命名、资料/研究接线 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
 | CI、依赖、打包、保护设置 | [完整 CI 合同](docs/engineering/ci-contract.md)及其旧实现定位 |
 | 暂停、恢复、并行冲突、规则更新 | [交接说明](docs/engineering/handoff.md)及工作协议 |

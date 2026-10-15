@@ -1,0 +1,1 @@
+"""Decision OS application responsibility."""

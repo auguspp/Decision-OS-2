@@ -35,3 +35,27 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     assert json.loads(result.stdout)["version"] == "0.1.0"
     result = subprocess.run([str(python), "-I", "-c", "import decision_kernel; print(decision_kernel.__file__)"], cwd=outside, env=env, check=True, capture_output=True, text=True)
     assert str(venv) in result.stdout and str(source) not in result.stdout
+
+    # Extend this same real installation consumer; do not build a second wheel/pilot.
+    store = outside / "synthetic.git"
+    def command(*args):
+        completed = subprocess.run([str(venv / "bin/decision-os"), "store", "--path", str(store), *args],
+                                   cwd=outside, env=env, check=True, capture_output=True, text=True)
+        return json.loads(completed.stdout)
+    assert command("init-synthetic")["remote_binding"] == "not-configured"
+    payload = {"source_id": "sample", "kind": "content", "title": "合成来源",
+               "origin": "synthetic:installed-cli", "text": "仓库外读取的合成材料。"}
+    input_file = outside / "input.json"
+    input_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    reference = command("put-source", "--submission-id", "one", "--input", str(input_file))
+    assert command("put-source", "--submission-id", "one", "--input", str(input_file)) == reference
+    ref_file = outside / "ref.json"
+    ref_file.write_text(json.dumps(reference), encoding="utf-8")
+    assert command("read-source", "--ref", str(ref_file))["data"] == payload["text"]
+    input_file.write_text(json.dumps({"case_id": "sample", "revision_id": "r1", "kind": "quick",
+                                     "body": "合成工程检查，不是投资研究。", "mandate": "synthetic:mandate",
+                                     "method": "synthetic:method", "sources": [reference]}, ensure_ascii=False), encoding="utf-8")
+    revision = command("submit-revision", "--submission-id", "two", "--input", str(input_file))
+    ref_file.write_text(json.dumps(revision), encoding="utf-8")
+    assert command("read-revision", "--ref", str(ref_file))["body"] == "合成工程检查，不是投资研究。"
+    assert command("current", "--case-id", "sample")["reference"] == revision

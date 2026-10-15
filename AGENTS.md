@@ -21,7 +21,9 @@
 | 目录、命名、资料/研究接线 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
 | CI、依赖、打包、保护设置 | [完整 CI 合同](docs/engineering/ci-contract.md)及其旧实现定位 |
 | 暂停、恢复、并行冲突、规则更新 | [交接说明](docs/engineering/handoff.md)及工作协议 |
-| Quick、Full、Odds、Decision、来源 | 最终设计相应章节；实际委托与记录。未上线接口不从文件示例推断可用 |
+| Quick、Full、Odds、Decision、来源 | [研究执行入口](docs/research/entry.md)及最终设计相应章节；实际委托与记录。未上线接口不从文件示例推断可用 |
+
+真实 Full 会话还须读取研究执行入口及当前完整方法，采用已有底稿生成的未完成工作/挑战清单，在原委托内继续重要可推进的取证与核算，不停在第一篇报告或把保存权限当研究停止条件。工程I/O不执行研究，方法加载/状态字段不签研究质量；已经给定的公司与问题不要求用户重报。详见研究执行入口，不在这里复制完整方法。
 
 ## 不得越过的边界
 

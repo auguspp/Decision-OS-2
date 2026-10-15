@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from decision_kernel.application.research_reader import ResearchReader
+from decision_kernel.application.research_continuation import continuation_plan
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, RevisionInput, encoded, identifier, require
 from decision_kernel.domain.research_work import (
@@ -51,26 +52,35 @@ class ResearchWorkflow:
         self._continuity(request, previous)
         return {"schema": "research-preparation-v1", "request": asdict(request),
                 "method": research_method(request.kind), "previous_context": previous_context,
+                "continuation": continuation_plan(request, previous_context),
                 "research_assessment": "not-performed", "execution_authority": "not-granted-by-preparation",
                 "persistence": "not-written"}
 
     def checkpoint(self, request: ResearchRequest, progress: ResearchProgress, *,
-                   submission_id: str, revision_id: str) -> dict:
+                   submission_id: str, revision_id: str, method_sha256: str | None = None) -> dict:
         require(isinstance(request, ResearchRequest) and isinstance(progress, ResearchProgress),
                 "RESEARCH_REQUEST_AND_PROGRESS_REQUIRED")
         identifier(submission_id); identifier(revision_id)
         progress.validate_for(request)
+        # Historical methods reconstruct their original policy/bytes for replay.
+        # Runtime writes require current; its reconciliation backend cannot write.
+        method = research_method(request.kind, sha256=method_sha256)
         # Read the declared immutable predecessor, NOT current. VersionedStore must
         # get the opportunity to replay a successful intent before rejecting stale
         # predecessors. Otherwise a lost receipt would break legitimate retries.
         previous = self.store.read_revision(request.predecessor) if request.predecessor else None
         self._continuity(request, previous)
         if previous is not None:
+            old_work = read_workpaper(previous)
+            if old_work is not None and method["id"] == "decision-os-research-full-v2":
+                pending = {(c.question_id, c.argument) for c in old_work[1].challenges
+                           if c.disposition == "unresolved"}
+                accounted = {(c.question_id, c.argument) for c in progress.challenges}
+                require(pending <= accounted, "UNRESOLVED_CHALLENGE_MUST_BE_ADDRESSED")
             old_sources = {encoded(s) for s in previous["record"]["input"]["sources"]}
             new_sources = {encoded(asdict(s)) for s in progress.sources}
             require(not old_sources - new_sources or bool(progress.source_changes.strip()),
                     "SOURCE_REMOVAL_REQUIRES_EXPLANATION")
-        method = research_method(request.kind)
         revision = RevisionInput(
             request.case_id, revision_id, request.kind, render_workpaper(request, progress, method),
             request.mandate, method["id"] + "@sha256:" + method["sha256"],

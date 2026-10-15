@@ -1,4 +1,4 @@
-"""Explicit private GitHub binding; native conditional commits, never a sync daemon."""
+"""Explicit visibility-bound GitHub storage; native conditional commits, never a sync daemon."""
 from __future__ import annotations
 
 import base64
@@ -55,6 +55,7 @@ class GitHubBinding:
     anchor: str
     store_id: str
     write_enabled: bool = False
+    visibility: str = "private"
 
     def __post_init__(self):
         require(isinstance(self.repository, str) and bool(re.fullmatch(
@@ -66,6 +67,8 @@ class GitHubBinding:
         _sha(self.anchor)
         identifier(self.store_id)
         require(type(self.write_enabled) is bool, "INVALID_WRITE_AUTHORIZATION")
+        require(isinstance(self.visibility, str) and self.visibility in ("private", "public"),
+                "INVALID_DATA_VISIBILITY")
 
     @classmethod
     def from_dict(cls, value: dict) -> GitHubBinding:
@@ -77,7 +80,7 @@ class GitHubBinding:
 
     def marker(self) -> bytes:
         # The anchor is a separate trusted commit, avoiding a self-referential hash.
-        return encoded(dict(schema="github-store-binding-v1", project="decision-os-2", mode="private",
+        return encoded(dict(schema="github-store-binding-v1", project="decision-os-2", mode=self.visibility,
                             repository=self.repository, repository_id=self.repository_id,
                             branch=self.branch, store_id=self.store_id))
 
@@ -161,9 +164,11 @@ class GitHubStore:
         meta = self.api.request("GET", self._prefix)
         require(isinstance(meta, dict) and meta.get("id") == self.binding.repository_id
                 and type(meta.get("id")) is int and meta.get("full_name") == self.repository
-                and meta.get("private") is True and meta.get("archived") is False
+                and meta.get("private") is (self.binding.visibility == "private")
+                and meta.get("archived") is False
                 and isinstance(meta.get("default_branch"), str)
-                and meta["default_branch"] != self.binding.branch, "PRIVATE_BINDING_MISMATCH")
+                and meta["default_branch"] != self.binding.branch,
+                "PRIVATE_BINDING_MISMATCH" if self.binding.visibility == "private" else "PUBLIC_BINDING_MISMATCH")
 
     def _ancestor(self, base: str, head: str) -> None:
         _sha(base); _sha(head)

@@ -14,7 +14,7 @@
 | 看雷达、资料、研究与交付的完整施工落点 | [36项能力地图](docs/implementation-baseline.md#coverage) · [工作组与依赖](docs/implementation-baseline.md#work-packages) |
 | 看统一施工与协作规则 | [WORKING-PROTOCOLS.md](WORKING-PROTOCOLS.md) |
 | 看命名、文件归属和首批引用 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
-| 使用来源与研究版本保管 | [版本保管与合成CLI](docs/architecture/versioned-store.md) |
+| 使用来源与研究版本保管 | [版本保管与合成CLI](docs/architecture/versioned-store.md) · [公开records分支绑定](docs/architecture/github-store.md#topology) |
 | 看完整 CI、验证继承和自举 | [CI 合同](docs/engineering/ci-contract.md) · [实现与运行说明](docs/engineering/ci-implementation.md) |
 | 暂停、接管、换对话 | [交接格式与恢复步骤](docs/engineering/handoff.md) |
 
@@ -32,7 +32,7 @@ decision-os --version
 decision-os info --json
 ```
 
-`decision-os` 与 `python -m decision_kernel` 的默认帮助、version/info提供安装信息；显式 `store` 子命令支持[本地合成版本保管](docs/architecture/versioned-store.md)，需要PATH中可用的Git，不代表私人远端目标或研究执行已配置。CLI不会启动采集、Quick/Full、通知或部署。当前运行包没有第三方Python依赖；工程依赖锁与测试方式见 [CI实现说明](docs/engineering/ci-implementation.md)。不保证旧 `decision-kernel` 命令或业务API兼容。
+`decision-os` 与 `python -m decision_kernel` 的默认帮助、version/info提供安装信息；显式 `store` 子命令支持[本地合成版本保管](docs/architecture/versioned-store.md)，本地合成模式需要PATH中可用的Git；远端使用独立的GitHub绑定与运行凭据，不代表真实读写、研究或定时任务已启用。CLI不会启动采集、Quick/Full、通知或部署。当前运行包没有第三方Python依赖；工程依赖锁与测试方式见 [CI实现说明](docs/engineering/ci-implementation.md)。不保证旧 `decision-kernel` 命令或业务API兼容。
 
 ## 基础与边界
 
@@ -40,4 +40,4 @@ decision-os info --json
 
 首个代码责任是完整 CI 与可安装骨架；共同保管的必要合同可用后，直接 Full/Quick 与市场雷达、产业商品、披露资料及日常交付按依赖并行。首发可用不等于全部雷达或500+覆盖完成，未完成责任须明确接续。文档/规则已落地、CI已配置、产品已使用分别成立，实际结果读对应任务。
 
-本仓公开。仅提交获准工程内容和合成/脱敏样例；私人运行数据、研究、人工决定和密钥在独立获准位置保管。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。
+本仓公开；`main` 仅提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，独立 `records` 分支可保管有公开权利的来源与原创研究，默认[只读绑定](config/store-binding.json)；保密数据未来可另行迁往独立私有仓库。密钥、个人及第三方隐私、无再分发许可的原件和正式人工Decision不得公开；数据分支不是权限隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。

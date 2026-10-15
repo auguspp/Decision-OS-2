@@ -147,7 +147,7 @@ def test_kind_unverified_not_mislabeled_as_source_confirmed():
 def test_empty_window_is_explicit_not_source_failure(tmp_path):
     empty=parsed(rows=[])
     assert empty.provider_rows==0 and empty.provider_pages==1
-    assert catalog_view(empty)["status"]=="complete-empty-window"
+    assert catalog_view(empty)["status"]=="provider-empty-result"
     store=VersionedStore(GitStore.init_synthetic(tmp_path/"s.git"))
     assert save_catalog(store,empty,"empty")["saved_count"]==0
     assert store.search("")["total"]==0

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 
+from decision_kernel.application.numerical_audit import NumericalAudit
 from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_workflow import ResearchWorkflow
@@ -26,7 +27,7 @@ from decision_kernel.interfaces.research_payload import (
 
 WRITE_OPERATIONS = {"put-source", "checkpoint"}
 RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint"}
-READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue"} | RECONCILE_OPERATIONS
+READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue", "audit-numbers"} | RECONCILE_OPERATIONS
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -64,6 +65,9 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation == "audit-numbers":
+        audit = NumericalAudit(store)
+        return audit.saved(BlobRef(**payload["reference"])) if set(payload) == {"reference"} else audit.audit(payload)
     if operation == "catalogue":
         require(set(payload) <= {"cursor", "limit"}, "INVALID_CATALOGUE_PAYLOAD")
         return ResearchCatalogue(store).page(**payload)
@@ -155,6 +159,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         persist()
         result = _perform(VersionedStore(backend), command)
         report.update(result=result, status="completed")
+        if operation == "audit-numbers" and result["status"] not in ("checked", "conditional"):
+            report["status"] = "numerical-not-cleared"  # Keep diagnostics; do not present a green audit.
         if operation in WRITE_OPERATIONS:
             report["write"] = "published" if backend.published else "replayed"
         elif operation in RECONCILE_OPERATIONS:
@@ -208,7 +214,7 @@ def main(argv=None) -> int:
                              attempt=os.environ.get("GITHUB_RUN_ATTEMPT", ""))
         # Reports hold the actual data. Never echo submitted source/research text to logs.
         print(json.dumps({key: report[key] for key in ("status", "operation", "write", "payload_sha256")}, sort_keys=True))
-        return 0
+        return 0 if report["status"] == "completed" else 2
     except (RecordError, OSError, UnicodeError, TypeError, KeyError) as error:
         code = str(error) if isinstance(error, RecordError) else "RUNTIME_INPUT_OR_OUTPUT_FAILURE"
         print(json.dumps({"error": code}), file=sys.stderr)

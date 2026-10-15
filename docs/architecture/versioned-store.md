@@ -4,11 +4,11 @@
 
 ## 当前可调用范围与真实消费者
 
-`VersionedStore` 提供来源接收、精确读取、研究修订、当前修订读取、来源查询/分页。`decision-os store` 是安装后的真实消费者；它显式调用本地 `GitStore`。后续研究、雷达和交付复用同一版本/引用语义，不分别建立资料库。
+`VersionedStore` 提供来源接收、精确读取、研究修订、当前修订读取、来源查询/分页。`decision-os store` 是安装后的真实消费者；它通过显式配置选择本地 `GitStore` 或认证 `GitHubStore`，共用同一应用层。远端绑定、权限、限额及调用见[私有GitHub适配器](github-store.md)。后续研究、雷达和交付复用同一版本/引用语义，不分别建立资料库。
 
-**当前适配器只支持专用本地 bare Git 中的合成材料。** `init-synthetic` 不复用已有目录、不联系远端、不读取工程凭据、不绑定私人运行目标。`repository=synthetic-git:<id>` 是本地逻辑身份，不是可供远端GPT读取的GitHub地址。合成模式是使用边界，不是自动识别敏感材料的分类器；不得拿真实私人材料冒充合成输入。
+**本地适配器只支持专用 bare Git 中的合成材料；远端适配器要求独立的已核私有绑定。** `init-synthetic` 不复用已有目录、不联系远端、不读取工程凭据、不绑定私人运行目标。`repository=synthetic-git:<id>` 是本地逻辑身份，不是可供远端GPT读取的GitHub地址。合成模式是使用边界，不是自动识别敏感材料的分类器；不得拿真实私人材料冒充合成输入。
 
-本组没有采集器、解析PDF、模型执行、定时、部署、通知、清理、正式Decision或远端同步入口。保存kind=quick/full的合成记录不执行一次Quick/Full研究，也不代表研究质量已接受。真正私有G通路仍需实际获准目标、受控writer、相同权限的确切远端读取与首份正常使用证据。
+本保管层没有采集器、解析PDF、模型执行、定时、部署、通知、清理或正式Decision；远端适配器是显式读写，不是自动同步入口。保存kind=quick/full的合成记录不执行一次Quick/Full研究，也不代表研究质量已接受。真正私有G通路仍需实际获准目标、受控writer、相同权限的确切远端读取与首份正常使用证据。
 
 ## 责任与复用决定
 
@@ -19,7 +19,7 @@
 | Git字节、提交与条件更新 | `infrastructure/git_store.py` | 原生Git对象/tree/commit/ref，不自建版本数据库或全局锁服务 |
 | 明确CLI接线 | `interfaces/store_cli.py` | 延伸现有CLI；安装测试在同一wheel消费者中扩展，不新增同形安装pilot |
 
-选择原生Git而不是SQLite/ORM，是因为本批消费者需要版本化文件与commit/path读取；数据库会额外引入一套权威状态及导出责任。没有批量全文索引或网络消费者需求，不加入向量库、GitPython、通用插件/DAG或存储管理平台。每次提交的 `submissions/<id>.json` 仅用于同一保存意图恢复，不是第二研究账本。
+选择原生Git而不是SQLite/ORM，是因为本批消费者需要版本化文件与commit/path读取；数据库会额外引入一套权威状态及导出责任。没有批量全文索引需求，不加入向量库、GitPython、通用插件/DAG或存储管理平台。远端消费者复用GitHub原生条件提交和同一文件合同，不新增第二主库。每次提交的 `submissions/<id>.json` 仅用于同一保存意图恢复，不是第二研究账本。
 
 原范围参考为旧固定版本[研究成果合同](https://github.com/auguspp/decision-kernel/blob/cb3bbc87eeeeadb6bf24d7adc8cc214cd80ab9b8/docs/research-outcome-contract-v1.md)的部分成果/来源资格/修订边界；不继承其旧任务、schema、费用或兼容义务。实际底层采用官方[Git update-ref](https://git-scm.com/docs/git-update-ref)、[commit-tree](https://git-scm.com/docs/git-commit-tree)与[Python subprocess](https://docs.python.org/3.12/library/subprocess.html)；2026-10-15核读其条件更新、创建提交和显式进程环境语义。组件按已安装工具调用，不在本仓复制分发其源码；没有为旧仓补造许可证。运行需要Python 3.12+、PATH可用的Git；本批验证范围为Linux/POSIX，不宣称所有平台已验。
 

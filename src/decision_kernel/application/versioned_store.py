@@ -12,7 +12,7 @@ from decision_kernel.domain.records import (
     BlobRef, Conflict, IntegrityError, MissingObject, RecordError, RevisionInput,
     Selection, SourceInput, SourceRef, checked_text, digest, encoded, identifier, require,
 )
-from decision_kernel.infrastructure.git_store import GitStore
+from decision_kernel.application.store_backend import StoreBackend
 
 MAX_QUERY_VERSIONS = 1024
 
@@ -49,7 +49,7 @@ def _fold(value: str) -> str:
 class VersionedStore:
     """No source acquisition, model calls, automatic decisions or deletion methods."""
 
-    def __init__(self, backend: GitStore):
+    def __init__(self, backend: StoreBackend):
         self.backend = backend
 
     def _replay(self, head: str, submission_id: str, intent: dict) -> BlobRef | None:

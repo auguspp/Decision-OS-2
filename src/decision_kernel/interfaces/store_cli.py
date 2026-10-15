@@ -1,4 +1,4 @@
-"""Explicit local synthetic storage commands, composed under decision-os store."""
+"""Explicit local or privately bound GitHub storage under decision-os store."""
 from __future__ import annotations
 
 import argparse
@@ -10,17 +10,20 @@ import sys
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef
 from decision_kernel.infrastructure.git_store import GitStore
+from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 
 
 def configure(commands) -> None:
-    parser = commands.add_parser("store", help="versioned synthetic local storage; not a private runtime binding")
-    parser.add_argument("--path", required=True, type=Path, help="dedicated local bare Git store")
+    parser = commands.add_parser("store", help="versioned storage with an explicit local or private binding")
+    location = parser.add_mutually_exclusive_group(required=True)
+    location.add_argument("--path", type=Path, help="dedicated synthetic local bare Git store")
+    location.add_argument("--binding", type=Path, help="trusted run-owner private GitHub binding JSON; not source data")
     actions = parser.add_subparsers(dest="store_command", required=True)
     actions.add_parser("init-synthetic", help="create a NEW synthetic-only store; never a production target")
     for command in ("put-source", "submit-revision"):
         action = actions.add_parser(command)
         action.add_argument("--submission-id", required=True)
-        action.add_argument("--input", required=True, type=Path, help="UTF-8 JSON input, containing only synthetic material")
+        action.add_argument("--input", required=True, type=Path, help="UTF-8 JSON input; synthetic locally, explicitly authorized material for a private binding")
     for command in ("read-source", "read-revision"):
         actions.add_parser(command).add_argument("--ref", required=True, type=Path, help="saved JSON reference")
     actions.add_parser("current").add_argument("--case-id", required=True)
@@ -58,11 +61,19 @@ def _load(path: Path) -> dict:
 def execute(args: argparse.Namespace) -> int:
     try:
         if args.store_command == "init-synthetic":
+            if args.binding is not None:
+                raise RecordError("REMOTE_INITIALIZATION_NOT_SUPPORTED")
             backend = GitStore.init_synthetic(args.path)
             result = {"repository": backend.repository, "mode": "synthetic", "head": backend.head(),
                       "remote_binding": "not-configured"}
         else:
-            backend = GitStore(args.path)
+            if args.binding is None:
+                backend = GitStore(args.path)
+            else:
+                binding = GitHubBinding.from_dict(_load(args.binding))
+                if args.store_command in ("put-source", "submit-revision") and not binding.write_enabled:
+                    raise RecordError("REMOTE_READ_ONLY")
+                backend = GitHubStore(binding, GitHubAPI.from_environment())
             store = VersionedStore(backend)
             if args.store_command == "put-source":
                 result = asdict(store.put_source(args.submission_id, SourceInput.from_dict(_load(args.input))))

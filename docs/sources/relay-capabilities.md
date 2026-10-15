@@ -18,7 +18,7 @@ python -m decision_kernel.interfaces.relay_capabilities_cli --live \
 ```
 
 GitHub Actions 入口 `decision-os-relay-capabilities` 只允许本仓main手动运行；填确切
-main SHA和元数据保管许可即可，不用再填写Key。Secret不提供给安装和CI，作业只有
+main SHA和元数据保管许可即可，不用再填写Key。`retries` 默认0（不重试），可显式选1或2。Secret不提供给安装和CI，作业只有
 contents:read，和现有来源作业使用同一串行组。没有定时器或records写入。
 
 产物为**原始HTTP响应字节** `capabilities.raw.json` 和 `receipt.json`，后者保留请求/接收
@@ -38,3 +38,27 @@ contents:read，和现有来源作业使用同一串行组。没有定时器或r
 
 读取接口维护时保留旧原件与回执；新快照新版本。移除此入口同时移除专属workflow/CLI/
 测试，保留仍有效的业务RelayHTTP及历史来源引用。自查/CI与真实目录读取分别验收。
+
+## 失败诊断与有限恢复
+
+依据原手册第6、9、11节。`RelayHTTP.last_error_meta` 提供经过筛选的HTTP状态、
+已知业务错误枚举、请求ID、错误正文解析状态和 `Retry-After` 的有效/缺失/无效状态；
+不保存服务器错误正文、Cookie、任意诊断信息或密钥。连接异常只按Python实际异常类型
+区分DNS、TLS、超时、连接失败等；无法分辨仍为unknown，不根据耗时猜测。
+成功响应的原有四字段合同不变，财务/预约业务调用仍是单次，不被目录重试选项影响。
+
+目录CLI可显式增加 `--retries 2 --max-wait-seconds 120`。最多初次请求加两次重试，
+每次都只访问同一个能力目录目标；不执行返回的业务示例。429必须有有效Retry-After，
+按秒数或HTTP日期完整等待；无效/缺失则停止。超过剩余总等待预算则记录
+`wait-budget-exceeded`，不缩短等待、不忙循环。每轮退避至少1、2秒；401/403、明确
+`data_source_unavailable`、无说明的503、TLS错误等不自动重试。
+
+`receipt.json` 在每次请求之前、失败之后、等待前后即时写入，增加 `attempts`、
+`retries_allowed`、`total_wait_seconds`；保留中断前的已知事实。最后成功也保留此前失败，
+只有最终成功正文写入 `capabilities.raw.json`；收到限流不代表已取得完整目录。
+过去运行未留Retry-After的缺口不能事后补造。本功能提供后续合法请求的诊断，
+不把过去限流、身份拒绝或失败次数重置成新的无限预算。
+
+本辅助代码复用Python标准库 `urllib.error`、`email.utils.parsedate_to_datetime`、
+`socket`/`ssl`异常类型及旧Kernel的错误分类思路，不引入重试框架或第二套HTTP客户端。
+退出目录恢复能力时同步移除专属重试入口与测试；其他消费者仍使用的安全错误诊断保留。

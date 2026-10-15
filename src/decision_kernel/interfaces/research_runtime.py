@@ -91,11 +91,17 @@ def _perform(store: VersionedStore, command: dict) -> dict:
         require(set(payload) == {"request", "progress", "revision_id", "method_sha256"},
                 "INVALID_CHECKPOINT_PAYLOAD")
         request = ResearchRequest.from_dict(payload["request"])
-        require(payload["method_sha256"] == research_method(request.kind)["sha256"],
-                "RESEARCH_METHOD_CHANGED_REPREPARE")
+        if operation == "checkpoint":
+            require(payload["method_sha256"] == research_method(request.kind)["sha256"],
+                    "RESEARCH_METHOD_CHANGED_REPREPARE")
+        else:
+            # Rebuild the original method, not today's method. _CommandStore and
+            # the read-only job still forbid a missing intent from publishing.
+            research_method(request.kind, sha256=payload["method_sha256"])
         return ResearchWorkflow(store).checkpoint(
             request, ResearchProgress.from_dict(payload["progress"]),
-            submission_id=command["submission_id"], revision_id=payload["revision_id"])
+            submission_id=command["submission_id"], revision_id=payload["revision_id"],
+            method_sha256=payload["method_sha256"])
     if operation == "read-source":
         return store.read_source(SourceRef.from_dict(payload))
     selectors = {"request", "case_id", "reference"} if operation == "prepare" else {"case_id", "reference", "cursor"}

@@ -126,3 +126,14 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
                               cwd=outside, env=no_host, capture_output=True, text=True)
     assert rejected.returncode == 2 and json.loads(rejected.stderr)["error"] == "MANUAL_MAIN_RUNTIME_REQUIRED"
     assert not (outside / "host-output").exists()
+
+    # Same cold wheel: full method is usable offline, with no data-store credential.
+    method = subprocess.run([str(python), "-I", "-m", "decision_kernel.methods.research", "--kind", "full"],
+                            cwd=outside, env=no_host, check=True, capture_output=True, text=True)
+    assert json.loads(method.stdout)["id"] == "decision-os-research-full-v2"
+    assert prepared["method"]["sha256"] == json.loads(method.stdout)["sha256"]
+    assert resumed["continuation"]["actions"][0]["next_action"] == "完成合成计算"
+    completed = command("prepare-research", "--case-id", "work")
+    assert completed["continuation"]["actions"] == []
+    assert completed["continuation"]["research_assessment"] == "not-performed"
+    assert completed["continuation"]["review_flags"] == ["DECLARED_CONCLUSION_REQUIRES_SUBSTANTIVE_REVIEW"]

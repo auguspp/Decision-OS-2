@@ -1,59 +1,71 @@
-# 私有 GitHub 版本保管适配器
+# GitHub 版本保管：显式可见性与独立数据分支
 
-本页细化[共同版本合同](versioned-store.md)，责任归[来源/研究保管 #6](https://github.com/auguspp/Decision-OS-2/issues/6)。实现可安装不等于私人目标已经启用；实际目标、授权、运行和消费者验收保存在原事项及获准私有运行登记，不在公开代码仓存真实绑定或凭据。
+本页细化[共同版本合同](versioned-store.md)，责任归[来源/研究保管 #6](https://github.com/auguspp/Decision-OS-2/issues/6)。适配器可安装、目标初始化、实际保存、GPT读取和运行保障分别留证，不因其中一项成立而代签其他项。
+
+<a id="topology"></a>
+## 首版路线 A，保留未来切换 B 的边界
+
+按2026-10-15用户[正式裁决](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，首版采用现有公开仓库 `auguspp/Decision-OS-2`：main保管代码、CI、方法和工程文档；独立非默认 `records` 分支保管有公开权利的来源版本和原创研究。数据分支当前树不包含工程代码或workflow；普通研究保存不向main提PR，也不触发主线代码CI。独立分支不是隐私隔离，不启用主线保护或替代ruleset。
+
+本仓[只读绑定](../../config/store-binding.json)给出原生仓库ID、records、实际初始化anchor和store_id，不含凭据。anchor对应的store.json已经初始化并精确读回，初始树只有marker；初始化记录在#6。这证明目标位置成立，不证明运行token、GraphQL条件写或研究任务已经启用。main与数据head各自前进，不能把数据commit写成软件版本。
+
+未来按需迁往独立数据仓库B时，代码仓可以继续公开；消费者仍使用SourceRef/研究修订合同，不把本仓ID写进实体本体ID。仓库、分支和可见性由运行配置选择。现有BlobRef里的repository/commit/path是确切的读取位置，不是假定永不移动的领域身份。迁移时必须保留旧位置可读或增加有界、显式的旧归档解析，并只保留一个当前写入真源；当前适配器仍拒绝foreign repository，单改配置不代表跨仓迁移已经完成。本版不建立B、双写、自动迁移或通用解析平台。
+
+公开许可只覆盖有公开权利的成果与材料。密钥、账号、个人识别信息、第三方隐私以及没有再分发许可的付费研报/PDF/原文不得公开；旧私有资料不自动迁出。公开内容被复制后不能保证收回。数据可见性许可不自动启动Quick、Full、来源定时、通知、部署或正式Decision。
 
 ## 一个应用层，两个实际适配器
 
-`VersionedStore`继续拥有来源接收、精确引用、研究修订、幂等意图和查询。新增`application/store_backend.py`只声明已有用例实际需要的八个字节/版本操作；本地`GitStore`与认证`GitHubStore`共同实现，不复制研究/来源逻辑，不增加第二权威库。CLI用互斥的`--path`或`--binding`选择实现。原本地路径仍仅用于合成材料。
+VersionedStore继续拥有来源接收、精确引用、研究修订、幂等意图和查询。application/store_backend.py只声明现有用例使用的八个字节/版本操作；本地GitStore与认证GitHubStore共同实现，不复制研究/来源逻辑，不新增第二权威库。CLI用互斥的--path或--binding选择实现；本地路径仍仅用于合成材料。
 
-新适配器调用GitHub原生Git对象读取及`createCommitOnBranch`；没有数据库、队列、同步守护程序或新增Python依赖。HTTP只为这些明确操作服务，不实现通用GitHub SDK。保留独立公司/证券/商品身份、日期与保管等级；没有新增经济判断、采集、PDF解析、正式Decision、删除或自动清理。
+适配器调用原生Git对象及createCommitOnBranch，不增加数据库、队列、同步守护程序或Python依赖。独立公司/证券/商品身份、日期与provided/excerpt/external保管等级不变；不新增经济判断、采集、PDF解析、Decision确认、删除或自动清理。
 
-## 绑定必须来自可信运行配置
+## 可信配置、可见性与凭据
 
-`GitHubBinding`包含repository（owner/name）、原生数值repository_id、专用branch（`records`或`records/<id>`）、确切anchor提交、独立store_id，以及默认false的write_enabled。所有字段由运行owner提供并核对，不由来源原文、研究JSON或模型输出决定。配置文件不接受token字段。
+GitHubBinding包含repository（owner/name）、原生数值repository_id、专用branch（records或records/<id>）、确切anchor、独立store_id、默认false的write_enabled，以及默认private的visibility。public必须显式选择，不能根据仓库返回值自动跟随；未知值、真假值或大小写变体均拒绝。配置不接受token字段，也不由来源正文或研究JSON决定写入授权。
 
-适配器只打开**已经获准并初始化**的私有目标，不创建仓库、分支或初始化提交，不把旧工程main当研究真源。每次读取重新核原生repository ID/全名、private=true、未归档、数据分支不等于默认分支。anchor与当前提交的`store.json`必须等于绑定marker；允许读取的提交必须位于anchor之后并可达当前数据分支。旧仓库即使被选为资源，其初始化锚点之前的历史也不属于本库的可读集合。整个数据树限定在共同文件布局，拒绝代码工作流、symlink/gitlink、重复路径和不完整树。
+每次读取重新核仓库ID/全名、实际private布尔值与配置相符、未归档、数据分支不等于默认分支；提交发送前再次核查。anchor及当前提交的store.json必须等于binding.marker()，marker的mode与visibility一致。private默认下的既有marker字节不变；把配置改为public不能绕过原private marker。管理员在请求间改可见性仍可能产生竞态，客户端检查不是服务端原子隐私锁。
 
-初始化marker由`binding.marker()`生成，只包含schema、project、mode、repository、repository_id、branch、store_id；anchor由实际初始化提交返回，避免自引用哈希。初始化需要单独核资源授权、独立分支及旧系统副作用，不能仅因为连接器能写就自动选择目的地。本工程变更不代签这些实际初始化步骤。
+适配器只打开已获准并初始化的目标，不自动创建仓库、分支、anchor，也不把旧main当数据真源。读取commit须在anchor之后、可达当前数据分支；初始化之前的工程历史不属于本库读取集合。完整数据树只接受共同布局的普通文件，拒绝workflow、代码、symlink/gitlink、重复路径或不完整树。普通写入不能改marker或旧不可变记录。
 
-认证只读取运行环境中的`DECISION_OS_STORE_TOKEN`，不回退到`GH_TOKEN`、`GITHUB_TOKEN`、本机GitHub CLI认证或工程凭据。默认读绑定不授权写；启用写还需要可信配置write_enabled=true和GitHub实际写权限。配置开关不是服务端ACL，必须用适当范围的独立运行凭据；共享宽权限的所有者仍能绕过库。不可将此设计称为完整角色隔离，也不允许研究写入确认正式Decision。
-
-工程main按用户决定不启用主线保护，与私人数据的实际凭据、目标权限及受控writer是不同责任。目标可见性/拥有者可能在请求间被管理员修改，客户端检查不是服务端原子隐私锁；运行owner必须控制此类管理变更，启用前说明实际强制点。
+认证只取DECISION_OS_STORE_TOKEN，不回退到工程GH_TOKEN、GITHUB_TOKEN、本机gh认证或Git凭据。public也不把公开可读解释为任何人可写。开启写入需要可信配置write_enabled=true、相应委托和实际GitHub权限；仓内分发的绑定保持只读，运行writer使用经过核验的独立配置及适当范围凭据。配置开关不是服务端ACL；共享宽凭据持有者可以绕过库，不能声称完整角色隔离。工程main不保护，不取消这些数据写入边界。
 
 ## 精确读取与条件提交
 
-读取使用绑定repo上的commit→tree→blob，不访问来源origin URL、返回的下载URL或过期签名地址。检查完整树、普通文件、原生blob长度/OID，再由已有应用层检查SHA256、来源版本摘要、manifest与正文/CSV选择。可恢复引用仍为repository/commit/path/SHA256，GPT可按同一权限用GitHub连接器读确切文件；**能组成地址不表示该会话已经有实际读取证据**。
+读取走绑定repo的commit→tree→blob，不跟随origin、download_url或签名地址。检查完整树、普通文件、blob长度/OID；应用层继续检查SHA256、manifest与版本摘要、正文行或CSV逻辑行列。GPT可用连接器按相同权限读取repository/commit/path；能组成地址不等于该宿主已取得读取证据。拒绝、丢失、损坏、不完整不能静默换最新版本。
 
-提交采用官方GraphQL `createCommitOnBranch`，以原生分支node ID定位，以`expectedHeadOid`核旧head，资料、研究修订、current与意图日志在同一次提交发布。不把REST“先GET再PATCH ref”当原子CAS，不用force或分文件提交模拟事务。只允许共同布局中的新增文件及研究current更新；既存不可变内容不能覆写，marker不能由普通提交改变，没有deletions。
+写入使用官方createCommitOnBranch、原生分支node ID及expectedHeadOid，把资料/研究修订/current/意图日志一次条件发布。不将REST先GET再PATCH ref冒充原生CAS，不用force、分文件提交或单纯计数检查模拟事务。仅允许共同布局内新增文件和research current更新，没有deletions。
 
-原生提交返回后核唯一前驱、实际分支可达性、绑定、整个文件集合、未涉及文件未变以及提交字节读回，才允许应用层给出成功引用。发送前发现head变化报Conflict；超时、5xx、异常GraphQL结果或发布后读回失败保留UnknownWrite。GraphQL错误不解析可能含私人信息的正文来猜是否写成；**先用同一submission_id对账，不改键、不自动重发**。已发布的意图日志可恢复原commit回执，即使分支后来又前进。
+返回后核唯一前驱、分支可达性、绑定、完整文件集合、未涉及文件未变以及真实字节读回，才给成功引用。发送前head变化报Conflict；超时、5xx、异常GraphQL结果、提交后读回失败保留UnknownWrite。错误正文可能含敏感信息，不靠解析其文字猜成功；先用同一submission_id对账，不改键或自动重发。已发布日志可恢复原commit，即使分支后来前进。
 
-## 有界读取与失败信息
+连接器的初始化/文件读取、独立运行token调用本适配器、工程CI是不同通路；一个通路的成功不能代签另一个。没有可调用的GraphQL写入口或独立运行凭据时，明确保留相应验收，不把普通连接器提交包装成适配器原生条件写已验。
 
-固定HTTPS host为api.github.com，保持默认TLS验证；不跟重定向，不采用环境代理，不执行来源文本，不回显token、URL或服务端错误正文。401/403明确拒绝；404保留“目标不存在或无权”的联合结果，只有在已认证完整树中缺少路径才称OBJECT_MISSING。
+## 有界读取与失败处理
 
-每HTTP请求30秒，响应/请求上限8MiB，每个API实例最多512次请求；树最多8192项，单blob和提交总字节最多4MiB。已有来源/研究输入仍受原2MiB约束，查询仍最多1024版本。超限明确失败，不静默截断/部分成功，不靠重试消耗无限请求。这些是首批有限实现边界，不是全量数据服务SLA。
+HTTP固定HTTPS host api.github.com、正常TLS校验，不跟重定向、不用环境代理、不执行来源文本、不回显token/URL/服务端错误正文。401/403明确拒绝；404保留不存在或无权的联合语义；只有完整已认证树中缺少路径才称OBJECT_MISSING。无自动重试。
 
-同一适配器内仅缓存确切提交树（最多32个）与已验blob（最多128个、合计8MiB）；不缓存可见性、当前head或权限。CLI每次操作新建API实例；长期宿主在明确操作边界管理实例和预算，不能为绕过拒绝/限流悄悄重建。扩大范围须真实用途与相应验证，不加全局缓存平台。
+每请求30秒，响应/请求上限8MiB；每API实例最多512次请求；树最多8192项，单blob及提交总字节最多4MiB。来源/研究输入仍受2MiB约束，查询最多1024版本。超限明确失败，不截断为成功，不为绕过限制重建实例。
 
-## 安装后调用
+仅缓存确切提交树（32个）和已验blob（128个、合计8MiB），不缓存可见性、权限、当前head或可达性。CLI每操作新建API实例，长期宿主在明确操作边界管理预算；扩大范围需真实用途与验证，不自建缓存平台。
 
-先沿README正常安装。运行owner在公开仓外准备已核验的绑定文件，并通过宿主秘密配置注入专用token，不把token写进命令行、资料JSON或公开日志。
+## 安装后调用与GPT读取
+
+沿README安装后，运行owner通过宿主秘密配置提供专用token，不能把token放在命令行、输入JSON、公开仓或CI。以下仓内配置明确只读：
 
 ```bash
-# binding.json 是可信配置；不是从来源正文生成的文件。
-decision-os store --binding /private/runtime/binding.json current --case-id example-case
-decision-os store --binding /private/runtime/binding.json read-source --ref /private/runtime/source-ref.json
-# 以下只用于已获准写入的目标与材料，默认只读绑定会拒绝。
-decision-os store --binding /private/runtime/binding.json put-source --submission-id example-source --input /private/runtime/source.json
+decision-os store --binding config/store-binding.json search --query 铜价
+decision-os store --binding config/store-binding.json current --case-id example-case
+# 读取先前返回的确切引用；ref文件属于实际获准运行记录。
+decision-os store --binding config/store-binding.json read-source --ref /runtime/source-ref.json
 ```
 
-原`read-revision`、`submit-revision`、`search`及cursor沿同一CLI用例，不新增另一套研究通路。`init-synthetic`与`--binding`组合必拒绝。输入/认证/冲突等失败返回结构化错误及exit2；UnknownWrite要求对账，不是让调用者把失败改记为保存成功。
+获准writer在受信运行位置使用write_enabled=true的配置，再调用同一put-source或submit-revision，不修改仓内默认配置给所有消费者开写。read-revision、search、cursor和current复用原用例；init-synthetic与--binding组合拒绝。错误返回exit2及结构化代码；UnknownWrite要求对账，不是成功。
 
-## 复用依据、验证与退出
+交互GPT先读绑定并核records当前head与store.json，再按保存回执的确切commit/path读取manifest和其representation；显示未读完及未认证原件的限制。普通会话读取可单独成立，不自动证明定时Quick或其他宿主具有相同权限、token或写入能力。
 
-有界核读的官方原语（2026-10-15）：[createCommitOnBranch及expectedHeadOid](https://docs.github.com/en/graphql/reference/commits)、[Git树读取与truncated](https://docs.github.com/en/rest/git/trees)、[Git blob](https://docs.github.com/en/rest/git/blobs)、[提交/路径历史与比较](https://docs.github.com/en/rest/commits/commits)。采用原生版本/提交而非额外GitPython、ORM或同步服务，是因为当前只需这些固定操作；Python urllib负责TLS/HTTP，应用合同继续用标准库，不再造调度或版本引擎。
+## 验证、复用与退出
 
-`test_github_store.py`用模拟GitHub响应+真实本地Git验证共享VersionedStore、原生CAS对应语义、精确读取、私有绑定和同意图恢复；`test_github_transport.py`验证实际请求构造、独立凭据、拒绝/截断/重定向及未知写错误处理。模拟服务不证明GitHub真实凭据权限或托管成功；本地测试、远端CI、真实私有绑定、第一份保存和GPT读回分别留证。原有本地/安装合同仍执行。
+沿PR #19核读的官方原语：[createCommitOnBranch](https://docs.github.com/en/graphql/reference/commits)、[Git树及truncated](https://docs.github.com/en/rest/git/trees)、[blob](https://docs.github.com/en/rest/git/blobs)、[提交历史/比较](https://docs.github.com/en/rest/commits/commits)。本次只为已采纳可见性作窄适配，不替换其版本/传输/事务机制。
 
-本组退出时同步处理远端绑定/HTTP/CLI的专属测试及配置，保留共享精确引用、前驱、幂等意图和保留关系。生产备份/恢复、健康读取、首份正常获准保存及消费者采用仍由#6/#13在实际启用时验证；不会因PR合并或代码回退自动删除已保存数据。
+test_github_store.py的真实Git/模拟GitHub与test_github_transport.py继续保护原合同；test_github_visibility.py复用相同模型，保护private默认、public显式选择、marker不匹配、元数据漂移、只读默认、发送前复核、公开模式幂等和并发CAS。模拟响应不证明真实token或托管写入成功；远端完整CI与真实数据验收分别记录。
+
+退役时同步处理适配器/绑定/CLI/HTTP的专属配置与测试，保留共享精确引用、前驱、意图和保留语义。生产备份/恢复/健康、第一份正常成果保存和真实消费者采用由#6/#13按启用范围验收；代码回退不自动删除数据，不把备份job成功当恢复成功。

@@ -1,4 +1,4 @@
-"""Explicit local or privately bound GitHub storage under decision-os store."""
+"""Explicit local or visibility-bound GitHub storage under decision-os store."""
 from __future__ import annotations
 
 import argparse
@@ -14,16 +14,16 @@ from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding
 
 
 def configure(commands) -> None:
-    parser = commands.add_parser("store", help="versioned storage with an explicit local or private binding")
+    parser = commands.add_parser("store", help="versioned storage with an explicit local or GitHub binding")
     location = parser.add_mutually_exclusive_group(required=True)
     location.add_argument("--path", type=Path, help="dedicated synthetic local bare Git store")
-    location.add_argument("--binding", type=Path, help="trusted run-owner private GitHub binding JSON; not source data")
+    location.add_argument("--binding", type=Path, help="trusted run-owner GitHub binding with explicit visibility; not source data")
     actions = parser.add_subparsers(dest="store_command", required=True)
     actions.add_parser("init-synthetic", help="create a NEW synthetic-only store; never a production target")
     for command in ("put-source", "submit-revision"):
         action = actions.add_parser(command)
         action.add_argument("--submission-id", required=True)
-        action.add_argument("--input", required=True, type=Path, help="UTF-8 JSON input; synthetic locally, explicitly authorized material for a private binding")
+        action.add_argument("--input", required=True, type=Path, help="UTF-8 JSON input; synthetic locally, authorized for the bound visibility remotely")
     for command in ("read-source", "read-revision"):
         actions.add_parser(command).add_argument("--ref", required=True, type=Path, help="saved JSON reference")
     actions.add_parser("current").add_argument("--case-id", required=True)

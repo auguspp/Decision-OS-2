@@ -105,7 +105,7 @@ def execute(args: argparse.Namespace) -> int:
                 result = store.search(args.query, entity_id=args.entity_id, limit=args.limit,
                                       cursor=_load(args.cursor) if args.cursor else None)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-        return 0
+        return 2 if args.store_command == "audit-numbers" and result["status"] not in ("checked", "conditional") else 0
     except RecordError as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

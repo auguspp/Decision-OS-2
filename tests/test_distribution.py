@@ -178,3 +178,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
         "print(json.dumps(v['payload'],ensure_ascii=False))", str(wire)],
         cwd=outside, env=no_host, check=True, capture_output=True, text=True)
     assert json.loads(parsed.stdout) == long_source
+
+    # Same installation: source -> calculation -> report checkpoint -> exact re-audit.
+    from test_numerical_integration import exercise_installed_numbers
+    exercise_installed_numbers(command, outside, python, env, venv / "bin/decision-os", store)

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from decision_kernel.application.numerical_audit import START as NUMBERS_START, NumericalAudit
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_continuation import continuation_plan
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, RevisionInput, encoded, identifier, require
+from decision_kernel.domain.records import BlobRef, RecordError, RevisionInput, encoded, identifier, require
 from decision_kernel.domain.research_work import (
     ResearchProgress, ResearchRequest, continue_request, read_workpaper, render_workpaper,
 )
@@ -89,6 +90,25 @@ class ResearchWorkflow:
         # Existing owner verifies actual sources, performs intent/CAS/retention, and
         # reads back. This layer neither implements a second save nor grants writes.
         saved = self.store.submit_revision(submission_id, revision)
-        return {"reference": asdict(saved), "declared_stop": progress.stop,
+        result = {"reference": asdict(saved), "declared_stop": progress.stop,
                 "research_assessment": "not-performed", "human_acceptance": "not-confirmed",
                 "execution_authority": "not-granted-by-save"}
+        if NUMBERS_START in progress.body:
+            # Preserve the successful store receipt even if a numerical check fails.
+            # This is post-save mechanical assessment, not a new persistence intent.
+            try:
+                audit = NumericalAudit(self.store).saved(saved)
+                result["numerical_audit"] = {
+                    "status": audit["status"], "input_sha256": audit.get("input_sha256"),
+                    "saved_render": audit.get("saved_render"), "error": audit.get("error"),
+                    "failures": [{"id": row["id"], "error": row["error"]}
+                                 for row in audit.get("inputs", []) + audit.get("calculations", [])
+                                 if row["status"] == "blocked"],
+                    "warnings": sorted({warning for row in audit.get("inputs", []) + audit.get("calculations", [])
+                                        for warning in row.get("warnings", [])}),
+                    "coverage": audit.get("coverage"), "unmarked_prose": "not-audited",
+                }
+            except (RecordError, KeyError, TypeError) as error:
+                result["numerical_audit"] = {"status": "blocked", "error": str(error)
+                    if isinstance(error, RecordError) else "NUMERICAL_ASSESSMENT_UNAVAILABLE"}
+        return result

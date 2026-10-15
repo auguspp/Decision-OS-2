@@ -11,6 +11,11 @@ on:
         type: boolean
         required: true
         default: false
+      retries:
+        description: 'Maximum retries of the same metadata GET; honors Retry-After, no business calls'
+        type: choice
+        options: ['0', '1', '2']
+        default: '0'
 permissions: {}
 concurrency:
   group: decision-os-relay-source
@@ -30,11 +35,12 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Read complete service metadata once, not business endpoints
+      - name: Read service metadata with explicit bounded recovery, not business endpoints
         env:
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
           INSPECTED_SHA: ${{ inputs.code_sha }}
-        run: python -m decision_kernel.interfaces.relay_capabilities_cli --live --code-sha "$INSPECTED_SHA" --public-rights-confirmed --out "$RUNNER_TEMP/relay-capabilities"
+          METADATA_RETRIES: ${{ inputs.retries }}
+        run: python -m decision_kernel.interfaces.relay_capabilities_cli --live --code-sha "$INSPECTED_SHA" --public-rights-confirmed --retries "$METADATA_RETRIES" --out "$RUNNER_TEMP/relay-capabilities"
       - name: Preserve exact response and safe receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

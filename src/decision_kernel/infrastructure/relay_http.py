@@ -16,6 +16,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 from decision_kernel.domain.records import RecordError, require
 
 ROOT = "https://pcd.mobcvb.cn/tushare/pro"
+CAPABILITIES = "https://pcd.mobcvb.cn/tushare/capabilities"
 SECRET_ENV = "TUSHARE_PROXY_API_KEY"
 FINANCIAL_APIS = frozenset({"income", "balancesheet", "cashflow", "fina_indicator",
                             "forecast", "express", "fina_audit", "fina_mainbz"})
@@ -35,6 +36,7 @@ class RelayHTTP:
         self._credential = credential if credential is not None else os.environ.get(SECRET_ENV, "")
         self.requests = 0
         self.last_response_meta = None
+        self.last_response_bytes = None
 
     def validate_credential(self):
         key = self._credential
@@ -56,11 +58,23 @@ class RelayHTTP:
         require(all(isinstance(k, str) and isinstance(v, str) and 0 < len(v) <= 8192
                     and not any(ord(c) < 32 or ord(c) == 127 for c in v)
                     for k, v in parameters.items()), "RELAY_PARAMETER_INVALID")
+        exact = ROOT + "/" + api + "?" + urlencode(parameters)
+        return self._get_json(exact, max_bytes=max_bytes, agent=agent)
+
+    def capabilities(self, api: str | None = None) -> dict:
+        """Read service metadata only; never invoke an API named in the response."""
+        require(api is None or isinstance(api, str) and
+                re.fullmatch(r"[a-z][a-z0-9_]{0,63}", api), "RELAY_CAPABILITY_NAME_INVALID")
+        exact = CAPABILITIES + ("/" + api if api is not None else "")
+        return self._get_json(exact, max_bytes=MAX_BODY, agent="DecisionOS2-Capabilities/0.1")
+
+    def _get_json(self, exact, *, max_bytes, agent):
+        # Only the two fixed-URL public methods above dispatch here.
         require(type(max_bytes) is int and 1 <= max_bytes <= MAX_BODY, "RELAY_RESPONSE_BOUND_INVALID")
+        self.last_response_meta = None
+        self.last_response_bytes = None
         key = self.validate_credential()
         self.requests += 1
-        self.last_response_meta = None
-        exact = ROOT + "/" + api + "?" + urlencode(parameters)
         request = Request(exact, method="GET", headers={"X-API-Key": key,
                           "Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": agent})
         try:
@@ -113,4 +127,5 @@ class RelayHTTP:
             elif isinstance(value, list):
                 pending.extend(value)
         self.last_response_meta = meta
+        self.last_response_bytes = raw
         return result

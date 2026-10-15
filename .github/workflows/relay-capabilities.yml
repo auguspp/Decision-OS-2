@@ -1,0 +1,45 @@
+name: decision-os-relay-capabilities
+on:
+  workflow_dispatch:
+    inputs:
+      code_sha:
+        description: 'Exact inspected main SHA'
+        type: string
+        required: true
+      public_rights_confirmed:
+        description: 'I authorize retaining service capability metadata in this public repository artifacts'
+        type: boolean
+        required: true
+        default: false
+permissions: {}
+concurrency:
+  group: decision-os-relay-source
+  cancel-in-progress: false
+jobs:
+  catalogue:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.public_rights_confirmed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Read complete service metadata once, not business endpoints
+        env:
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+          INSPECTED_SHA: ${{ inputs.code_sha }}
+        run: python -m decision_kernel.interfaces.relay_capabilities_cli --live --code-sha "$INSPECTED_SHA" --public-rights-confirmed --out "$RUNNER_TEMP/relay-capabilities"
+      - name: Preserve exact response and safe receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-relay-capabilities-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/relay-capabilities/
+          if-no-files-found: error
+          retention-days: 7

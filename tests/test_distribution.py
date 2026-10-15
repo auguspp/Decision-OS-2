@@ -115,3 +115,14 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
                    "--submission-id", "work-two", "--revision-id", "r2") == second_work
     assert command("current", "--case-id", "work")["reference"] == second_work["reference"]
     assert second_work["human_acceptance"] == "not-confirmed"
+
+    # The same installed wheel exposes the host bridge, but a plain process cannot run it.
+    runtime_module = "decision_kernel.interfaces.research_runtime"
+    runtime_help = subprocess.run([str(python), "-I", "-m", runtime_module, "--help"],
+                                  cwd=outside, env=env, check=True, capture_output=True, text=True)
+    assert "Explicit public research I/O" in runtime_help.stdout
+    no_host = {k: v for k, v in env.items() if not k.startswith(("GITHUB_", "DOS2_", "DECISION_OS_"))}
+    rejected = subprocess.run([str(python), "-I", "-m", runtime_module, "--out", str(outside / "host-output")],
+                              cwd=outside, env=no_host, capture_output=True, text=True)
+    assert rejected.returncode == 2 and json.loads(rejected.stderr)["error"] == "MANUAL_MAIN_RUNTIME_REQUIRED"
+    assert not (outside / "host-output").exists()

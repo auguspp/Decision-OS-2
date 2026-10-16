@@ -13,7 +13,7 @@ class ResearchArtifacts:
     def __init__(self, store):
         self.store = store
 
-    def put(self, submission_id: str, artifact: ArtifactInput) -> BlobRef:
+    def put(self, submission_id: str, artifact: ArtifactInput, *, before_new_write=None) -> BlobRef:
         require(isinstance(artifact, ArtifactInput), "INVALID_ARTIFACT_INPUT")
         head = self.store.backend.head()
         intent = {"operation": "research-artifact", "input": asdict(artifact)}
@@ -21,6 +21,8 @@ class ResearchArtifacts:
         if replay is not None:
             self.read(replay)
             return replay
+        if before_new_write is not None:
+            before_new_write(head)  # Internal owner precondition at the exact CAS base; never serialized input.
         path = artifact.path()
         content_path = path.rsplit("/", 1)[0] + "/content.bin"
         manifest = {"schema": ARTIFACT_SCHEMA, "input": artifact.metadata(), "data_path": content_path}

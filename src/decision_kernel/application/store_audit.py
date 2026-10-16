@@ -72,4 +72,19 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
             "research_quality": "not-evaluated", "live_authorization": "not-certified-by-audit"}
     if artifacts:
         result.update(artifact_versions=len(artifacts), artifacts=artifact_refs)
+    activity_paths = [p for p in paths if p.startswith("research/watch-activities/") and p.endswith("/current.json")]
+    if activity_paths:
+        from decision_kernel.application.watch_activity import WatchActivity
+        from decision_kernel.application.conditional_odds import ConditionalOdds
+        from decision_kernel.domain.watch_activity import ACTIVITY_RECORD
+        service, selected = WatchActivity(store), {}
+        for path in activity_paths:
+            key = path.split("/")[2]
+            ref = service._current(key, snapshot, store)
+            event = ConditionalOdds(store)._open(ref, ACTIVITY_RECORD)
+            require(event.get("watch_key") == key, "WATCH_ACTIVITY_POINTER_KEY_MISMATCH")
+            frozen = service._watch(event["command"]["input"]["watch_ref"], store)
+            require(frozen["watch_sha256"] == key, "WATCH_ACTIVITY_POINTER_KEY_MISMATCH")
+            selected[key] = ref
+        result.update(watch_activities=selected, watch_activity_replay="not-performed; use activity reader")
     return result

@@ -91,7 +91,7 @@ class GitSnapshot(GitStore):
     def paths(self, commit: str, prefix: str = "") -> list[str]:
         self.check_commit(commit)
         # Base helper treats a directory prefix as a complete blob path; list then filter instead.
-        require(prefix in ("", "source-views/", "research/cases/", "submissions/"), "PATH_OUTSIDE_STORE")
+        require(prefix in ("", "source-views/", "research/cases/", "research/artifacts/", "research/watch-activities/", "submissions/"), "PATH_OUTSIDE_STORE")
         paths = self._run("ls-tree", "-r", "--name-only", "-z", commit).stdout
         try:
             return sorted(p.decode("ascii") for p in paths.split(b"\0") if p and p.decode("ascii").startswith(prefix))

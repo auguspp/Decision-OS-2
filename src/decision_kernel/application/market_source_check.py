@@ -9,13 +9,19 @@ from copy import deepcopy
 import math
 from datetime import date, datetime, timedelta, timezone
 import time
+from zoneinfo import ZoneInfo
+
+from decision_kernel.application.global_index_inputs import (
+    INDEX_FIELDS, US_CALENDAR_FIELDS, US_INDEX_CODES, qualified_us_trade_calendar,
+    read_us_index_context,
+)
 
 from decision_kernel.application.market_group_inputs import (
     CATALOG_FIELDS, GROUP_TYPES, LEVEL_FIELDS, MEMBER_FIELDS, qualified_ths_catalog,
     qualified_ths_members, read_three_market_surfaces, CLASSIFICATION_CODES, _classification_checks,
 )
 from decision_kernel.application.market_relay_inputs import (
-    EXCHANGES, _range, _rows, qualified_daily, qualified_trade_calendar,
+    EXCHANGES, _daily, _range, _rows, _view, qualified_daily, qualified_trade_calendar,
 )
 from decision_kernel.application.market_security_inputs import (
     FACTOR_FIELDS, MASTER_FIELDS, MASTER_CHECK_CODES, _master_date, _master_row_checks,
@@ -65,6 +71,8 @@ PUBLIC_CODES = frozenset({
     'RELAY_AUTH_OR_ENTITLEMENT', 'RELAY_RATE_LIMIT', 'RELAY_JSON_INVALID',
     'RELAY_HTTP_404', 'RELAY_HTTP_405', 'RELAY_HTTP_RESPONSE_INVALID',
     'SOURCE_COUNT_INVALID', 'SOURCE_CELL_INVALID', 'SOURCE_TEXT_TOO_LARGE',
+    'MARKET_RELAY_US_CALENDAR_ROW', 'MARKET_RELAY_US_CALENDAR_EMPTY',
+    'MARKET_RELAY_US_CALENDAR_GAP', 'MARKET_RELAY_US_INDEX_END_NOT_MARKET_SESSION',
 }) | frozenset('MARKET_RELAY_' + code for code in MASTER_CHECK_CODES)
 
 
@@ -72,7 +80,10 @@ def _code(value: object) -> str:
     return value if isinstance(value, str) and value in PUBLIC_CODES else 'CHECK_REJECTED'
 
 
-SELECTIONS = ('sample', 'catalogues', 'stock')
+SELECTIONS = ('sample', 'catalogues', 'stock', 'us-indices')
+US_INDEX_SLOTS = {'us_calendar': 'us_tradecal',
+                  **{'us_' + code.lower(): 'index_global' for code in US_INDEX_CODES}}
+US_HORIZONS = (5, 20, 60)
 STOCK_SLOTS = ('calendar', 'master', 'stock_daily', 'stock_factor')
 FAILURE_CLASSES = frozenset({
     'auth-or-entitlement', 'rate-limit', 'source-unavailable', 'request-rejected',
@@ -194,11 +205,15 @@ def _master_shape(view: dict, exchange: str, status: str, end: str) -> dict:
     return out
 
 
-def check_scope(exchange: str, start: str, end: str, now: datetime) -> None:
-    require(isinstance(exchange, str) and exchange in EXCHANGES, 'MARKET_CHECK_EXCHANGE')
+def check_scope(exchange: str, start: str, end: str, now: datetime,
+                selection: str = 'sample') -> None:
+    require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
+    venues = ('US',) if selection == 'us-indices' else EXCHANGES
+    require(isinstance(exchange, str) and exchange in venues, 'MARKET_CHECK_EXCHANGE')
     lo, hi = _range(start, end)
     require(isinstance(now, datetime) and now.utcoffset() is not None, 'MARKET_CHECK_CLOCK')
-    today = now.astimezone(timezone(timedelta(hours=8))).date()
+    zone = ZoneInfo('America/New_York') if selection == 'us-indices' else timezone(timedelta(hours=8))
+    today = now.astimezone(zone).date()
     require(date.fromisoformat(hi) < today, 'MARKET_CHECK_PAST_DAYS_ONLY')
     require((date.fromisoformat(hi) - date.fromisoformat(lo)).days < 120, 'MARKET_CHECK_RANGE')
 
@@ -216,11 +231,11 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     require(access_confirmed is True, 'MARKET_CHECK_ACCESS_REQUIRED')
     require(isinstance(registry, RelayRegistry), 'MARKET_CHECK_REGISTRY')
     require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
-    selected_slots = (SLOTS if selection == 'sample' else
+    selected_slots = (US_INDEX_SLOTS if selection == 'us-indices' else SLOTS if selection == 'sample' else
                       {k: SLOTS[k] for k in (STOCK_SLOTS if selection == 'stock' else
                                              ('sector_catalog', 'concept_catalog'))})
     now = datetime.now(timezone.utc) if now is None else now
-    check_scope(exchange, start, end, now)
+    check_scope(exchange, start, end, now, selection)
     report = {'schema': 'market-source-check-v1', 'status': 'in-progress', 'selection': selection,
         'scope': {'exchange': exchange, 'start': start, 'end': end, 'list_status': 'L'},
         'sample_policy': ('catalogue-qualification-only-no-sample-or-dated-membership' if selection == 'catalogues'
@@ -235,6 +250,13 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             'ONE_SOURCE_SORTED_SAMPLE_NOT_FULL_MARKET_DISCOVERY_OR_RESEARCH_ADOPTION',
             'CURRENT_DIRECTORY_NOT_HISTORICAL_MEMBERSHIP_OR_PIT',
             'NO_SOURCE_VALUES_NAMES_IDENTIFIERS_OR_DIGESTS_IN_RECEIPT']}
+    if selection == 'us-indices':
+        report.update(scope={'market': 'US', 'start': start, 'end': end},
+            sample_policy='four-code-owned-US-indices-not-stock-candidates',
+            limitations=['DIAGNOSTICS_NOT_REPLAYABLE_CAPTURE_OR_PUBLICATION_LICENSE',
+                'FOUR_US_INDICES_NOT_WORLD_COVERAGE_OR_RESEARCH_ADOPTION',
+                'SOURCE_US_MARKET_DATE_NOT_CROSS_MARKET_SIMULTANEOUS_INSTANT',
+                'NO_SOURCE_VALUES_NAMES_IDENTIFIERS_OR_DIGESTS_IN_RECEIPT'])
     def emit():
         if progress is not None:
             progress(deepcopy(report))
@@ -253,7 +275,7 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             item['reason_code'] = 'GLOBAL_SOURCE_STOP'
             emit()
             return None, None
-        api = SLOTS[slot]
+        api = selected_slots[slot]
         request = {'stage': 'baseline', 'purpose': 'Transient market field check; no source export',
                    'api': api, 'parameters': {**params, 'fields': ','.join(sorted(fields)), 'limit': '5000'}}
         before = client.requests
@@ -303,6 +325,38 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
         return report
 
     period = {'start_date': start, 'end_date': end}
+    if selection == 'us-indices':
+        cal, sessions = take('us_calendar', period, US_CALENDAR_FIELDS,
+            lambda r: qualified_us_trade_calendar(r, registry=registry, start=start, end=end))
+        indices = {}
+        if _range(start, end)[1] in (sessions or []):
+            for code in US_INDEX_CODES:
+                result, _ = take('us_' + code.lower(), {'ts_code': code, **period}, INDEX_FIELDS,
+                    lambda r, c=code: _daily(_view(r, registry, 'index_global',
+                        {'ts_code': c, **period}, INDEX_FIELDS), c, set(sessions)))
+                if result is not None:
+                    indices[code] = result
+        try:
+            view = read_us_index_context(calendar_result=cal or {}, index_results=indices,
+                registry=registry, declared_indices=US_INDEX_CODES, start=start, end=end,
+                horizons=US_HORIZONS, limit=len(US_INDEX_CODES))
+            surface = _us_index_receipt(view)
+        except (RecordError, MarketInputError) as exc:
+            surface = {'status': 'rejected', 'reason_code': _code(str(exc)),
+                'scope_count': len(US_INDEX_CODES), 'observed_count': None,
+                'source_qualification_counts': None, 'window_counts': None}
+        report['surfaces']['us_indices'] = surface
+        if stopped:
+            for item in report['queries'].values():
+                if item['status'] == 'not-attempted':
+                    item['reason_code'] = 'GLOBAL_SOURCE_STOP'
+        good = (all(q['status'] == 'checked' for q in report['queries'].values())
+                and surface['status'] == 'read'
+                and all(v['observed'] == len(US_INDEX_CODES) for v in surface['window_counts'].values()))
+        report['status'] = 'checked-us-index-context' if good else 'completed-with-gaps'
+        emit()
+        return report
+
     cal, sessions = take('calendar', {'exchange': exchange, **period}, {'exchange', 'cal_date', 'is_open'},
         lambda r: qualified_trade_calendar(r, registry=registry, exchange=exchange, start=start, end=end))
     master_result, master = take('master', {'exchange': exchange, 'list_status': 'L'}, MASTER_FIELDS,
@@ -370,3 +424,28 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
 def _group_levels(result, registry, code, start, end, sessions):
     from decision_kernel.application.market_group_inputs import _levels
     return _levels(result, registry, code, start, end, set(sessions))
+
+
+def _us_index_receipt(view: dict) -> dict:
+    """Fixed aggregate states from the existing reader, never its levels or lineage.
+
+    Every horizon's four buckets sum to the four declared indices. An absent or
+    rejected capture is unavailable, not a zero level/return or an observed gap.
+    """
+    entries = view['entries']
+    require(view['scope_count'] == len(US_INDEX_CODES) == len(entries)
+            and {e['entity_id'] for e in entries} == set(US_INDEX_CODES), 'MARKET_CHECK_US_SCOPE')
+    counts = {status: sum(e['source_qualification']['status'] == status for e in entries)
+              for status in ('checked', 'checked-empty', 'rejected', 'not-supplied')}
+    windows = {}
+    for horizon in US_HORIZONS:
+        statuses = ['inputs-unavailable' if e['observation'] is None else
+                    next(h['status'] for h in e['observation']['horizons'] if h['sessions'] == horizon)
+                    for e in entries]
+        windows[str(horizon)] = {s: statuses.count(s) for s in
+            ('observed', 'missing-market-sessions', 'insufficient-calendar-history', 'inputs-unavailable')}
+        require(sum(windows[str(horizon)].values()) == len(US_INDEX_CODES), 'MARKET_CHECK_US_WINDOWS')
+    return {'status': 'read', 'scope_count': len(US_INDEX_CODES),
+        'observed_count': sum(e['observation'] is not None and e['observation']['status']
+                             in ('observed', 'partial-history') for e in entries),
+        'source_qualification_counts': counts, 'window_counts': windows}

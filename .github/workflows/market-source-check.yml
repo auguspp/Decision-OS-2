@@ -7,14 +7,14 @@ on:
         type: string
         required: true
       selection:
-        description: 'sample: all ten slots; catalogues: only THS I/N; stock: only calendar/master/daily/factor'
+        description: 'sample: ten domestic slots; catalogues: THS I/N; stock: four stock slots; us-indices: US calendar and four indices'
         type: choice
-        options: [sample, catalogues, stock]
+        options: [sample, catalogues, stock, us-indices]
         default: sample
       exchange:
-        description: 'One listing/calendar venue; THS groups remain A-share classifications'
+        description: 'SSE/SZSE for domestic selections; US required for us-indices'
         type: choice
-        options: [SSE, SZSE]
+        options: [SSE, SZSE, US]
         default: SSE
       start:
         description: 'YYYYMMDD; at most 120 past calendar days, no current-day sampling'

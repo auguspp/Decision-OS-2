@@ -197,6 +197,7 @@ class GitHubStore:
             rf"(?:source-views/{atom}/(?:identity\.json|[a-f0-9]{{64}}/(?:manifest\.json|content\.txt|data\.csv))"
             rf"|research/cases/{atom}/(?:current\.json|revisions/{atom}/(?:record\.json|research\.md))"
             rf"|research/artifacts/{atom}/[a-f0-9]{{64}}/(?:manifest\.json|content\.bin)"
+            rf"|research/watch-activities/[a-f0-9]{{64}}/current\.json"
             rf"|submissions/{atom}\.json)", path)), "PATH_OUTSIDE_STORE")
 
     def _tree(self, commit: str) -> dict[str, dict]:
@@ -218,8 +219,8 @@ class GitHubStore:
             paths.add(path)
             _sha(row.get("sha"))
             if row.get("type") == "tree" and row.get("mode") == "040000":
-                require(path in ("source-views", "research", "research/cases", "research/artifacts", "submissions")
-                        or path.startswith(("source-views/", "research/cases/", "research/artifacts/", "submissions/")),
+                require(path in ("source-views", "research", "research/cases", "research/artifacts", "research/watch-activities", "submissions")
+                        or path.startswith(("source-views/", "research/cases/", "research/artifacts/", "research/watch-activities/", "submissions/")),
                         "PATH_OUTSIDE_STORE")
                 continue
             self._path(path)
@@ -289,7 +290,7 @@ class GitHubStore:
     def paths(self, commit: str, prefix: str = "") -> list[str]:
         self.check_commit(commit)
         if prefix:
-            require(isinstance(prefix, str) and prefix in ("source-views/", "research/cases/", "research/artifacts/", "submissions/"),
+            require(isinstance(prefix, str) and prefix in ("source-views/", "research/cases/", "research/artifacts/", "research/watch-activities/", "submissions/"),
                     "PATH_OUTSIDE_STORE")
         return sorted(p for p in self._tree(commit) if p.startswith(prefix))
 
@@ -343,7 +344,7 @@ class GitHubStore:
             raise Conflict("HEAD_CHANGED")
         tree = self._tree(expected)
         for path, raw in files.items():
-            if path in tree and not re.fullmatch(r"research/cases/[a-z0-9][a-z0-9_-]{0,95}/current\.json", path):
+            if path in tree and not re.fullmatch(r"(?:research/cases/[a-z0-9][a-z0-9_-]{0,95}|research/watch-activities/[a-f0-9]{64})/current\.json", path):
                 require(self._read(expected, path, tree=tree) == raw, "IMMUTABLE_RECORD_CONFLICT")
         payload = {"query": COMMIT_MUTATION, "variables": {"input": {
             "branch": {"id": self._branch_node},

@@ -37,6 +37,8 @@ python -m decision_kernel.interfaces.news_cli export-locators \
 
 公开观察只包含有限标题/URL/时间声称和派生身份，不包含供应商全文或原HTTP正文；原始响应hash不是可恢复原件。`export-locators`仍仅生成外部定位候选，无文章URL的Relay项只指聚合接口，不谎称逐篇原文。
 
+`read`、`merge`的标准输出及`export-locators`的文件和标准输出都保留 `reading_sha256`、完整 `source_outcomes` 与 `complete_news_coverage`。`source_outcomes_scope=whole-input-reading`明确它们属于整份已验证输入：`--source`与`--limit`只筛选可见条目，不筛掉失败来源或改写批次健康。全失败零条和零命中过滤仍带原失败清单；读取/导出成功不等于来源成功。合并摘要的身份属于输出的完整合并视图。定位项仍是原SourceInput，不把健康字段塞进每篇来源。原输入摘要不符仍拒绝，不为展示而修补历史数据。
+
 ## 已取得窗口进入同一个内容池
 
 手动 `news-custody.yml` 接收以下明确输入：

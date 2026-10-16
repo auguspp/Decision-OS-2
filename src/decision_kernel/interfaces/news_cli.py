@@ -45,6 +45,14 @@ def _write(path: Path, value):
         raise RecordError("NEWS_OUTPUT_EXISTS_OR_UNWRITABLE") from None
 
 
+def _reading_context(reading):
+    """Retain the verified whole-input health even when no rows are selected."""
+    return {"reading_sha256": reading["reading_sha256"],
+            "source_outcomes": reading["source_outcomes"],
+            "source_outcomes_scope": "whole-input-reading",
+            "complete_news_coverage": reading["complete_news_coverage"]}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m decision_kernel.interfaces.news_cli")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -90,7 +98,7 @@ def main(argv=None):
             _write(args.output, result)
             print(json.dumps({"status": "merged", "source_windows": len(args.windows),
                               "observations": len(result["observations"]),
-                              "complete_news_coverage": False}))
+                              **_reading_context(result)}))
             return 0
         reading = _read(args.window)
         if args.action == "read":
@@ -101,12 +109,14 @@ def main(argv=None):
             print(json.dumps({"status": "observation-only", "rows": rows[:args.limit],
                               "visible": min(len(rows), args.limit),
                               "selected_count": len(rows),
-                              "complete_news_coverage": False}, ensure_ascii=False))
+                              **_reading_context(reading)}, ensure_ascii=False))
             return 0
         inputs = [asdict(x) for x in source_locators(reading)]
         _write(args.output, {"schema": "dos2-news-locators-v1", "items": inputs,
-                             "write_performed": False, "rights_verified": False})
-        print(json.dumps({"source_locator_candidates": len(inputs), "write_performed": False}))
+                             "write_performed": False, "rights_verified": False,
+                             **_reading_context(reading)})
+        print(json.dumps({"source_locator_candidates": len(inputs), "write_performed": False,
+                          **_reading_context(reading)}))
         return 0
     except RecordError as exc:
         print(json.dumps({"status": "failed", "error_code": str(exc)}, ensure_ascii=False),

@@ -1,5 +1,5 @@
 """Operating-cycle consumer of the original retained industry packet and scopes."""
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 
 from decision_kernel.application.industry_reading import read_industry
 from decision_kernel.application.versioned_store import VersionedStore
@@ -17,6 +17,15 @@ def read_industry_operations(reference, store: VersionedStore, *, subject_id=Non
     require(company_id is None, 'OPERATING_COMPANY_QUERY_USE_ORIGINAL_INDUSTRY_READER')
     if subject_id is not None:
         identifier(subject_id)
+    with industry_source_scope(store) as reader:
+        retained = read_industry(reference, reader)
+        result = operating_cycle(retained, subject_id=subject_id)
+    return result
+
+
+@contextmanager
+def industry_source_scope(store):
+    """Shared by operating-cycle and vehicle readers; all exit checks precede return."""
     scope = getattr(store.backend, 'source_read_scope', None)
     with ExitStack() as stack:
         readers = {}
@@ -29,6 +38,4 @@ def read_industry_operations(reference, store: VersionedStore, *, subject_id=Non
                     require(len(readers) < 32, 'OPERATING_SOURCE_SCOPE_BOUND')
                     readers[commit] = VersionedStore(stack.enter_context(scope(commit)))
                 return readers[commit].read_source(ref)
-        retained = read_industry(reference, Reader())
-        result = operating_cycle(retained, subject_id=subject_id)
-    return result
+        yield Reader()

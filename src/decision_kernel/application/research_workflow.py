@@ -5,10 +5,11 @@ from dataclasses import asdict
 
 from decision_kernel.application.numerical_audit import START as NUMBERS_START, NumericalAudit
 from decision_kernel.application.research_reader import ResearchReader
+from decision_kernel.application.research_evidence import ResearchEvidence, guidance as evidence_guidance
 from decision_kernel.application.research_sources import source_use_guidance
 from decision_kernel.application.research_continuation import continuation_plan
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, RecordError, RevisionInput, encoded, identifier, require
+from decision_kernel.domain.records import BlobRef, RecordError, RevisionInput, SourceRef, encoded, identifier, require
 from decision_kernel.domain.research_work import (
     ResearchProgress, ResearchRequest, continue_request, read_workpaper, render_workpaper,
 )
@@ -37,7 +38,9 @@ class ResearchWorkflow:
                     "ORIGINAL_QUESTIONS_MUST_BE_RETAINED")
 
     def prepare(self, request: ResearchRequest | None = None, *, case_id: str | None = None,
-                reference: BlobRef | None = None, source_limit: int = 4) -> dict:
+                reference: BlobRef | None = None, source_limit: int = 4,
+                evidence_plan: dict | None = None, evidence_cursor: dict | None = None,
+                evidence_limit: int = 4) -> dict:
         require(sum(v is not None for v in (request, case_id, reference)) == 1,
                 "ONE_RESEARCH_SELECTOR_REQUIRED")
         require(type(source_limit) is int and 1 <= source_limit <= 8, "INVALID_SOURCE_PAGE_LIMIT")
@@ -52,7 +55,18 @@ class ResearchWorkflow:
                 previous_context = self.reader.resume(reference=request.predecessor, source_limit=source_limit)
         previous = previous_context["research"] if previous_context is not None else None
         self._continuity(request, previous)
+        require(evidence_plan is not None or evidence_cursor is None, "EVIDENCE_PLAN_REQUIRED_FOR_CURSOR")
+        evidence = evidence_guidance(request)
+        if evidence_plan is not None:
+            linked = tuple(SourceRef.from_dict(ref) for ref in previous["record"]["input"]["sources"]) if previous else ()
+            evidence = ResearchEvidence(self.store).page(request, evidence_plan, cursor=evidence_cursor,
+                                                        limit=evidence_limit, linked_sources=linked)
+            if evidence["next_cursor"] is not None:
+                evidence["next_prepare_payload"] = {"request": asdict(request), "source_limit": source_limit,
+                    "evidence_plan": evidence["plan"], "evidence_cursor": evidence["next_cursor"],
+                    "evidence_limit": evidence_limit}
         return {"schema": "research-preparation-v1", "request": asdict(request),
+                "evidence": evidence,
                 "method": research_method(request.kind), "previous_context": previous_context,
                 "continuation": continuation_plan(request, previous_context),
                 "source_use": source_use_guidance(request.kind),

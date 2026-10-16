@@ -113,7 +113,8 @@ def _perform(store: VersionedStore, command: dict) -> dict:
     if operation == "read-source":
         return store.read_source(SourceRef.from_dict(payload))
     selectors = {"request", "case_id", "reference"} if operation == "prepare" else {"case_id", "reference", "cursor"}
-    require(set(payload) <= selectors | {"source_limit"} and len(set(payload) & selectors) == 1,
+    extras = {"source_limit"} | ({"evidence_plan", "evidence_cursor", "evidence_limit"} if operation == "prepare" else set())
+    require(set(payload) <= selectors | extras and len(set(payload) & selectors) == 1,
             "ONE_RESEARCH_SELECTOR_REQUIRED")
     args = dict(payload)
     if "reference" in args:

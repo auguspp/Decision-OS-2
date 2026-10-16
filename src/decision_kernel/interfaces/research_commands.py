@@ -21,6 +21,9 @@ def configure(actions) -> None:
     select.add_argument("--case-id", help="continue the saved workpaper's scope, selecting current once")
     select.add_argument("--ref", type=Path, help="exact saved workpaper BlobRef JSON")
     prepare.add_argument("--source-limit", type=int, default=4)
+    prepare.add_argument("--evidence-plan", type=Path, help="question-scoped pool queries, not source URLs")
+    prepare.add_argument("--evidence-cursor", type=Path, help="exact evidence-page continuation")
+    prepare.add_argument("--evidence-limit", type=int, default=4)
     checkpoint = actions.add_parser("checkpoint-research", help="save substantive work via the existing authorized store")
     checkpoint.add_argument("--request", type=Path, required=True)
     checkpoint.add_argument("--input", type=Path, required=True, help="progress JSON; cannot select case, kind or permissions")
@@ -43,6 +46,9 @@ def execute(args, store, load) -> dict:
             ResearchRequest.from_dict(load(args.request)) if args.request else None,
             case_id=args.case_id, reference=BlobRef(**load(args.ref)) if args.ref else None,
             source_limit=args.source_limit,
+            evidence_plan=load(args.evidence_plan) if args.evidence_plan else None,
+            evidence_cursor=load(args.evidence_cursor) if args.evidence_cursor else None,
+            evidence_limit=args.evidence_limit,
         )
     return workflow.checkpoint(
         ResearchRequest.from_dict(load(args.request)), ResearchProgress.from_dict(load(args.input)),

@@ -117,3 +117,7 @@ def exercise_installed_odds(command, outside, python, env, executable, store_pat
     # Continue this same installed Odds consumer, not another wheel or store.
     from test_probability_odds_runtime import exercise_installed_probability
     exercise_installed_probability(command, outside, executable, env, store_path)
+
+    # Same original cold wheel: finite explicit Watch, no new installation.
+    from test_odds_watch_runtime import exercise_installed_watch
+    exercise_installed_watch(command, outside, executable, env)

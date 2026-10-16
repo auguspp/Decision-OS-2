@@ -24,6 +24,60 @@ FACTOR_FIELDS = {"ts_code", "trade_date", "adj_factor"}
 NORMALIZATION = "raw-close-times-date-factor-divided-by-explicit-end-factor-v1"
 
 
+MASTER_CHECK_CODES = ("SECURITY_INVALID", "MASTER_IDENTITY", "MASTER_CURRENCY_UNSUPPORTED",
+    "MASTER_NAME", "DATE_INVALID", "MASTER_LIST_DATE_REQUIRED", "MASTER_DELIST_DATE",
+    "MASTER_DUPLICATE_SECURITY")
+
+
+def _master_date(value: object) -> tuple[bool, str | None]:
+    """Missing is parseable absence, not a date and never a substitute value."""
+    if value in (None, ""):
+        return True, None
+    try:
+        return True, _day(value)
+    except MarketRelayError:
+        return False, None
+
+
+def _master_row_checks(row: dict, seen: Mapping, exchange: str, status: str) -> tuple[dict, dict]:
+    """Original ordered predicates shared by strict reading and safe diagnostics.
+
+    None means a prerequisite is invalid/missing, NOT a passing check. The strict
+    reader necessarily encounters that prerequisite's failure first. No values
+    are repaired and no row is silently removed from the source declaration.
+    """
+    try:
+        code = _security(row.get("ts_code"))
+    except MarketRelayError:
+        code = None
+    name = row.get("name")
+    list_valid, listed = _master_date(row.get("list_date"))
+    delist_valid, delisted = _master_date(row.get("delist_date"))
+    if not delist_valid:
+        delist_ok = None
+    elif status != "D":
+        delist_ok = delisted is None
+    elif delisted is None:
+        delist_ok = False
+    else:
+        delist_ok = listed <= delisted if list_valid and listed is not None else None
+    checks = dict(zip(MASTER_CHECK_CODES, (
+        code is not None,
+        (code.endswith("." + EXCHANGES[exchange]) and row.get("exchange") == exchange
+         and row.get("symbol") == code[:6] and row.get("list_status") == status) if code else None,
+        row.get("curr_type") == "CNY",
+        isinstance(name, str) and 0 < len(name) <= 256 and name == name.strip() and name.isprintable(),
+        list_valid and delist_valid,
+        (status == "G" or listed is not None) if list_valid else None,
+        delist_ok,
+        code not in seen if code else None,
+    )))
+    reference = {"ts_code": code, "symbol": row.get("symbol"), "name": name,
+        "exchange": exchange, "currency": "CNY", "source_list_status": status,
+        "list_date": listed, "delist_date": delisted}
+    return checks, reference
+
+
 def qualified_security_master(results: Mapping[str, dict], *, registry: RelayRegistry,
                               exchange: str) -> dict:
     """Read entire supplied exchange/status slices, not a historical universe.
@@ -43,23 +97,10 @@ def qualified_security_master(results: Mapping[str, dict], *, registry: RelayReg
         lineage[status] = _lineage(view)
         counts[status] = view["row_count"]
         for row in _rows(view):
-            code = _security(row["ts_code"])
-            _require(code.endswith("." + EXCHANGES[exchange]) and row["exchange"] == exchange
-                     and row["symbol"] == code[:6] and row["list_status"] == status,
-                     "MASTER_IDENTITY")
-            _require(row["curr_type"] == "CNY", "MASTER_CURRENCY_UNSUPPORTED")
-            name = row["name"]
-            _require(isinstance(name, str) and 0 < len(name) <= 256
-                     and name == name.strip() and name.isprintable(), "MASTER_NAME")
-            listed = None if row["list_date"] in (None, "") else _day(row["list_date"])
-            delisted = None if row["delist_date"] in (None, "") else _day(row["delist_date"])
-            _require(status == "G" or listed is not None, "MASTER_LIST_DATE_REQUIRED")
-            _require((status == "D" and delisted is not None and listed <= delisted)
-                     or (status != "D" and delisted is None), "MASTER_DELIST_DATE")
-            _require(code not in securities, "MASTER_DUPLICATE_SECURITY")
-            securities[code] = {"ts_code": code, "symbol": row["symbol"], "name": name,
-                "exchange": exchange, "currency": "CNY", "source_list_status": status,
-                "list_date": listed, "delist_date": delisted}
+            checks, reference = _master_row_checks(row, securities, exchange, status)
+            for reason, passed in checks.items():
+                _require(passed is True, reason)
+            securities[reference["ts_code"]] = reference
     return {"securities": dict(sorted(securities.items())), "scope_count": len(securities),
         "supplied_statuses": [s for s in LIST_STATUSES if s in results],
         "not_supplied_statuses": [s for s in LIST_STATUSES if s not in results],
@@ -124,7 +165,7 @@ def _adjust(prices: list[dict], factors: list[dict], sessions: list[str], end: s
     except MarketInputError:
         raise MarketRelayError("MARKET_RELAY_ADJUSTED_CLOSE_RANGE") from None
     status = "factor-gaps" if details["price_dates_without_factor"] else "computed" if output else "no-prices"
-    return output, {**details, "status": status}
+    return output, {"status": status, **details}
 
 
 def read_security_stock_surface(*, calendar_result: dict, master_results: Mapping[str, dict],

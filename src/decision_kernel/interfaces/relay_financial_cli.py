@@ -70,7 +70,7 @@ def main(argv=None, *, family="financial"):
         from functools import partial
         query_cls, specs, planner, inspector = own.ParticipantQuery, own.SPECS, own.build_plan, own.inspect_capture
         capture_one = partial(capture_query, query_type=query_cls, schema=own.CAPTURE_SCHEMA,
-                              normalizer=own.normalize_page, failure_details=True)
+                              normalizer=own.normalize_page, failure_details=True, response_filter=own.metadata_envelope)
         save_one = partial(save_capture, inspector=inspector, source_builder=own.source_for_page)
         batch = partial(capture_batch, query_type=query_cls, inspector=inspector)
     parser = argparse.ArgumentParser(prog="python -m decision_kernel.interfaces.relay_" + ("participant" if participant else "financial") + "_cli")

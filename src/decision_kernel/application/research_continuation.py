@@ -34,6 +34,12 @@ def continuation_plan(request: ResearchRequest, context: dict | None) -> dict:
                             "finding": None, "next_action": None, "evidence": []})
         elif found.status != "open":
             retained.append({**row, "finding": asdict(found), "assessment": "author-declared-not-revalidated"})
+            if found.next_action.strip():
+                # Reframing is a finding, not evidence that its declared next work is done.
+                actions.append({**row, "action": "review-declared-followup", "material": found.material,
+                                "finding": found.finding, "next_action": found.next_action,
+                                "remaining_kind": None, "evidence": list(found.evidence),
+                                "declared_status": found.status})
         else:
             actions.append({**row, "action": DISPOSITIONS[found.remaining_kind], "material": found.material,
                             "finding": found.finding, "next_action": found.next_action,
@@ -43,6 +49,8 @@ def continuation_plan(request: ResearchRequest, context: dict | None) -> dict:
                                  row["action"] == "observe-only-after-evidence-arrives"))
     challenges = [asdict(c) for c in progress.challenges if c.disposition == "unresolved"] if progress else []
     flags = []
+    if any(row["action"] == "review-declared-followup" for row in actions):
+        flags.append("NONOPEN_FINDING_HAS_DECLARED_FOLLOWUP")
     if progress and progress.stop == "blocked" and any(
         f.status == "open" and f.material and f.remaining_kind in ("acquired-unanalysed", "disclosed-unverified")
         for f in progress.findings

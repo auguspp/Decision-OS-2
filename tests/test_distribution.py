@@ -182,3 +182,8 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same installation: source -> calculation -> report checkpoint -> exact re-audit.
     from test_numerical_integration import exercise_installed_numbers
     exercise_installed_numbers(command, outside, python, env, venv / "bin/decision-os", store)
+
+
+    # Same cold wheel: complete originals, source registration, and independent readback.
+    from test_research_delivery_integration import exercise_installed_delivery
+    exercise_installed_delivery(command, outside, python, env, venv / "bin/decision-os", store)

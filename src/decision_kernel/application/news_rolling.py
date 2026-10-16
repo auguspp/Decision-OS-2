@@ -63,17 +63,23 @@ def _load(reader, ref):
     return _bytes_json(raw)
 
 
-def _outcomes(reading, ref, end):
+def _metadata_rows(rows):
     row_keys = {"article_id", "body_archived", "event_verified", "observed_at", "other_time_claims",
                 "provider", "publication_verified", "published_claim", "representation",
                 "research_started", "source_id", "title", "url", "version_id"}
-    for row in reading["observations"]:
-        require(set(row) == row_keys and row["research_started"] is False,
+    for row in rows:
+        require(isinstance(row, dict) and set(row) == row_keys and row["research_started"] is False,
                 "NEWS_ROLL_METADATA_ONLY")
-        require(row["published_claim"] == _claim(row["published_claim"].get("raw"))
+        require(isinstance(row["published_claim"], dict)
+                and row["published_claim"] == _claim(row["published_claim"].get("raw"))
                 and isinstance(row["other_time_claims"], dict)
-                and all(claim == _claim(claim.get("raw")) for claim in row["other_time_claims"].values()),
+                and set(row["other_time_claims"]) <= {"extra.date"}
+                and all(isinstance(claim, dict) and claim == _claim(claim.get("raw")) for claim in row["other_time_claims"].values()),
                 "NEWS_ROLL_PUBLICATION_CLAIM")
+
+
+def _outcomes(reading, ref, end):
+    _metadata_rows(reading["observations"])
     outcomes = reading["source_outcomes"]
     require(0 < len(outcomes) <= 12, "NEWS_ROLL_SOURCE_OUTCOMES_BOUND")
     result, times = [], [clock(row["observed_at"]) for row in reading["observations"]]
@@ -137,6 +143,18 @@ def verify_rolling(value):
     require(isinstance(value, dict) and value.get("schema") == SCHEMA
             and value.get("window_hours") == WINDOW_HOURS
             and value.get("meaning") == MEANING, "NEWS_ROLL_SCHEMA")
+    require(set(value) == {"schema", "window_hours", "as_of", "window_start", "meaning", "interval",
+                          "predecessor", "batch_references", "rejected_references", "entries",
+                          "source_outcomes", "losses", "count_meaning", "coverage", "rolling_sha256"}
+            and value["interval"] == "closed-both-ends", "NEWS_ROLL_SHAPE")
+    recovery = value["predecessor"]
+    require(isinstance(recovery, dict) and set(recovery) == {"status", "reference"}
+            and recovery["status"] in ("not-supplied", "restored-exact-reference", "unavailable-or-rejected"),
+            "NEWS_ROLL_RECOVERY_INVALID")
+    if recovery["status"] == "not-supplied":
+        require(recovery["reference"] is None, "NEWS_ROLL_RECOVERY_INVALID")
+    else:
+        reference(recovery["reference"])
     original = deepcopy(value)
     checksum = original.pop("rolling_sha256", None)
     require(checksum == digest(encoded(original)), "NEWS_ROLL_DIGEST")
@@ -146,6 +164,9 @@ def verify_rolling(value):
     require(isinstance(refs, list) and len(refs) <= MAX_BATCHES
             and len({_key(reference(r)) for r in refs}) == len(refs), "NEWS_ROLL_BATCH_BOUND")
     keys = {_key(reference(r)) for r in refs}
+    rejected = value["rejected_references"]
+    require(isinstance(rejected, list) and len(rejected) <= MAX_BATCHES + MAX_NEW_BATCHES
+            and all(_key(reference(r)) not in keys for r in rejected), "NEWS_ROLL_REJECTIONS_INVALID")
     entries = value["entries"]
     require(isinstance(entries, list) and len(entries) <= MAX_OBSERVATIONS, "NEWS_ROLL_ENTRY_BOUND")
     ids = set()
@@ -168,8 +189,9 @@ def verify_rolling(value):
             and len(value["source_outcomes"]) <= MAX_BATCHES * 12, "NEWS_ROLL_HEALTH_BOUND")
     for item in value["source_outcomes"]:
         require(_key(reference(item["reference"])) in keys, "NEWS_ROLL_HEALTH_REFERENCE")
-        require(item["observed_at"] is None or clock(item["observed_at"]) <= end,
+        require(item["observed_at"] is None or start <= clock(item["observed_at"]) <= end,
                 "NEWS_ROLL_HEALTH_CLOCK")
+    _metadata_rows([e["observation"] for e in entries])
     # Same news owner: reuse its row/authority/domain validation, not another codec.
     _reading([e["observation"] for e in entries], [x["outcome"] for x in value["source_outcomes"]])
     require(isinstance(value["losses"], list) and len(value["losses"]) <= MAX_BATCHES,
@@ -274,8 +296,9 @@ def rolling_news(reader, references, *, as_of, predecessor=None):
              "count_meaning": "DISTINCT_RETAINED_BATCHES_WITHIN_WINDOW_NOT_LIFETIME_OR_INDEPENDENT_EVENTS"}
     removed = 0
     while len(encoded(_seal(value))) > MAX_BYTES and value["entries"]:
-        removed += 1
-        value["entries"].pop()
+        count = max(1, len(value["entries"]) // 10)
+        removed += count
+        del value["entries"][-count:]
     if removed:
         loss("BYTE_LIMIT", removed)
         _seal(value)
@@ -289,7 +312,7 @@ def read_rolling(value, *, source=None, query="", limit=40, cursor=None):
     """Page titles while always returning whole-window source health and losses."""
     verify_rolling(value)
     require(type(limit) is int and 1 <= limit <= 200 and isinstance(query, str) and len(query) <= 512
-            and (source is None or isinstance(source, str)), "NEWS_ROLL_READ_FILTER")
+            and (source is None or (isinstance(source, str) and len(source) <= 100)), "NEWS_ROLL_READ_FILTER")
     selector = digest(encoded({"rolling_sha256": value["rolling_sha256"], "source": source, "query": query}))
     offset = 0
     if cursor is not None:

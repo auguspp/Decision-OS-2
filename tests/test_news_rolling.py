@@ -228,3 +228,32 @@ def test_dedicated_workflow_is_manual_and_reuses_source_writer_without_source_se
     assert flow["jobs"]["save"]["permissions"]["contents"] == "write"
     assert "public_metadata_custody_confirmed" in flow["jobs"]["save"]["if"]
     assert "TUSHARE_PROXY_API_KEY" not in text and "schedule:" not in text
+
+
+@pytest.mark.parametrize("field,bad", [("published_claim", 42), ("other_time_claims", {"extra.date": 42})])
+def test_malformed_nested_claim_is_local_rejection_not_uncaught_error(store, field, bad):
+    value = window("2026-10-16T10:00:00Z")
+    value["observations"][0][field] = bad
+    value.pop("reading_sha256"); value["reading_sha256"] = digest(encoded(value))
+    malformed = save(store, "nested-invalid", value)
+    valid = save(store, "nested-valid", window("2026-10-16T11:00:00Z"))
+    result = build(store, [malformed, valid])
+    assert len(result["entries"]) == 1 and len(result["rejected_references"]) == 1
+
+
+def test_saved_view_cannot_promote_research_or_forward_extra_body_by_resealing(store):
+    ref = save(store, "saved-extra", window("2026-10-16T10:00:00Z"))
+    value = build(store, [ref])
+    value["entries"][0]["observation"]["full_text"] = "not news metadata"
+    roll._seal(value)
+    with pytest.raises(RecordError): roll.read_rolling(value)
+
+
+def test_byte_limit_does_not_silently_shorten_window_or_erase_health(store, monkeypatch):
+    references = [save(store, "bytes-"+str(n), window("2026-10-16T10:00:00Z", item=str(n), title="长标题"*500))
+                  for n in range(4)]
+    monkeypatch.setattr(roll, "MAX_BYTES", 14000)
+    value = build(store, references)
+    assert len(encoded(value)) <= 14000 and len(value["entries"]) < 4
+    assert value["window_hours"] == 24 and len(value["source_outcomes"]) == 4
+    assert any(loss["kind"] == "BYTE_LIMIT" for loss in value["losses"])

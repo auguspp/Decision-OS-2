@@ -177,7 +177,7 @@ class ResearchDelivery:
                     ref = (self.store.put_source(stage, SourceInput.from_dict(item[key])) if key == "source"
                            else SourceRef.from_dict(item[key]))
                     self.store.read_source(ref)
-                    raw_ref = asdict(ref)
+                    raw_ref = json.loads(encoded(asdict(ref)))  # Tuple/list forms share one canonical identity.
                     if raw_ref not in sources:
                         sources.append(raw_ref)
                     row.update(kind="source", reference=raw_ref, source_index=sources.index(raw_ref))

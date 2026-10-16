@@ -7,6 +7,9 @@ from decision_kernel.application.market_group_inputs import (
 )
 from decision_kernel.application.market_relay_inputs import read_relay_stock_surface
 from decision_kernel.application.market_security_inputs import read_security_stock_surface
+from decision_kernel.application.shibor_inputs import (
+    SHIBOR_READING_SCHEMA, SHIBOR_REQUIRED, read_shibor_context,
+)
 from decision_kernel.observations.market_daily import MarketInputError
 
 
@@ -16,7 +19,10 @@ def _route(payload):
     schema = payload.get("schema")
     required = {"schema", "calendar_result", "stock_results", "exchange", "start", "end"}
     optional = {"horizons"}
-    if schema == "relay-stock-reading-v1":
+    if schema == SHIBOR_READING_SCHEMA:
+        required, optional = SHIBOR_REQUIRED | {"schema"}, set()
+        reader = read_shibor_context
+    elif schema == "relay-stock-reading-v1":
         required |= {"declared_entities", "coverage"}
         reader = read_relay_stock_surface
     elif schema == "relay-security-stock-reading-v1":

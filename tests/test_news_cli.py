@@ -90,3 +90,22 @@ def test_no_publication_undeclared_source_capture_or_automatic_schedule():
             assert s["name"] == "Relay fixed-host reviewed news capture"
     assert not any("TUSHARE_PROXY_API_KEY" in x.get("env", {}) for x in steps
                    if x.get("name", "").startswith(("Preflight", "NewsNow")))
+
+
+def test_two_news_families_merge_offline_and_reject_tampered_result(tmp_path, capsys):
+    from decision_kernel.observations.news_windows import relay_window, verify_reading
+    from test_news_windows import relay
+    left = tmp_path / "newsnow.json"
+    right = tmp_path / "relay.json"
+    merged = tmp_path / "combined.json"
+    left.write_bytes(encoded(combine([newsnow_window(newsnow(), "cls", observed_at=NOW)])))
+    right.write_bytes(encoded(combine([relay_window(relay(), "news", "cls", observed_at=NOW, request={})])))
+    assert main(["merge", "--windows", str(left), str(right), "--output", str(merged)]) == 0
+    capsys.readouterr()
+    actual = json.loads(merged.read_bytes())
+    assert verify_reading(actual) == actual and len(actual["observations"]) == 2
+    assert main(["read", "--window", str(merged), "--limit", "10"]) == 0
+    capsys.readouterr()
+    actual["observations"][0]["title"] = "恶意本地改写"
+    merged.write_bytes(encoded(actual))
+    assert main(["read", "--window", str(merged)]) == 2

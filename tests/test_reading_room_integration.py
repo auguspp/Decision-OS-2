@@ -176,3 +176,20 @@ print(head)
     assert pinned['case_id']=='mixed-research' and pinned['brief_relation']['status']=='included'
     assert 'Original finding.' in pinned['body'] and first['persistence']=='not-written'
     assert (outside/'installed-reading-room.html').read_bytes()==(outside/'installed-reading-room-again.html').read_bytes()
+
+
+def test_explicit_offpage_current_revision_has_no_inferred_age_label(store, monkeypatch):
+    from decision_kernel.interfaces.reading_page import render_page
+
+    item = structured_revision(store, monkeypatch)
+    store.submit_revision('room-earlier-case', RevisionInput('a-first', 'r1', 'quick',
+        'Another synthetic report.', 'Synthetic mandate', 'synthetic', unresolved=('Not assessed',)))
+    result = ReadingRoom(store).build({'as_of': END, 'catalogue': {'limit': 1},
+                                       'reference': item['reference']})
+    assert result['catalogue']['items'][0]['case_id'] == 'a-first'
+    assert store.current('structured') == BlobRef(**item['reference'])
+    pinned = next(row for row in result['readings'] if row['origin'] == 'explicit-reference')
+    assert pinned['reference'] == item['reference']
+    page = render_page(result)
+    assert '显式指定版本，不判断是否为当前版' in page
+    assert '显式指定版本，不是目录当前版' not in page

@@ -39,7 +39,7 @@ function show(c){
  const pane=$('research-detail');pane.replaceChildren();if(!c){pane.append(el('h2','尚未打开研究'),el('p','本页没有匹配项，不代表没有研究、没有待办或市场安静。'));return;}
  const r=c.reading,ref=c.reference;pane.append(el('h2',`${c.case_id} / ${c.revision_id||'版本未取得'}`));
  pane.append(el('p',c.mandate||'原委托见确切研究。','muted'));
- pane.append(el('span',label(r?r.status:c.status),'badge'),el('span',c.pinned?'显式指定版本，不是目录当前版':'固定目录快照中的版本','badge'));
+ pane.append(el('span',label(r?r.status:c.status),'badge'),el('span',c.pinned?'显式指定版本，不判断是否为当前版':'固定目录快照中的版本','badge'));
  if(r)pane.append(el('p',`指定简报关系：${label(r.brief_relation.status)}`));
  const actions=el('div',undefined,'actions');
  if(ref)actions.append(button('导出确切研究读取请求',()=>request('research-read.json',r?r.open_request:{operation:c.open_operation||'resume',payload:{reference:ref}})));

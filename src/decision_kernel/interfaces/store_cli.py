@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import sys
 
-from decision_kernel.interfaces import research_commands
+from decision_kernel.interfaces import research_commands, delivery_commands
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef
@@ -22,6 +22,7 @@ def configure(commands) -> None:
     location.add_argument("--binding", type=Path, help="trusted run-owner GitHub binding with explicit visibility; not source data")
     actions = parser.add_subparsers(dest="store_command", required=True)
     research_commands.configure(actions)
+    delivery_commands.configure(actions)
     actions.add_parser("init-synthetic", help="create a NEW synthetic-only store; never a production target")
     for command in ("put-source", "submit-revision"):
         action = actions.add_parser(command)
@@ -80,11 +81,16 @@ def execute(args: argparse.Namespace) -> int:
                 backend = GitStore(args.path)
             else:
                 binding = GitHubBinding.from_dict(_load(args.binding))
-                if args.store_command in ("put-source", "submit-revision", "checkpoint-research") and not binding.write_enabled:
+                if args.store_command in ("put-source", "submit-revision", "checkpoint-research", *delivery_commands.WRITE_COMMANDS) and not binding.write_enabled:
                     raise RecordError("REMOTE_READ_ONLY")
                 backend = GitHubStore(binding, GitHubAPI.from_environment())
             store = VersionedStore(backend)
-            if args.store_command in research_commands.COMMANDS:
+            if args.store_command in delivery_commands.COMMANDS:
+                def fresh_reader():
+                    return VersionedStore(GitStore(args.path) if args.binding is None else
+                        GitHubStore(replace(binding, write_enabled=False), GitHubAPI.from_environment()))
+                result = delivery_commands.execute(args, store, _load, fresh_reader)
+            elif args.store_command in research_commands.COMMANDS:
                 result = research_commands.execute(args, store, _load)
             elif args.store_command == "put-source":
                 result = asdict(store.put_source(args.submission_id, SourceInput.from_dict(_load(args.input))))
@@ -105,6 +111,9 @@ def execute(args: argparse.Namespace) -> int:
                 result = store.search(args.query, entity_id=args.entity_id, limit=args.limit,
                                       cursor=_load(args.cursor) if args.cursor else None)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        if args.store_command in ("deliver-research", "verify-delivery"):
+            status = result.get("delivery_verification", result).get("status")
+            return 0 if status == "verified-declared-inventory" else 2
         return 2 if args.store_command == "audit-numbers" and result["status"] not in ("checked", "conditional") else 0
     except RecordError as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)

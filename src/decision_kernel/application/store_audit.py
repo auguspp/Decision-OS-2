@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 
+from decision_kernel.application.research_artifacts import ResearchArtifacts
+from decision_kernel.application.research_delivery import ResearchDelivery, delivery_manifest
 from decision_kernel.application.versioned_store import MAX_QUERY_VERSIONS, VersionedStore
 from decision_kernel.domain.records import BlobRef, RecordError, Selection, SourceRef, require
 
@@ -15,7 +17,8 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
     sources = [p for p in paths if p.startswith("source-views/") and p.endswith("/manifest.json")]
     revisions = [p for p in paths if p.startswith("research/cases/") and p.endswith("/record.json")]
     currents = [p for p in paths if p.startswith("research/cases/") and p.endswith("/current.json")]
-    require(len(sources) + len(revisions) <= MAX_QUERY_VERSIONS, "AUDIT_VERSION_LIMIT")
+    artifacts = [p for p in paths if p.startswith("research/artifacts/") and p.endswith("/manifest.json")]
+    require(len(sources) + len(revisions) + len(artifacts) <= MAX_QUERY_VERSIONS, "AUDIT_VERSION_LIMIT")
     source_refs, revision_refs, current_refs = [], [], {}
     for path in sources:
         ref = backend.reference(backend.last_change(snapshot, path), path)
@@ -29,10 +32,19 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
         # A damaged current copy must not hide behind an intact historical reference.
         store.read_source(SourceRef(backend.reference(snapshot, path), source.selection))
         source_refs.append(asdict(source))
+    artifact_refs = []
+    for path in artifacts:
+        ref = backend.reference(backend.last_change(snapshot, path), path)
+        ResearchArtifacts(store).read(ref, include_data=False)
+        ResearchArtifacts(store).read(backend.reference(snapshot, path), include_data=False)
+        artifact_refs.append(asdict(ref))
     retained = 0
     for path in revisions:
         ref = backend.reference(backend.last_change(snapshot, path), path)
-        record = store.read_revision(ref)["record"]["input"]
+        saved = store.read_revision(ref)
+        record = saved["record"]["input"]
+        if delivery_manifest(saved["body"]) is not None:
+            require(ResearchDelivery(store).verify(ref)["status"] != "failed", "DELIVERY_READBACK_FAILED")
         store.read_revision(backend.reference(snapshot, path))
         for raw in record["sources"]:
             store.read_source(SourceRef.from_dict(raw))
@@ -51,10 +63,13 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
         ref = store.current(case, snapshot=snapshot)
         require(ref is not None and ref.path in revisions, "INVALID_CURRENT_POINTER")
         current_refs[case] = asdict(ref)
-    return {"schema": "store-reference-audit-v1", "snapshot": snapshot,
+    result = {"schema": "store-reference-audit-v1", "snapshot": snapshot,
             "scope": "snapshot-visible-versions-and-retained-references",
             "source_versions": len(sources), "research_revisions": len(revisions),
             "current_cases": len(currents), "retained_source_uses": retained,
             "sources": source_refs, "revisions": revision_refs, "current": current_refs,
             "status": "verified", "originals_authenticated": False,
             "research_quality": "not-evaluated", "live_authorization": "not-certified-by-audit"}
+    if artifacts:
+        result.update(artifact_versions=len(artifacts), artifacts=artifact_refs)
+    return result

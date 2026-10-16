@@ -1,0 +1,57 @@
+name: decision-os-market-source-check
+on:
+  workflow_dispatch:
+    inputs:
+      code_sha:
+        description: 'Exact reviewed main SHA'
+        type: string
+        required: true
+      exchange:
+        description: 'One listing/calendar venue; THS groups remain A-share classifications'
+        type: choice
+        options: [SSE, SZSE]
+        default: SSE
+      start:
+        description: 'YYYYMMDD; at most 120 past calendar days, no current-day sampling'
+        type: string
+        required: true
+      end:
+        description: 'Explicit completed past date YYYYMMDD; no latest-date substitution'
+        type: string
+        required: true
+      access_confirmed:
+        description: 'Authorize these finite read-only checks using existing Relay access; NOT public data release'
+        type: boolean
+        default: false
+        required: true
+permissions: {}
+concurrency:
+  group: decision-os-relay-source
+  cancel-in-progress: false
+jobs:
+  check:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Check in memory without exporting supplier data
+        env:
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+        run: python -m decision_kernel.interfaces.market_source_check_cli --out "$RUNNER_TEMP/dos2-market-check"
+      - name: Preserve only the allowlisted engineering receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-market-check-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-market-check/result.json
+          if-no-files-found: warn
+          retention-days: 7

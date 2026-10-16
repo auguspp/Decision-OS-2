@@ -33,11 +33,15 @@ python -m decision_kernel.interfaces.news_cli capture-relay --api news \
   --output relay-news-window.json
 python -m decision_kernel.interfaces.news_cli capture-relay \
   --api cctv_news --date 20261015 --output cctv-window.json
+python -m decision_kernel.interfaces.news_cli merge \
+  --windows news-window.json relay-news-window.json --output combined-news.json
 python -m decision_kernel.interfaces.news_cli read \
-  --window news-window.json --limit 40
+  --window combined-news.json --limit 40
 python -m decision_kernel.interfaces.news_cli export-locators \
   --window news-window.json --output news-locators.json
 ```
+
+可以用离线 `merge` 将NewsNow和Relay两份确切观察结果合在同一可验证的阅读视图，保留各自来源/版本、跨源同标题仅显示重复候选；生成的 `reading_sha256` 与来源原始response digest分开，修改后读取/导出会拒绝，合并不触发网络或存储写入。
 
 本期只生成有限新闻观察：保留标题、链接／来源、获取时钟、发布时间原字段声称、文章/版本身份和原HTTP SHA256；**不在结果里保留供应商全文或聚合HTTP原字节**。相同标题仅为重复曝光候选，新闻没有自动升级成独立证据、经济事件、公司利好或Quick。来源失败与缺口不能报“无新闻”；初次捕获不能证明完整滚动历史。主请求的wire哈希也不意味着可从hash恢复原文字节。
 

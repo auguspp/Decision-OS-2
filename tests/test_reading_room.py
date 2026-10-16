@@ -1,5 +1,6 @@
 """Composition and UI payload boundaries; real owners are exercised in integration."""
 from copy import deepcopy
+from html.parser import HTMLParser
 from types import SimpleNamespace
 
 import pytest
@@ -192,7 +193,16 @@ def test_offline_page_preserves_literal_body_and_has_no_remote_execution():
     model=Model();model.body='</script><img src="https://invalid.example/x" onerror="alert(1)">\u2028&\n'
     result=model.build(dict(as_of=AT,brief=artifact()));html=render_page(result)
     assert model.body not in html and '\\u003c/script\\u003e' in html
-    assert "connect-src 'none'" in html and 'textContent=text' in html
+    policies = []
+    class Metadata(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            if tag == 'meta' and attributes.get('http-equiv') == 'Content-Security-Policy':
+                policies.append(attributes.get('content', ''))
+    Metadata().feed(html)  # HTML attributes decode character references in the browser.
+    assert len(policies) == 1 and "connect-src 'none'" in policies[0]
+    assert "default-src 'none'" in policies[0] and "script-src 'sha256-" in policies[0]
+    assert 'textContent=text' in html
     assert 'innerHTML' not in html and 'fetch(' not in html and 'localStorage' not in html
     assert 'reading-room-next.json' in html and 'research.md' in html and 'brief.md' in html
     assert result['readings'][0]['body']==model.body

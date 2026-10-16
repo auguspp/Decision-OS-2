@@ -268,7 +268,8 @@ def _reading(rows, counts):
             _verify_headline_projection(item)
         if isinstance(item, dict) and (item.get("provider") == "rss" or "rss" in item):
             verify_news_outcome(item)
-            rss_sources.add(item["source"])
+            if item["status"] == "captured":
+                rss_sources.add(item["source"])
     distinct = {}
     for row in rows:
         require(isinstance(row, dict), "NEWS_ROW_INVALID")

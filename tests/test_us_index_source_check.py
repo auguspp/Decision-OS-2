@@ -176,7 +176,17 @@ class USIndexSourceCheckTests(unittest.TestCase):
             with self.subTest(fault=fault):
                 out = self.run_check({'DJI': fault})
                 self.assertEqual(out['http_attempts'], 5)
-                self.assertEqual(out['queries']['us_dji']['status'], 'rejected')
+                q = out['queries']['us_dji']
+                # The generic capture owner rejects scope/field mismatches before
+                # retaining a page; other faults reach the market-specific reader.
+                early = {'code': 'SOURCE_RETURNED_SCOPE_MISMATCH',
+                         'fields': 'SOURCE_REQUESTED_FIELDS_MISSING'}
+                self.assertEqual(q['status'], 'capture-incomplete' if fault in early else 'rejected')
+                if fault in early:
+                    self.assertEqual(q['reason_code'], early[fault])
+                    self.assertEqual((q['row_count'], q['page_count']), (0, 0))
+                self.assertEqual(q['http_attempts'], 1)
+                self.assertEqual(self.waits, [])
                 self.assertEqual(out['queries']['us_spx']['status'], 'checked')
                 s = out['surfaces']['us_indices']
                 self.assertEqual((s['scope_count'], s['observed_count']), (4, 3))

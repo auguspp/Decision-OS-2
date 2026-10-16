@@ -12,7 +12,7 @@ import time
 
 from decision_kernel.application.market_group_inputs import (
     CATALOG_FIELDS, GROUP_TYPES, LEVEL_FIELDS, MEMBER_FIELDS, qualified_ths_catalog,
-    qualified_ths_members, read_three_market_surfaces,
+    qualified_ths_members, read_three_market_surfaces, CLASSIFICATION_CODES, _classification_checks,
 )
 from decision_kernel.application.market_relay_inputs import (
     EXCHANGES, _range, _rows, qualified_daily, qualified_trade_calendar,
@@ -22,7 +22,7 @@ from decision_kernel.application.market_security_inputs import (
 )
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
-from decision_kernel.domain.records import RecordError, require
+from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.relay_http import RelayHTTP
 from decision_kernel.infrastructure.relay_failure import KNOWN_ERRORS
 from decision_kernel.infrastructure.relay_retry import RetryingRelay
@@ -51,6 +51,8 @@ PUBLIC_CODES = frozenset({
     'MARKET_RELAY_MASTER_CURRENCY_UNSUPPORTED', 'MARKET_RELAY_MASTER_IDENTITY',
     'MARKET_RELAY_MASTER_LIST_DATE_REQUIRED', 'MARKET_RELAY_MASTER_DELIST_DATE',
     'MARKET_RELAY_GROUP_CLASSIFICATION', 'MARKET_RELAY_GROUP_CODE',
+    'MARKET_RELAY_GROUP_DUPLICATE_CODE', 'MARKET_RELAY_GROUP_EXCHANGE_MISMATCH',
+    'MARKET_RELAY_GROUP_TYPE_MISMATCH',
     'MARKET_RELAY_GROUP_MEMBER_IDENTITY', 'MARKET_RELAY_DAILY_ROW',
     'MARKET_RELAY_DAILY_CLOSE', 'MARKET_RELAY_FACTOR_ROW', 'MARKET_RELAY_FACTOR_VALUE',
     'MARKET_RELAY_END_NOT_MARKET_SESSION',
@@ -100,14 +102,40 @@ def _last_attempt_failure(capture: dict) -> dict | None:
     return None
 
 
-def _catalogue_shape(view: dict) -> dict:
+def _catalogue_shape(view: dict, expected_type: str) -> dict:
     """Fixed structural counters only. Does not qualify, coerce or filter rows."""
     names = {type(None): 'null', bool: 'boolean', int: 'integer', float: 'number', str: 'string'}
     types = {field: {kind: 0 for kind in ('missing', 'null', 'boolean', 'integer', 'number', 'string', 'other')}
              for field in sorted(CATALOG_FIELDS)}
     out = {'field_types': types, 'padded_names': 0, 'nonprintable_names': 0,
            'integral_numeric_counts': 0, 'fractional_numeric_counts': 0}
+    classification = {
+        'coverage': 'complete-capture-not-qualified' if view['complete'] else 'received-pages-only',
+        'rows_checked': 0, 'rows_with_issues': 0,
+        'reason_counts': {'MARKET_RELAY_' + code: 0 for code in CLASSIFICATION_CODES},
+        'duplicate_identical_rows': 0, 'duplicate_different_rows': 0,
+        'missing_exchange_rows': 0, 'missing_type_rows': 0,
+    }
+    out['classification'] = classification
+    seen = {}
     for row in _rows(view):
+        checks = dict(_classification_checks(row, seen, expected_type))
+        classification['rows_checked'] += 1
+        classification['rows_with_issues'] += int(not all(checks.values()))
+        for reason, passed in checks.items():
+            classification['reason_counts']['MARKET_RELAY_' + reason] += int(not passed)
+        classification['missing_exchange_rows'] += int(row.get('exchange') in (None, ''))
+        classification['missing_type_rows'] += int(row.get('type') in (None, ''))
+        if checks['GROUP_CODE']:
+            code = row['ts_code']
+            # Only the fixed requested columns; bytes stay in memory, never in a receipt.
+            representation = encoded({field: row.get(field) for field in sorted(CATALOG_FIELDS)})
+            if code in seen:
+                key = 'duplicate_identical_rows' if representation == seen[code] else 'duplicate_different_rows'
+                classification[key] += 1
+            else:
+                seen[code] = representation
+
         for field, counts in types.items():
             kind = names.get(type(row[field]), 'other') if field in row else 'missing'
             counts[kind] += 1
@@ -196,7 +224,7 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             view = inspect_result(result, registry)
             item.update(row_count=view['row_count'], page_count=view['page_count'])
             if api == 'ths_index':
-                item['catalogue_shape'] = _catalogue_shape(view)
+                item['catalogue_shape'] = _catalogue_shape(view, params['type'])
             if not view['complete']:
                 item.update(status='capture-incomplete', reason_code=_code(capture['error']))
                 return result, None

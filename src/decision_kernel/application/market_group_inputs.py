@@ -37,6 +37,27 @@ def _name(value: object) -> str:
     return value
 
 
+CLASSIFICATION_CODES = ("GROUP_CODE", "GROUP_DUPLICATE_CODE", "GROUP_EXCHANGE_MISMATCH", "GROUP_TYPE_MISMATCH")
+
+
+def _classification_checks(row: dict, seen: Mapping, expected_type: str) -> tuple:
+    """One set of predicates for qualification and non-publishing diagnostics.
+
+    The caller owns the source slice and seen-code scope. Invalid identifiers
+    never participate in duplicate matching; no value is coerced or rewritten.
+    """
+    try:
+        code = _index_code(row.get("ts_code"))
+    except MarketRelayError:
+        code = None
+    return tuple(zip(CLASSIFICATION_CODES, (
+        code is not None,
+        code is None or code not in seen,
+        row.get("exchange") == "A",
+        row.get("type") == expected_type,
+    )))
+
+
 def qualified_ths_catalog(result: dict, *, registry: RelayRegistry, kind: str) -> dict:
     """All rows in one explicit A/I or A/N slice; not a historical classification."""
     _require(isinstance(kind, str) and kind in GROUP_TYPES, "GROUP_KIND")
@@ -44,9 +65,9 @@ def qualified_ths_catalog(result: dict, *, registry: RelayRegistry, kind: str) -
     groups = {}
     namespace = "ths-a-" + kind
     for row in _rows(view):
-        code = _index_code(row["ts_code"])
-        _require(code not in groups and row["exchange"] == "A"
-                 and row["type"] == GROUP_TYPES[kind], "GROUP_CLASSIFICATION")
+        for reason, passed in _classification_checks(row, groups, GROUP_TYPES[kind]):
+            _require(passed, reason)
+        code = row["ts_code"]
         count = row["count"]
         if count in (None, ""):
             count = None

@@ -146,6 +146,41 @@ operation, never a rerun that repairs the old sample. It proves only the actual
 new result at its exact code/operation identity. Source/publication permissions and
 later compatible normalization must be established separately from counters.
 
+## Classification diagnosis across the received directory
+
+The former `MARKET_RELAY_GROUP_CLASSIFICATION` composite is split into
+`MARKET_RELAY_GROUP_DUPLICATE_CODE`, `MARKET_RELAY_GROUP_EXCHANGE_MISMATCH` and
+`MARKET_RELAY_GROUP_TYPE_MISMATCH`. Invalid identifiers keep `GROUP_CODE`.
+The same predicates in `market_group_inputs._classification_checks` serve the
+qualifier and diagnostic reader. Acceptance, whole-slice rejection, original
+row order, count normalization and source bytes are unchanged. Qualifiers still
+stop at the first failed predicate; historical receipts keep their original code.
+
+`catalogue_shape.classification` counts every received row across all inspected
+pages, even after a prior row would have failed qualification. Fixed
+`reason_counts` can overlap; `rows_with_issues` counts each affected row only once.
+Missing exchange/type counts distinguish null/empty from other mismatches without
+returning the value. Duplicate counts refer to occurrences after the first valid
+identifier, across page boundaries, including identifiers on otherwise invalid
+rows. Identical/different duplicate counts compare the original JSON values of
+the six fixed columns with the first occurrence (no trimming or numeric coercion).
+Invalid identifiers are counted separately and never deduplicated. The per-query
+seen map is discarded, so separate I/N slices never contaminate each other.
+
+`coverage=received-pages-only` explicitly limits incomplete captures; otherwise
+`complete-capture-not-qualified` still certifies neither source completeness nor
+market acceptance. Counts do not repair, filter, publish or save any row, and do
+not disclose identifiers, row positions, digests or unrecognized source values.
+The existing `catalogues` selection and operational stop rules are unchanged.
+A new targeted result must be inspected before proposing a compatibility change;
+old diagnostics without these counters cannot be retroactively reconstructed.
+
+`tests/test_market_classification.py` protects the shared predicates, independent
+counts, cross-page duplicates, incomplete/empty input, unchanged bytes, channel
+isolation and every incremental host receipt. Retire these diagnostic additions,
+their predicates where unused, this section and exclusive tests together; retain
+all current qualification, transport, custody and CI protections.
+
 ## Maintenance and evidence ownership
 
 `tests/test_market_source_check.py` uses the existing synthetic Response and

@@ -63,11 +63,13 @@ there is no alternate key, host or retry loop at the channel layer.
 ## Receipt versus source data
 
 Only code-owned status labels, allowlisted error codes, row/page/request counts,
-query-slot/API names, declared/observed counts, and operator date/venue scope
+query-slot/API names, declared/observed counts, fixed structural counters, and operator date/venue scope
 leave the use case. Source values, names, selected security/index identifiers,
 prices, member lists, response identifiers, body/view hashes, arbitrary exception
 prose and original attempt diagnostics are not emitted. Error text outside the
-small explicit code allowlist becomes `CHECK_REJECTED`.
+explicit code allowlist becomes `CHECK_REJECTED`. Code-owned `GROUP_COUNT`,
+`GROUP_NAME`, and master name/duplicate errors retain their exact stable codes;
+unknown strings are still never released.
 
 `checked-sample` requires nonempty, qualified responses in all ten slots and at
 least one usable window in each composed channel (qfq for the stock). It is not
@@ -90,7 +92,8 @@ adoption still require suitable data rights and the already delivered #55 path.
 `market-source-check.yml` is manual, main-only, exact-code-SHA and first-attempt
 only. It shares `decision-os-relay-source` serialization with the current source
 host and never cancels an active source run. Inputs are exactly `code_sha`,
-`exchange`, `start`, `end`, and `access_confirmed`; an unknown selector is refused.
+`exchange`, `start`, `end`, and `access_confirmed`, with optional `selection`
+(default `sample` for prior callers); an unknown selector or selection is refused.
 The latter authorizes this query-only use, not third-party publication. The job
 has `contents: read`, does not expose a store token and passes the existing Relay
 Secret only to the check step. There is no cron, notification, model execution,
@@ -102,6 +105,42 @@ returned diagnostic artifact. Merely merging the workflow proves no live source
 call. Runtime failures remain operational evidence rather than CI failures to
 be hidden with reruns. Explicit new checks do not reset or retrospectively repair
 an earlier failed sample.
+
+
+## Targeted diagnosis without changing qualification
+
+`selection=catalogues` requests only the two `ths_index` A/I and A/N slices using
+exactly the existing field set, zero-origin pagination, retry and deadline rules.
+It never requests the calendar, master, prices, factors or members, never derives
+a sample and never invokes three-surface reading. Dates are validated operational
+context only; they do not date the current directories. Successful, nonempty
+qualification of both yields `checked-catalogues`, not `checked-sample`. Empty,
+rejected, incomplete and stopped results remain exit 2. Only selected slots occur
+in `queries`; an omitted slot is not tested or passed. `surfaces` remains empty.
+
+After the existing generic inspector, catalogue diagnostics expose only counts
+for the six fixed expected field names and fixed type buckets (missing/null/
+boolean/integer/number/string/other), plus padded/nonprintable-name counts and
+integral/fractional floating-number counts. They expose neither source values nor
+row positions or IDs. These structural counters do not coerce values, select
+valid rows, change catalogue admission or establish usable classification counts.
+No source-supplied field name becomes a diagnostic key.
+
+`last_attempt_failure` uses the existing transport's recorded failure classification,
+HTTP status and reviewed business-error enum, projected to explicit finite code
+sets. It describes the latest failed attempt, including one recovered by a later
+successful retry; it is not necessarily the final query outcome. No failure
+metadata means null, not proof there was no unrecorded network issue. Unknown
+classes become `unclassified`, invalid statuses and unknown business errors become
+null. Original exception prose, request IDs, headers, timestamps, source digests
+and retry details are not emitted. No new transport classifier or retry policy is
+introduced. Earlier receipts lacking this information cannot be reconstructed.
+
+The change responds to the first live check's `CHECK_REJECTED` diagnosis loss.
+Existing failed evidence stays intact. A new targeted diagnosis is a new explicit
+operation, never a rerun that repairs the old sample. It proves only the actual
+new result at its exact code/operation identity. Source/publication permissions and
+later compatible normalization must be established separately from counters.
 
 ## Maintenance and evidence ownership
 

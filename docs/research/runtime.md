@@ -17,7 +17,7 @@
 | operation | payload（作为 JSON 字符串） | 效果 |
 |---|---|---|
 | `catalogue` | 可选 `cursor`、`limit` | 固定快照分页浏览已存研究、未决工作及精确打开入口；详见[研究目录](../delivery/research-catalogue.md) |
-| `prepare` | 恰好一个 `request`、`case_id` 或 `reference`；可附 `source_limit` | 返回完整方法、原问题/来源上下文及从已有底稿派生的未完成工作/挑战；不执行或保存 |
+| `prepare` | 恰好一个 `request`、`case_id` 或 `reference`；可附 `source_limit`、`evidence_plan/evidence_cursor/evidence_limit` | [实际从信息池装配材料](evidence.md)，并返回完整方法、原问题/来源上下文及从已有底稿派生的未完成工作/挑战；不执行或保存 |
 | `resume` | 恰好一个 `case_id`、`reference` 或 `cursor`；可附 `source_limit` | 读取固定研究版本；后继游标不跳到较新 current |
 | `read-source` | 已保存的完整 `SourceRef` | 精确读回，保管等级与限制不升级 |
 | `put-source` | 原 `SourceInput` 字段 | 一次来源保存，返回 `SourceRef` |

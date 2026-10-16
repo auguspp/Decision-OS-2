@@ -6,6 +6,7 @@ receipt, NOT a capture, SourceRef, reproducible market snapshot or discovery.
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 from datetime import date, datetime, timedelta, timezone
 import time
 
@@ -14,7 +15,7 @@ from decision_kernel.application.market_group_inputs import (
     qualified_ths_members, read_three_market_surfaces,
 )
 from decision_kernel.application.market_relay_inputs import (
-    EXCHANGES, _range, qualified_daily, qualified_trade_calendar,
+    EXCHANGES, _range, _rows, qualified_daily, qualified_trade_calendar,
 )
 from decision_kernel.application.market_security_inputs import (
     FACTOR_FIELDS, MASTER_FIELDS, qualified_adj_factors, qualified_security_master,
@@ -23,6 +24,7 @@ from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.relay_http import RelayHTTP
+from decision_kernel.infrastructure.relay_failure import KNOWN_ERRORS
 from decision_kernel.infrastructure.relay_retry import RetryingRelay
 from decision_kernel.observations.market_daily import MarketInputError
 
@@ -52,11 +54,70 @@ PUBLIC_CODES = frozenset({
     'MARKET_RELAY_GROUP_MEMBER_IDENTITY', 'MARKET_RELAY_DAILY_ROW',
     'MARKET_RELAY_DAILY_CLOSE', 'MARKET_RELAY_FACTOR_ROW', 'MARKET_RELAY_FACTOR_VALUE',
     'MARKET_RELAY_END_NOT_MARKET_SESSION',
+    'MARKET_RELAY_GROUP_NAME', 'MARKET_RELAY_GROUP_COUNT',
+    'MARKET_RELAY_MASTER_NAME', 'MARKET_RELAY_MASTER_DUPLICATE_SECURITY',
+    'MARKET_RELAY_GROUP_KIND', 'MARKET_RELAY_QUERY_SCOPE',
+    'MARKET_RELAY_FIELDS_NOT_REQUESTED', 'MARKET_RELAY_CAPTURE_CONTEXT_CHANGED',
+    'MARKET_RELAY_CAPTURE_INCOMPLETE', 'MARKET_RELAY_RESULT_INVALID',
+    'RELAY_AUTH_OR_ENTITLEMENT', 'RELAY_RATE_LIMIT', 'RELAY_JSON_INVALID',
+    'RELAY_HTTP_404', 'RELAY_HTTP_405', 'RELAY_HTTP_RESPONSE_INVALID',
+    'SOURCE_COUNT_INVALID', 'SOURCE_CELL_INVALID', 'SOURCE_TEXT_TOO_LARGE',
 })
 
 
 def _code(value: object) -> str:
     return value if isinstance(value, str) and value in PUBLIC_CODES else 'CHECK_REJECTED'
+
+
+SELECTIONS = ('sample', 'catalogues')
+FAILURE_CLASSES = frozenset({
+    'auth-or-entitlement', 'rate-limit', 'source-unavailable', 'request-rejected',
+    'temporary-upstream', 'temporary-gateway', 'http-unclassified',
+    'tls-certificate', 'tls', 'dns-temporary', 'dns', 'timeout',
+    'incomplete-read', 'connection', 'http-protocol', 'transport-unclassified',
+})
+
+
+def _last_attempt_failure(capture: dict) -> dict | None:
+    """Project the last failed attempt, which may precede a later successful retry.
+
+    Reuse recorded transport classifications; never infer them from error prose
+    or emit the original headers, request identity, body or retry diagnostics.
+    """
+    attempts = [a for page in capture.get('pages', []) for a in page.get('attempts', [])]
+    attempts.extend(capture.get('attempts', []))
+    for attempt in reversed(attempts):
+        failure = attempt.get('failure') if isinstance(attempt, dict) else None
+        if not isinstance(failure, dict):
+            continue
+        category, status = failure.get('classification'), failure.get('http_status')
+        business = failure.get('business_error')
+        return {
+            'classification': category if isinstance(category, str) and category in FAILURE_CLASSES else 'unclassified',
+            'http_status': status if type(status) is int and 100 <= status <= 599 else None,
+            'business_error': business if isinstance(business, str) and business in KNOWN_ERRORS else None,
+        }
+    return None
+
+
+def _catalogue_shape(view: dict) -> dict:
+    """Fixed structural counters only. Does not qualify, coerce or filter rows."""
+    names = {type(None): 'null', bool: 'boolean', int: 'integer', float: 'number', str: 'string'}
+    types = {field: {kind: 0 for kind in ('missing', 'null', 'boolean', 'integer', 'number', 'string', 'other')}
+             for field in sorted(CATALOG_FIELDS)}
+    out = {'field_types': types, 'padded_names': 0, 'nonprintable_names': 0,
+           'integral_numeric_counts': 0, 'fractional_numeric_counts': 0}
+    for row in _rows(view):
+        for field, counts in types.items():
+            kind = names.get(type(row[field]), 'other') if field in row else 'missing'
+            counts[kind] += 1
+        name, count = row.get('name'), row.get('count')
+        if isinstance(name, str):
+            out['padded_names'] += int(name != name.strip())
+            out['nonprintable_names'] += int(not name.isprintable())
+        if type(count) is float and math.isfinite(count):
+            out['integral_numeric_counts' if count.is_integer() else 'fractional_numeric_counts'] += 1
+    return out
 
 
 def check_scope(exchange: str, start: str, end: str, now: datetime) -> None:
@@ -69,7 +130,7 @@ def check_scope(exchange: str, start: str, end: str, now: datetime) -> None:
 
 
 def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: str,
-                  access_confirmed: bool = False, client=None, now: datetime | None = None,
+                  access_confirmed: bool = False, selection: str = 'sample', client=None, now: datetime | None = None,
                   progress=None, sleep=time.sleep, monotonic=time.monotonic, clock=None) -> dict:
     """Check one current listing slice and one source-selected member of each channel.
 
@@ -80,14 +141,17 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     """
     require(access_confirmed is True, 'MARKET_CHECK_ACCESS_REQUIRED')
     require(isinstance(registry, RelayRegistry), 'MARKET_CHECK_REGISTRY')
+    require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
+    selected_slots = SLOTS if selection == 'sample' else {k: SLOTS[k] for k in ('sector_catalog', 'concept_catalog')}
     now = datetime.now(timezone.utc) if now is None else now
     check_scope(exchange, start, end, now)
-    report = {'schema': 'market-source-check-v1', 'status': 'in-progress',
+    report = {'schema': 'market-source-check-v1', 'status': 'in-progress', 'selection': selection,
         'scope': {'exchange': exchange, 'start': start, 'end': end, 'list_status': 'L'},
-        'sample_policy': 'first-sorted-code-per-qualified-source-catalogue-not-candidates',
+        'sample_policy': ('first-sorted-code-per-qualified-source-catalogue-not-candidates' if selection == 'sample'
+                          else 'catalogue-qualification-only-no-sample-or-dated-membership'),
         'queries': {k: {'api': api, 'status': 'not-attempted', 'reason_code': 'DEPENDENCY_UNAVAILABLE',
-                        'row_count': None, 'page_count': None, 'http_attempts': 0}
-                    for k, api in SLOTS.items()},
+                        'row_count': None, 'page_count': None, 'http_attempts': 0, 'last_attempt_failure': None}
+                    for k, api in selected_slots.items()},
         'surfaces': {}, 'http_attempts': 0, 'stopped': False,
         'supplier_data_retained': False, 'source_refs_created': False,
         'limitations': ['DIAGNOSTICS_NOT_REPLAYABLE_CAPTURE_OR_PUBLICATION_LICENSE',
@@ -126,10 +190,13 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             stopped = ((capture.get('failure') or {}).get('classification') in {'auth-or-entitlement', 'rate-limit'}
                        or capture['error'] in {'RELAY_RUN_DEADLINE', 'RELAY_SECRET_REFLECTED'})
             report['stopped'] = stopped
+            item['last_attempt_failure'] = _last_attempt_failure(capture)
             result = {'case_id': 'market-source-check', 'use': use,
                       'status': 'captured' if capture['complete'] else 'capture-incomplete', 'capture': capture}
             view = inspect_result(result, registry)
             item.update(row_count=view['row_count'], page_count=view['page_count'])
+            if api == 'ths_index':
+                item['catalogue_shape'] = _catalogue_shape(view)
             if not view['complete']:
                 item.update(status='capture-incomplete', reason_code=_code(capture['error']))
                 return result, None
@@ -143,6 +210,17 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             item['http_attempts'] = client.requests - before
             report['http_attempts'] = client.requests - initial_requests
             emit()
+
+    if selection == 'catalogues':
+        # No calendar, master, price, factor, members or three-surface invocation.
+        # Dates are operation context only: these directories have no dated scope.
+        for kind in GROUP_TYPES:
+            take(kind + '_catalog', {'exchange': 'A', 'type': GROUP_TYPES[kind]}, CATALOG_FIELDS,
+                 lambda r, k=kind: qualified_ths_catalog(r, registry=registry, kind=k))
+        report['status'] = ('checked-catalogues' if all(q['status'] == 'checked'
+                            for q in report['queries'].values()) else 'completed-with-gaps')
+        emit()
+        return report
 
     period = {'start_date': start, 'end_date': end}
     cal, sessions = take('calendar', {'exchange': exchange, **period}, {'exchange', 'cal_date', 'is_open'},

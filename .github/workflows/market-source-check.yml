@@ -6,6 +6,11 @@ on:
         description: 'Exact reviewed main SHA'
         type: string
         required: true
+      selection:
+        description: 'sample checks all ten slots; catalogues checks only THS I/N and never derives samples'
+        type: choice
+        options: [sample, catalogues]
+        default: sample
       exchange:
         description: 'One listing/calendar venue; THS groups remain A-share classifications'
         type: choice

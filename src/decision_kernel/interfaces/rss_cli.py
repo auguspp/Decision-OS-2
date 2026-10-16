@@ -16,6 +16,7 @@ from decision_kernel.domain.records import Conflict, MissingObject, RecordError,
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.infrastructure.rss_http import fetch_feed
 from decision_kernel.interfaces.research_payload import json_object
+from decision_kernel.interfaces import rss_recovery
 
 REPOSITORY = "auguspp/Decision-OS-2"
 WORKFLOW = REPOSITORY + "/.github/workflows/rss-intake.yml@refs/heads/main"
@@ -51,29 +52,51 @@ def run_native(output):
     inputs = read_json(os.environ["GITHUB_EVENT_PATH"])["inputs"]
     require(inputs["code_sha"] == os.environ.get("GITHUB_SHA"), "RSS_CODE_CHANGED")
     operation = inputs["operation"]
-    require(operation in ("capture", "read") and os.environ.get("DOS2_RSS_MODE") == operation, "RSS_JOB_MISMATCH")
+    require(operation in ("capture", "read", "recover", "reconcile") and os.environ.get("DOS2_RSS_MODE") == operation, "RSS_JOB_MISMATCH")
     require(isinstance(inputs["plan"], str) and len(inputs["plan"].encode("utf-8")) <= 60 * 1024, "RSS_PLAN_BOUND")
     plan = json_object(inputs["plan"].encode("utf-8"))
     binding = GitHubBinding.from_dict(read_json("config/store-binding.json", 4096))
     require(binding.repository == REPOSITORY and binding.repository_id == 1420041744
             and binding.visibility == "public" and not binding.write_enabled, "RSS_BINDING_CHANGED")
-    if operation == "capture":
+    if operation in ("capture", "recover"):
         require(inputs.get("public_metadata_custody_confirmed") == "true", "RSS_METADATA_RIGHTS_REQUIRED")
         identifier(inputs.get("submission_id")); identifier("rss-" + inputs["submission_id"])
         require(isinstance(inputs.get("expected_head"), str) and SHA.fullmatch(inputs["expected_head"]), "RSS_EXPECTED_HEAD_REQUIRED")
         if plan.get("retain_original"):
             require(inputs.get("public_original_custody_confirmed") == "true", "RSS_ORIGINAL_RIGHTS_REQUIRED")
+    elif operation == "reconcile":
+        identifier(inputs.get("submission_id"))
+        require(not inputs.get("expected_head"), "RSS_RECONCILE_READ_ONLY_REQUIRED")
     else:
         require(set(plan) == {"reference"} and not inputs.get("submission_id") and not inputs.get("expected_head"), "RSS_READ_PLAN_REQUIRED")
+    if operation in ("recover", "reconcile"):
+        rss_recovery.selection(plan)
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     report = {"schema": "dos2-rss-operation-v1", "operation": operation, "code_sha": inputs["code_sha"],
               "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": 1, "started_at": now(),
-              "status": "started", "write": "not-attempted" if operation == "capture" else "not-requested"}
+              "status": "started", "write": "not-attempted" if operation in ("capture", "recover") else "not-requested"}
     backend = None
     try:
         (output / "inputs.json").write_bytes(encoded(inputs))
         api = GitHubAPI.from_environment()
-        if operation == "capture":
+        if operation in ("recover", "reconcile"):
+            source, value, origin = rss_recovery.load_original(Path(os.environ["RUNNER_TEMP"]) / "rss-recovery",
+                plan, submission_id=inputs["submission_id"], reconcile=operation == "reconcile")
+            (output / "source.json").write_bytes(encoded(asdict(source)))
+            (output / "capture.json").write_bytes(encoded(value))
+            (output / "reading.json").write_bytes(encoded(read_capture(value)))
+            (output / "recovery-native.json").write_bytes(encoded(origin))
+            report["recovered_original"] = plan
+            if value["schema"] == FAILURE_SCHEMA:
+                report.update(source_outcome="unavailable", source_error_code=value["error_code"],failure_stage=value["stage"])
+            backend = (_PlannedStore(replace(binding, write_enabled=True), api, inputs["expected_head"])
+                       if operation == "recover" else GitHubStore(binding, api))
+            store = VersionedStore(backend)
+            rss_recovery.verify_transition(store, value)
+            ref = store.put_source(inputs["submission_id"], source)
+            report.update(reference=asdict(ref), write=("published" if backend.published else "replayed")
+                          if operation == "recover" else "reconciled-without-write")
+        elif operation == "capture":
             backend = _PlannedStore(replace(binding, write_enabled=True), api, inputs["expected_head"])
             head = backend.head()
             require(head == inputs["expected_head"], "RSS_PLANNED_HEAD_CHANGED")
@@ -102,18 +125,18 @@ def run_native(output):
             (output / "reading.json").write_bytes(encoded(read_capture(value)))
             report["reference"] = plan["reference"]
         if value["schema"] == FAILURE_SCHEMA:
-            report.update(status="source-failed-receipt-saved" if operation == "capture" else "completed",
+            report.update(status="source-failed-receipt-saved" if operation in ("capture", "recover") else "completed",
                           source_outcome="unavailable", source_error_code=value["error_code"],
                           failure_stage=value["stage"], capture_sha256=value["capture_sha256"],
                           observations=None, original_status=value["original"]["status"],
                           predecessor=value["predecessor"])
-            return 2 if operation == "capture" else 0
+            return 2 if operation in ("capture", "recover") else 0
         report.update(status="completed", capture_sha256=value["capture_sha256"],
                       observations=len(value["observations"]), delta=value["delta"],
                       original_status=value["original"]["status"], predecessor=value["predecessor"])
         return 0
     except (RecordError, OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError) as error:
-        uncertain = isinstance(error, UnknownWrite) or (backend is not None and backend.commit_started and not isinstance(error, Conflict))
+        uncertain = isinstance(error, UnknownWrite) or (backend is not None and getattr(backend, "commit_started", False) and not isinstance(error, Conflict))
         code = str(error) if isinstance(error, RecordError) else "RSS_OPERATION_FAILED"
         report.update(status="unknown-write-reconcile-original" if uncertain else "failed",
                       error_code=code if re.fullmatch(r"[A-Z0-9_]{1,128}", code) else "RSS_OPERATION_FAILED")

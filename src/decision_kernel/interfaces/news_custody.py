@@ -25,8 +25,9 @@ REPOSITORY_ID = 1420041744
 MAX_ARCHIVE = 8 * 1024 * 1024
 
 
-def verify_native(run, artifact, selection):
-    """Native metadata is fetched by the trusted job, not supplied by the news source."""
+def verify_native(run, artifact, selection, *, workflow_path=".github/workflows/news-intake.yml",
+                  artifact_prefix="dos2-news-"):
+    """Native metadata is host-fetched; profiles are trusted code constants, not user input."""
     for name in ("source_run", "artifact_id"):
         require(isinstance(selection.get(name), str) and re.fullmatch(r"[1-9][0-9]{0,19}", selection[name]),
                 "NEWS_NATIVE_ID_REQUIRED")
@@ -36,7 +37,7 @@ def verify_native(run, artifact, selection):
     require(run.get("id") == int(selection["source_run"])
             and run.get("repository", {}).get("id") == REPOSITORY_ID
             and run.get("head_repository", {}).get("id") == REPOSITORY_ID
-            and run.get("path") == ".github/workflows/news-intake.yml"
+            and run.get("path") == workflow_path
             and run.get("head_branch") == "main" and run.get("event") == "workflow_dispatch"
             and run.get("run_attempt") == 1 and run.get("status") == "completed"
             and run.get("conclusion") in ("success", "failure"), "NEWS_NATIVE_RUN_MISMATCH")
@@ -44,7 +45,7 @@ def verify_native(run, artifact, selection):
             "NEWS_NATIVE_CODE_INVALID")
     parent = artifact.get("workflow_run", {})
     require(artifact.get("id") == int(selection["artifact_id"])
-            and artifact.get("name") == "dos2-news-" + selection["source_run"] + "-1"
+            and artifact.get("name") == artifact_prefix + selection["source_run"] + "-1"
             and artifact.get("digest") == "sha256:" + checksum
             and artifact.get("expired") is False
             and type(artifact.get("size_in_bytes")) is int

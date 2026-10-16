@@ -139,6 +139,59 @@ Output may contain the caller's approved source levels/lineage and must not be
 uploaded publicly without the required rights. No Actions source workflow,
 credential access, auto-custody, notification or deployment is added.
 
+## Finite non-publishing source check
+
+When no suitable authorized capture can be reused, the existing
+[non-publishing market check](market-source-check.md) can exercise this reader
+in memory with `selection=us-indices` and `exchange=US`. It uses the same
+`market-source-check.yml` manual main-only host, explicit reviewed `code_sha`,
+first attempt and `access_confirmed=true`. Domestic `sample`, `catalogues` and
+`stock` modes keep their defaults and traffic; `US` is rejected in those modes,
+and SSE/SZSE are rejected for the US selection.
+
+There are exactly five code-owned query slots: `us_calendar` and
+`us_dji/us_ixic/us_rut/us_spx`. The entire requested `us_tradecal` interval is
+qualified before index requests. A failed calendar or closed end causes no
+index traffic; no domestic master, THS directory or A-share calendar is used.
+Each index is qualified independently and the final `read_us_index_context`
+consumes all four declared indices before a count-only projection. No index
+level, change rate, source date, source identifier, lineage or hash is exported.
+Fixed slot names identify the planned checks, not values copied from responses.
+
+The check accepts at most 120 calendar dates and requires end strictly before
+the call's **America/New_York** date, using the standard library's ZoneInfo.
+A Singapore date rollover does not imply a completed US market day. Missing
+zone data fails closed; UTC, weekdays and guessed offsets are not fallbacks.
+This guard does not independently certify a latest session or publisher timing.
+Domestic checks retain their existing Singapore-date restriction.
+
+The unchanged capture/inspect/RetryingRelay path retains two pages at 5,000 rows,
+initial plus three attempts, at least 30-second waits, longer valid Retry-After,
+and one shared 600-second deadline. Authentication, rate limit, secret reflection
+and deadline stop remaining traffic. No endpoint, key, retry budget or sibling
+source is substituted. An index transport failure still allows unrelated indices
+unless the existing global stop applies; every declared index stays in scope.
+
+Only the existing single `result.json` artifact is uploaded. `scope_count=4`
+means the declared four-index scope, not four qualified inputs. With a rejected
+shared calendar, `observed_count`, qualification counts and window counts are
+null, not false zeroes. For a readable context each 5/20/60 window has four
+fixed buckets summing to four: observed, missing-market-sessions,
+insufficient-calendar-history and inputs-unavailable. Complete empty captures
+remain distinct from absent or rejected captures. Short usable windows survive
+long-window gaps, but `checked-us-index-context` / exit 0 requires all five
+nonempty qualified queries and all three windows observed for all four indices.
+Any missing requirement is `completed-with-gaps` / exit 2, not a blank success.
+
+No `public_rights_confirmed` assertion, source export, SourceRef or records write
+is introduced. The diagnostic cannot restore source rows and does not fulfill
+long-term custody, independent source recovery, ordinary reading/Brief adoption
+or economic acceptance. Prior master/THS failures remain unchanged. A new finite
+source operation requires a specific purpose and reconciliation of existing runs;
+it is not a rerun to overwrite a failure. Retire this selector, US host option,
+success marker and exclusive tests together if this check is no longer used;
+keep the existing standalone reader and other check modes while they have users.
+
 ## Evidence and exit
 
 `tests/test_us_index_context.py` uses synthetic calendars and index levels through
@@ -154,3 +207,8 @@ independent recovery, research/Brief adoption and complete global-family coverag
 remain separate evidence. Retiring this slice removes its two dedicated modules,
 CLI, tests and this document together. Shared market/source/custody/CI components
 remain while their original consumers are active.
+
+`tests/test_us_index_source_check.py` protects the real synthetic capture/reader/host
+composition, full window accounting, US-date boundaries, pagination, retries,
+isolation and every incremental redacted receipt. Live source results are
+recorded in #10, not inferred from these synthetic tests.

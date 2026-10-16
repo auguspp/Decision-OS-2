@@ -63,7 +63,7 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
         progress({**latest, 'status': 'interrupted', 'reason_code': 'MARKET_CHECK_INTERRUPTED'})
         return 2
     progress(result)
-    return 0 if result['status'] in ('checked-sample', 'checked-catalogues') else 2
+    return 0 if result['status'] in ('checked-sample', 'checked-catalogues', 'checked-stock-sample') else 2
 
 
 def main(argv: list[str] | None = None) -> int:

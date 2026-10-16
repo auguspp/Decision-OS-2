@@ -13,6 +13,7 @@
 | 看实施顺序、依赖和收口 | [实施基线 v0.2](docs/implementation-baseline.md) |
 | 看雷达、资料、研究与交付的完整施工落点 | [36项能力地图](docs/implementation-baseline.md#coverage) · [工作组与依赖](docs/implementation-baseline.md#work-packages) |
 | 查询Relay功能、接口参数说明和已有证据 | [共享功能登记与只读查询](docs/sources/relay-registry.md) |
+| 读取产业商品变化与公司双向经营角色 | [精确来源阅读合同与CLI](docs/sources/industry-reading.md) |
 | 看统一施工与协作规则 | [WORKING-PROTOCOLS.md](WORKING-PROTOCOLS.md) |
 | 看命名、文件归属和首批引用 | [仓库与接线合同](docs/architecture/repository-contracts.md) |
 | 使用来源与研究版本保管 | [版本保管与合成CLI](docs/architecture/versioned-store.md) · [公开records分支绑定](docs/architecture/github-store.md#topology) |

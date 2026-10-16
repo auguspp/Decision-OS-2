@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>东山精密 Full Research｜2026-10-15</title>
+<meta name="description" content="东山精密002384.SZ：经济引擎、盈利质量、现金与资本桥、条件估值及价格隐含经济。">
+<style>
+:root{--ink:#182c3b;--muted:#61717f;--navy:#173e58;--accent:#087c83;--line:#dbe3e7;--paper:#fff;--canvas:#f2f5f6;--soft:#edf6f5;}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:28px}
+body{margin:0;background:var(--canvas);color:var(--ink);font-family:"Noto Sans CJK SC","Microsoft YaHei","PingFang SC",Arial,sans-serif;font-size:16px;line-height:1.92;word-wrap:break-word}
+.layout{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:246px minmax(0,1fr);gap:30px;padding:32px 38px 60px}
+aside{position:sticky;top:25px;align-self:start;max-height:calc(100vh - 50px);overflow:auto;padding:13px 0 20px}
+.brand{font-size:11px;letter-spacing:.19em;font-weight:800;color:var(--accent);margin-bottom:5px}
+.nav-title{font-size:20px;font-weight:750;margin:0 0 7px}
+.nav-meta{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:23px}
+nav a{display:block;color:#475d6c;text-decoration:none;font-size:12px;line-height:1.6;padding:8px 10px 8px 0;border-bottom:1px solid var(--line)}
+nav a:hover{color:var(--accent);background:#e6eeee}
+nav a span{display:inline-block;font-size:11px;color:#79919a;width:26px;font-variant-numeric:tabular-nums}
+.nav-foot{font-size:11px;color:var(--muted);margin-top:22px;line-height:1.7}
+main{min-width:0;background:var(--paper);border:1px solid #e0e6e9;border-top:5px solid var(--navy);padding:38px 50px 50px;box-shadow:0 5px 25px rgba(21,48,65,.035)}
+.doc-top{display:flex;justify-content:space-between;gap:15px;font-size:11px;letter-spacing:.08em;color:var(--muted);padding-bottom:23px;border-bottom:1px solid var(--line)}
+h1{font-size:38px;line-height:1.3;letter-spacing:-.035em;margin:29px 0 12px;color:var(--navy)}
+h2{font-size:25px;line-height:1.5;color:var(--navy);margin:46px 0 18px;padding-top:22px;border-top:1px solid var(--line);scroll-margin-top:20px}
+h2.subtitle{font-size:19px;line-height:1.7;font-weight:500;color:var(--muted);margin:0 0 23px;padding:0;border:0}
+h3{font-size:18px;line-height:1.6;margin:27px 0 11px;color:#155465}
+p{margin:13px 0}
+strong{font-weight:750}
+main>p:first-of-type{font-size:12px;color:var(--muted)}
+main>p:nth-of-type(2){font-size:18px;line-height:1.9;background:var(--soft);border-left:4px solid var(--accent);padding:20px 23px;margin:24px 0}
+hr{border:none;border-top:1px solid var(--line);margin:29px 0}
+code{font-family:"DejaVu Sans Mono",monospace;background:#f3f6f7;padding:2px 4px;font-size:.82em;word-break:break-all;border-radius:3px}
+a{color:var(--accent);text-decoration-color:#a1c7c9;text-underline-offset:3px}
+.ref{display:inline-block;vertical-align:super;font-size:10px;line-height:1.3;text-decoration:none;border-bottom:1px solid #bdccce;color:#627e85;margin:0 2px;white-space:nowrap}
+.ref:hover{color:var(--accent);background:#e8f3f2}
+.mixed-ref{font-size:11px;color:var(--muted)}
+.table-wrap{overflow-x:auto;margin:20px 0 22px;border:1px solid var(--line);border-radius:3px}
+table{width:100%;border-collapse:collapse;font-size:13px;line-height:1.7;font-variant-numeric:tabular-nums}
+thead th{background:var(--navy);color:white;text-align:left;padding:12px 13px;font-weight:600;vertical-align:top;min-width:88px}
+tbody td{padding:12px 13px;vertical-align:top;border-bottom:1px solid #e6ecee}
+tbody tr:nth-child(even){background:#f5f8f9}
+tbody tr:last-child td{border-bottom:none}
+blockquote{border-left:3px solid var(--accent);padding:4px 20px;margin:20px 0;background:#f4f8f8}
+ul,ol{padding-left:24px}
+.source{border-bottom:1px solid var(--line);padding:16px 0 17px;font-size:13px;line-height:1.7;scroll-margin-top:24px}
+.source:target{background:#e6f6f3;padding:16px 12px;border-left:3px solid var(--accent)}
+.source span,.source small{color:var(--muted);font-size:12px}
+.source a{margin-right:8px}
+.doc-foot{margin-top:35px;padding-top:20px;border-top:2px solid var(--navy);color:var(--muted);font-size:12px}
+@media(max-width:1100px){.layout{grid-template-columns:190px minmax(0,1fr);gap:22px;padding:20px}.nav-title{font-size:18px}main{padding:29px 32px}h1{font-size:33px}}
+@media(max-width:780px){.layout{display:block;padding:0}aside{position:static;max-height:none;padding:22px 24px 18px}.nav-title{font-size:18px}.nav-meta{margin-bottom:10px}nav{display:none}.nav-foot{display:none}main{border-left:0;border-right:0;box-shadow:none;padding:27px 22px 40px}h1{font-size:29px}h2{font-size:22px}h2.subtitle{font-size:17px}body{font-size:15px}.doc-top{font-size:10px}main>p:nth-of-type(2){font-size:16px;padding:17px 18px}table{font-size:12px}thead th,tbody td{padding:10px;min-width:90px}}
+@media print{body{background:white;font-size:10pt;line-height:1.65}.layout{display:block;padding:0}aside{display:none}main{border:0;padding:0;box-shadow:none}.doc-top{padding-bottom:10px}h1{font-size:25pt}h2{font-size:16pt;break-after:avoid}h3{font-size:12pt;break-after:avoid}.table-wrap{overflow:visible;break-inside:avoid}table{font-size:8pt}thead{display:table-header-group}a{color:inherit}.source{break-inside:avoid}.ref{font-size:7pt}main>p:nth-of-type(2){font-size:11pt}.doc-foot{break-inside:avoid}}
+</style></head><body>
+<div class="layout"><aside><div class="brand">DECISION OS 2.0</div><div class="nav-title">研究正文与证据</div><div class="nav-meta">东山精密 · 002384.SZ<br>Full Research · 2026.10.15</div><nav><a href="#section-1"><span>01</span>一、结论与真正的决策条件</a>
+<a href="#section-2"><span>02</span>二、经济结构：至少要分清四类赚钱方式</a>
+<a href="#section-3"><span>03</span>三、五年与八季度：利润曾经下滑，不应把今天线性外推</a>
+<a href="#section-4"><span>04</span>四、两笔并购：取得资产不等于已经创造同额价值</a>
+<a href="#section-5"><span>05</span>五、利润到现金：最重要的不是一个现金利润比</a>
+<a href="#section-6"><span>06</span>六、资本投入：17亿美元不是一个可以免费兑现的增长数字</a>
+<a href="#section-7"><span>07</span>七、竞争与持续期：高毛利需要哪些条件继续成立？</a>
+<a href="#section-8"><span>08</span>八、H股融资：稀释不是唯一影响，也不能忽略</a>
+<a href="#section-9"><span>09</span>九、估值先分引擎，再讨论价格</a>
+<a href="#section-10"><span>10</span>十、把124.20元反推到收入、资本，再正算回来</a>
+<a href="#section-11"><span>11</span>十一、反证、自查与实际修订</a>
+<a href="#section-12"><span>12</span>十二、下行机制与具体重开条件</a>
+<a href="#section-13"><span>13</span>十三、研究边界与接续位置</a>
+<a href="#section-14"><span>14</span>来源目录</a>
+<a href="#section-15"><span>15</span>附件与使用</a></nav><div class="nav-foot">事实 / 管理层表态 / 模型假设分开。<br>条件估值不等于投资决定。</div></aside>
+<main><div class="doc-top"><span>PUBLIC EQUITY RESEARCH · 中国A股</span><span>v1.0 · 截至 2026.10.15</span></div>
+<h1>东山精密 Full Research</h1>
+<h2 class="subtitle">从FPC制造平台到AI光互联：利润跃迁之后，资本回报能否跟上？</h2>
+<p><strong>证券：002384.SZ　｜　研究日期与估值基准：2026年10月15日　｜　研究稿 v1.0</strong></p>
+<p><strong>研究判断：业务改善已有实证，但当前价格的安全边际尚未证明。</strong> 东山精密值得作为“高增长、重资本、并购整合中的AI硬件平台”研究，不宜继续只按传统FPC公司理解，也不宜把它简化成一只纯光芯片股票。最重要的投资分歧，是光业务放量之后，有多少利润能够在扩产、营运资金、融资成本与股本变化之后真正归普通股股东所有。</p>
+<p>本稿采用当前 Decision OS 2.0 的 Full v2，恢复点为 main <code>347990c799a3c386f5ae0a13690b3b377c76f685</code>，研究入口与实际方法源文件由 GitHub 连接器读取。用户未指定单一子问题，本次研究围绕“这家公司现在在赚什么钱、这些利润能否兑现为现金、现价要求什么经营结果”展开。<a class="ref" href="#M01" aria-label="来源M01">M01</a></p>
+<p><strong>证据时钟：</strong> 2021–2025年历史主要指标、2025年并购/现金附注、2026Q1取自原始报告相关页；2026H1主要指标和分部通过公告转载及证券报资料核对，未取得完整原始半年报附注；2026年10月的上市进程与公司回应采用相应日期资料。没有把5月版招股书冒充10月最新版，也没有把搜索结果中误混入的2025三季报当成2026三季报。<a class="ref" href="#S01" aria-label="来源S01">S01</a><a class="ref" href="#S02" aria-label="来源S02">S02</a><a class="ref" href="#S03" aria-label="来源S03">S03</a><a class="ref" href="#S04" aria-label="来源S04">S04</a><a class="ref" href="#S06" aria-label="来源S06">S06</a><a class="ref" href="#S07" aria-label="来源S07">S07</a><a class="ref" href="#S15" aria-label="来源S15">S15</a><a class="ref" href="#S23" aria-label="来源S23">S23</a></p>
+<hr />
+<h2 id="section-1">一、结论与真正的决策条件</h2>
+<p><strong>第一，光业务已经是利润引擎，不只是尚未兑现的故事。</strong> 2026H1公司收入277.98亿元、归母净利润29.57亿元、扣非归母24.80亿元；光模块（含光芯片）收入53.51亿元、毛利率39.33%。按收入与毛利率相乘，光业务贡献毛利约21.05亿元，已足以显著改变集团利润结构。<a class="ref" href="#S07" aria-label="来源S07">S07</a><a class="ref" href="#S09" aria-label="来源S09">S09</a><a class="ref" href="#S25" aria-label="来源S25">S25</a></p>
+<p><strong>第二，不能把290%的归母增长全部解释为有机增长和可分配现金。</strong> 2025年新并入索尔思和GMD，2026同比基数并不一致；2026H1归母与扣非相差4.77亿元；经营现金流23.84亿元，反而低于上年同期25.00亿元。增长是真实议题，盈利口径和资金占用同样是真实议题。<a class="ref" href="#S03" aria-label="来源S03">S03</a><a class="ref" href="#S07" aria-label="来源S07">S07</a><a class="ref" href="#S08" aria-label="来源S08">S08</a></p>
+<p><strong>第三，现价买入需要同时押对“经营兑现”和“持续期”。</strong> 10月15日收盘124.20元，以18.31607532亿股计算，总市值2274.86亿元。这个价格不是单纯在购买已经赚到的半年利润；很大一部分价值依赖未来扩产能够转化为高回报，并延续足够长时间。<a class="ref" href="#S06" aria-label="来源S06">S06</a><a class="ref" href="#S16" aria-label="来源S16">S16</a><a class="ref" href="#S17" aria-label="来源S17">S17</a></p>
+<p>研究立场因此是：<strong>有条件观察，而不是已经证明便宜。</strong> 正面结论升级至少需要看见经常性利润继续兑现、扩产与现金消耗相匹配、核心产能回报可识别，以及H股融资后的每股经济账成立。反过来，不能仅因经营现金低于净利润就断言财务造假，也不能因股价大幅回撤就把风险视为已经全部出清。</p>
+<h2 id="section-2">二、经济结构：至少要分清四类赚钱方式</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>2026H1板块</th>
+  <th>收入（亿元）</th>
+  <th>毛利率</th>
+  <th>分析边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>电子电路</td>
+  <td>125.30</td>
+  <td>18.80%</td>
+  <td>FPC基本盘与AI PCB同在此口径，不能全部视为AI</td>
+</tr>
+<tr>
+  <td>光模块（含光芯片）</td>
+  <td>53.51</td>
+  <td>39.33%</td>
+  <td>产业链内部芯片不能另加一次价值</td>
+</tr>
+<tr>
+  <td>精密组件</td>
+  <td>65.81</td>
+  <td>12.13%</td>
+  <td>含GMD并表；同比不是可比口径的有机增长</td>
+</tr>
+<tr>
+  <td>光电显示模组</td>
+  <td>27.23</td>
+  <td>未独立核验</td>
+  <td>非核心增长来源；不据低等级转载利润率估值</td>
+</tr>
+<tr>
+  <td>其他</td>
+  <td>6.13</td>
+  <td>未独立核验</td>
+  <td>规模小；不凭未核实毛利率外推增长</td>
+</tr>
+</tbody>
+</table></div>
+<p>表内为2026H1人民币亿元；电子电路、精密组件、光模块等主要数据见证券报报道；显示和其他收入来自补充财务转载，证据等级较低，其毛利率不纳入判断。分部加总有四舍五入。模型不依赖这两个板块的未核实毛利率。<a class="ref" href="#S25" aria-label="来源S25">S25</a><a class="ref" href="#S26" aria-label="来源S26">S26</a></p>
+<h3>1. 电子电路：稳定客户关系与高端AI板的经济性不同</h3>
+<p>FPC的基本链条是终端销量、单机搭载价值与供应份额，经过客户年降、材料价格、良率和产能利用率，形成毛利。成熟客户与制造经验是优势，但“进入供应链”并不等于拥有最终产品定价权。为了维护资格和跟上产品迭代，设备、工程与研发投入不能无限压缩。</p>
+<p>AI PCB的价值机会来自更高层数、更高速材料、复杂工艺及新产能认证。它有可能提高单位产品价值和毛利，却也可能在试产阶段增加废品、设备投入及周转资金。管理层把FPC视为稳定基本盘、把AI PCB视为进攻方向，但没有披露足以独立复算AI PCB利润、资本开支与现金的完整分部表。<a class="ref" href="#S11" aria-label="来源S11">S11</a><a class="ref" href="#S12" aria-label="来源S12">S12</a></p>
+<p><strong>本稿不把125.30亿元电子电路收入全部计作AI，也不把基础业务中已经包含的AI利润再额外加一次“期权价值”。</strong></p>
+<h3>2. 索尔思：光芯片自供与模块销售，不能重复估值</h3>
+<p>光业务的收入形成取决于客户认证、出货量、产品速率组合与单价；利润取决于芯片自供比例、外购器件成本、封装测试、良率、研发及交付效率。掌握部分芯片环节可以保障供货、减少外购成本或增强产品组合，但不意味着芯片、模块两个环节的内部交易可以各记一次集团收入或价值。</p>
+<p>从2025年并表季度的光业务收入14.36亿元，到2026Q1按官方贡献比例估算约21.05亿元，再到H1减Q1约32.46亿元的Q2收入，出现连续放量。后两个数字带有比例四舍五入及口径一致性假设，不能冒称独立披露金额；但它们说明“增长只是并表、没有环比改善”的解释不充分。<a class="ref" href="#S04" aria-label="来源S04">S04</a><a class="ref" href="#S07" aria-label="来源S07">S07</a><a class="ref" href="#S13" aria-label="来源S13">S13</a></p>
+<p>公司4月的交流没有公开精确产能、良率、分客户订单及有关市场传闻数字。相关商业信息未公开，本稿不从送样、产品发布或技术名称直接推导可持续利润。<a class="ref" href="#S11" aria-label="来源S11">S11</a></p>
+<h3>3. 精密组件与GMD：全球制造整合，不是另一块纯AI资产</h3>
+<p>这一引擎依赖整车或其他终端产量、平台项目周期、制造利用率、客户年降，以及海外人工、能源和管理效率。GMD带来规模和客户资产，也带来债务、整合与运营负担。2026H1精密组件收入同比大增178.63%，不能被当成同口径内生增速。<a class="ref" href="#S04" aria-label="来源S04">S04</a><a class="ref" href="#S09" aria-label="来源S09">S09</a></p>
+<h3>4. 显示及其他：不能因占比下降就假设不再消耗股东资源</h3>
+<p>显示业务2026H1收入下降、毛利率较低。低毛利板块仍可能消耗存货、应收和设备维护资金；退坡时还有固定成本无法同步消失的问题。集团可以把现金和资本转向光业务，但“资本迁移”本身不证明旧业务损失已经结束。<a class="ref" href="#S03" aria-label="来源S03">S03</a><a class="ref" href="#S09" aria-label="来源S09">S09</a></p>
+<h3>共同约束</h3>
+<p>各引擎共用管理、银行授信、外汇管理及股东资本。光模块和AI PCB也可能受到相同AI客户资本开支周期的影响，不能把它们视为统计独立的两个成功概率。成本节省最终留给供应商还是被大客户通过采购价格拿走，是持续毛利的核心变量，而不是“有AI需求”四个字可以回答的问题。</p>
+<h2 id="section-3">三、五年与八季度：利润曾经下滑，不应把今天线性外推</h2>
+<h3>年度主要指标</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>期间</th>
+  <th>收入</th>
+  <th>归母净利润</th>
+  <th>扣非归母</th>
+  <th>经营现金流</th>
+  <th>现金资本开支</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>2021</td>
+  <td>317.93</td>
+  <td>18.62</td>
+  <td>15.77</td>
+  <td>32.10</td>
+  <td>未补齐</td>
+</tr>
+<tr>
+  <td>2022</td>
+  <td>315.80</td>
+  <td>23.68</td>
+  <td>21.26</td>
+  <td>46.30</td>
+  <td>未补齐</td>
+</tr>
+<tr>
+  <td>2023</td>
+  <td>336.51</td>
+  <td>19.65</td>
+  <td>16.15</td>
+  <td>51.72</td>
+  <td>34.67</td>
+</tr>
+<tr>
+  <td>2024</td>
+  <td>367.70</td>
+  <td>10.86</td>
+  <td>8.99</td>
+  <td>49.86</td>
+  <td>37.92</td>
+</tr>
+<tr>
+  <td>2025</td>
+  <td>401.25</td>
+  <td>13.86</td>
+  <td>9.66</td>
+  <td>53.07</td>
+  <td>43.83</td>
+</tr>
+</tbody>
+</table></div>
+<p>单位：亿元。2021–2022见2022年年报，2023–2024见2024年年报，2025见2025年报告。2021–2022资本开支未补齐，表中不填零。<a class="ref" href="#S01" aria-label="来源S01">S01</a><a class="ref" href="#S02" aria-label="来源S02">S02</a><a class="ref" href="#S03" aria-label="来源S03">S03</a><a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p>2022至2024年，公司收入从315.80亿元上升到367.70亿元，但归母从23.68亿元下降到10.86亿元，扣非从21.26亿元降到8.99亿元。这段历史是一个直接反例：<strong>收入增长、业务扩张与股东利润增长不是同义词。</strong> 2025收入继续增加，扣非仍仅9.66亿元，尚未回到2022水平；因此未来价值不能只依赖“又做大了一次”。</p>
+<h3>最近八个季度</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>季度</th>
+  <th>收入</th>
+  <th>归母净利润</th>
+  <th>扣非归母</th>
+  <th>经营现金流</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>2024Q3</td>
+  <td>98.38</td>
+  <td>5.07</td>
+  <td>4.92</td>
+  <td>7.69</td>
+</tr>
+<tr>
+  <td>2024Q4</td>
+  <td>103.04</td>
+  <td>0.18</td>
+  <td>-1.10</td>
+  <td>21.28</td>
+</tr>
+<tr>
+  <td>2025Q1</td>
+  <td>86.02</td>
+  <td>4.56</td>
+  <td>3.97</td>
+  <td>13.65</td>
+</tr>
+<tr>
+  <td>2025Q2</td>
+  <td>83.53</td>
+  <td>3.02</td>
+  <td>2.60</td>
+  <td>11.35</td>
+</tr>
+<tr>
+  <td>2025Q3</td>
+  <td>101.15</td>
+  <td>4.65</td>
+  <td>4.14</td>
+  <td>4.46</td>
+</tr>
+<tr>
+  <td>2025Q4</td>
+  <td>130.54</td>
+  <td>1.63</td>
+  <td>-1.05</td>
+  <td>23.61</td>
+</tr>
+<tr>
+  <td>2026Q1</td>
+  <td>131.38</td>
+  <td>11.10</td>
+  <td>10.59</td>
+  <td>11.27</td>
+</tr>
+<tr>
+  <td>2026Q2</td>
+  <td>146.60</td>
+  <td>18.47</td>
+  <td>14.20</td>
+  <td>12.57</td>
+</tr>
+</tbody>
+</table></div>
+<p>单位：亿元。2026Q2为H1累计减Q1；其他季度来自年报季度表及定期报告。不同年份的并表范围不同，不视为完全可比。<a class="ref" href="#S02" aria-label="来源S02">S02</a><a class="ref" href="#S03" aria-label="来源S03">S03</a><a class="ref" href="#S05" aria-label="来源S05">S05</a><a class="ref" href="#S06" aria-label="来源S06">S06</a><a class="ref" href="#S07" aria-label="来源S07">S07</a></p>
+<p>有两处比年度增长率更重要：</p>
+<p>一是2024Q4和2025Q4的扣非都为负。2025Q4已经包含索尔思高利润业务，集团扣非仍亏损约1.05亿元。这提示并购之外的旧业务、减值、费用或合并调整仍然重要。不能把子公司净利润与集团扣非直接相减，伪造出一个精确的“旧业务亏损额”。</p>
+<p>二是2026Q2扣非14.20亿元，较Q1的10.59亿元继续提高。这构成对“只有一次性收益、主营没有改善”说法的反证。但一个季度的强劲表现仍不能自动年化为长期利润；季节性、产品组合、交付节奏与客户预算均可能变化。</p>
+<h2 id="section-4">四、两笔并购：取得资产不等于已经创造同额价值</h2>
+<h3>索尔思：真正买到什么，付出了什么？</h3>
+<p>2025年年报披露，索尔思交易后收购权益比例为97.479%，收购成本约43.59亿元；加上相关股权激励公允价值约3.04亿元后，与可辨认净资产对应形成约28.25亿元商誉。2025年10月起并表，合并后该年度收入约14.36亿元、子公司口径净利润约3.15亿元。<a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p>这一结构包含三层不同经济含义：经营资产和客户能力、被资本化的并购溢价、以及管理层或员工的权益安排。商誉不是新增机器产能，不能在计算未来扩产所需资本时再把它当设备；但当现金回报达不到购买时预期时，商誉减值会反映真实投资失败，不能永久从投资回报分析中删去。</p>
+<p><strong>一个关键纠错：索尔思2024年35.7%的净利率不是正常盈利基准。</strong> 港交所5月申请材料披露，其2024年净利润约10.505亿元，但当年的其他收益中含优先股条款修订收益约6.481亿元。该收益是一次性会计事项，不是销售模块反复产生的毛利。因为税项处理还需对应调整，本稿没有用“净利减税前收益”的简单差值冒充精确标准化净利润；模型光业务调整后净收益率采用18%/22%/25%的条件假设，而非机械沿用35.7%。<a class="ref" href="#S10" aria-label="来源S10">S10</a></p>
+<h3>GMD：名义购买价极低，不等于免费取得生意</h3>
+<p>年报列示GMD名义现金价约23.87元，同时承担相关债务约5.10亿元。购买价与可辨认净资产之间形成约4.71亿元负商誉收益。控制权于2025年10月底取得，随后并表的当期收入约12.92亿元、净利润约0.30亿元。<a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p><strong>4.71亿元不是下一年度还能再赚一次的经营利润。</strong> 同时，低价收购一个需要整合的制造集团，通常并不意味着未来没有运营、设备及融资支出。2025扣非指标已剔除其应剔除的非经常项目，分析时不能再重复扣同一笔负商誉。</p>
+<h2 id="section-5">五、利润到现金：最重要的不是一个现金利润比</h2>
+<h3>2025年现金桥已经可以闭合</h3>
+<p>期初现金等价物53.44亿元，加经营现金53.07亿元、投资现金净流出82.83亿元、融资现金净流入37.49亿元及汇率影响约负0.12亿元，等于期末61.05亿元。这里的现金余额增加，不代表资金增长全部来自主营。<a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p>2025年经营现金53.07亿元看似很强，但现金购建长期资产43.83亿元之后只剩9.24亿元。2023–2025三年累计经营现金154.66亿元，现金资本开支116.42亿元，差额38.23亿元；这个差额尚未等于普通股股东可自由分配的金额。<a class="ref" href="#S02" aria-label="来源S02">S02</a><a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p>还要区分几项常被混在一起的现金：</p>
+<ul>
+<li>并购子公司净支付33.83亿元，不是购置厂房设备；投资现金总额也不能全部叫资本开支。</li>
+<li>融资栏分红、利润分配及利息支付合计4.39亿元，不应当作纯利息；另有租赁融资现金支付约2.67亿元。未完成全部利息/租赁拆分前，不能把CFO减资本开支直接命名为FCFE。</li>
+<li>另有约2.55亿元通过票据购置长期资产，不在当期现金资本开支里；它提醒我们经济投入与现金支付时点可以不同，但不能在未来付款时再重复计作一笔新投资。<a class="ref" href="#S04" aria-label="来源S04">S04</a></li>
+</ul>
+<p>经营现金的构成也必须检查。2025现金流补充资料显示，经营性存货增加消耗约9.43亿元，经营性应收项目增加消耗29.67亿元，而经营性应付增加提供约38.85亿元现金；前两者合计39.10亿元，几乎被后者抵消。折旧、摊销和减值等非现金调整也显著抬高CFO。<a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p>这不证明应付有问题，但说明现金表现部分依赖供应商和其他经营性付款节奏。下一步必须看回款、库存去化和供应商账期能否共同保持，而不是只看“CFO是净利的几倍”。从已报CFO出发时，不再重复减一次同期间营运资金增加。</p>
+<h3>2026Q1：增长与融资依赖同时出现</h3>
+<p>原始现金流量表给出：CFO11.27亿元，现金购建长期资产21.60亿元，<strong>CFO减现金资本开支为负10.33亿元</strong>。另有收购尾款净支付约4.64亿元。投资净现金流为负25.28亿元，融资净流入24.01亿元，汇率影响为负0.96亿元。<a class="ref" href="#S06" aria-label="来源S06">S06</a></p>
+<p>资金桥为：</p>
+<p><strong>61.05 + 11.27 − 25.28 + 24.01 − 0.96 = 70.08亿元。</strong></p>
+<p>这同时否定两个极端解释：公司不是“账上现金马上枯竭”，但“现金余额上升，所以扩张完全由经营造血支持”也不成立。</p>
+<h3>2026H1：已知什么，尚未闭合什么？</h3>
+<p>已核对的CFO为23.84亿元，同比下降约4.65%，与归母净利的比值约80.6%；证券报资料显示投资现金净流出约54.83亿元，融资现金净流入约41.40亿元。<strong>54.83亿元是投资活动净现金流出，不是已核实的纯资本开支。</strong> 把这一数字直接写成“资本开支54.83亿元”的转载未被采用。<a class="ref" href="#S07" aria-label="来源S07">S07</a><a class="ref" href="#S08" aria-label="来源S08">S08</a></p>
+<p>期末存货约114.18亿元，较2025年末增长约27.9%，需要与销售回款、存货跌价和新品爬坡一起观察。由于未取得完整H1原始附注，本稿没有声称H1现金等价物、汇率、受限资金、债务到期已经完整勾稽，也没有给出伪精确的10月15日企业价值。<a class="ref" href="#S08" aria-label="来源S08">S08</a></p>
+<h3>债务与可分配性</h3>
+<p>2025年末，短期借款80.11亿元、含一年内到期部分的长期借款93.34亿元、含一年内到期的租赁负债22.91亿元。以现金等价物61.05亿元扣减，得到含租赁的参考净债务约135.32亿元；现金等价物之外另有约15.46亿元货币项目，不能全部按即时自由现金处理。<a class="ref" href="#S04" aria-label="来源S04">S04</a></p>
+<p>这是<strong>2025年末</strong>的桥，不是研究日的精确余额。未取得最新完整债务期限、担保与财务约束条款，不能由“融资能够增加”推断永久融资无约束，也不能直接下债务违约结论。</p>
+<h2 id="section-6">六、资本投入：17亿美元不是一个可以免费兑现的增长数字</h2>
+<p>6月原始投资公告的方案为12亿美元，资金来源为自筹；后续8月公告报道上调为17亿美元。按仅用于尺度测算的7.0人民币/美元换算，相当于约119亿元；这不是即期汇率折算的会计金额，不是已支付额，也不是全部尚未支付余额。<a class="ref" href="#S13" aria-label="来源S13">S13</a><a class="ref" href="#S09" aria-label="来源S09">S09</a><a class="ref" href="#S25" aria-label="来源S25">S25</a></p>
+<p>项目经济性必须经过：设备与厂房到位、人员及良率爬坡、客户验证、订单转收入、回款与毛利稳定，然后才到股东现金。扩产公告不提供可以直接复算的全量产品ASP、销量、可售良率、项目年度现金流或最低采购承诺，所以不能宣称项目IRR已经被证明。</p>
+<p>同类扩产可能通过不同方式得到资金。NVIDIA与Lumentum的公开合作明确包含采购承诺、未来产能使用权及20亿美元投资，体现了“客户与资本一起锁定供给”的竞争方式。东山这份扩产公告没有披露同等级别的客户出资或最低采购保证，不能把对手的确定性嫁接过来。<a class="ref" href="#S18" aria-label="来源S18">S18</a><a class="ref" href="#S13" aria-label="来源S13">S13</a></p>
+<h2 id="section-7">七、竞争与持续期：高毛利需要哪些条件继续成立？</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>参照</th>
+  <th>实际观察</th>
+  <th>对东山参数的约束</th>
+  <th>不能据此推出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>索尔思自身2023→2024</td>
+  <td>数据中心光模块毛利率15.3%→32.5%；2024有重大一次性收益</td>
+  <td>放量和成本改善可以显著提毛利；不可把35.7%净利率视为正常水平</td>
+  <td>没有足够长期样本，不能据此报成功率</td>
+</tr>
+<tr>
+  <td>中际旭创2025</td>
+  <td>收入382.40亿元、归母107.97亿元，净利率约28.2%</td>
+  <td>证明大规模光业务可以实现高利润；也是反推收入的规模参照</td>
+  <td>东山已具备同样客户结构、产品组合或净利率</td>
+</tr>
+<tr>
+  <td>新易盛2025与2026Q1</td>
+  <td>2025归母95.32亿元；2026Q1收入与上季近似，但净利环比下降13.25%</td>
+  <td>高速率产品带来高回报，汇兑和存货仍会打断利润路径</td>
+  <td>优胜者的估值/利润率就是东山的保底</td>
+</tr>
+<tr>
+  <td>NVIDIA—Lumentum合作</td>
+  <td>有明确的非排他采购承诺、产能权与资金投入</td>
+  <td>扩产竞争不仅靠技术，还靠客户认证、长期采购与资本支持</td>
+  <td>NVIDIA光投资必然流入东山订单</td>
+</tr>
+</tbody>
+</table></div>
+<p>索尔思材料为原始申请文件；中际旭创、新易盛数字为财报新闻转载，未用于建立同日可比估值。参照覆盖成功放量、盈利受损、一次性收益和资本支持差异，并不是统计意义上有分母的成功率。<a class="ref" href="#S10" aria-label="来源S10">S10</a><a class="ref" href="#S18" aria-label="来源S18">S18</a><a class="ref" href="#S20" aria-label="来源S20">S20</a><a class="ref" href="#S21" aria-label="来源S21">S21</a></p>
+<p>核心竞争变量不是泛泛的“行业空间”，而是客户采购预算、不同速率产品的认证、合格产能、良率和低成本交付。光芯片自供的好处，可能首先表现为供应保障和成本优势；它能否形成对外销售收入及持续价格权，需要另有证据。</p>
+<p>技术路线也不是单一押注。NVIDIA的官方材料同时讨论光子交换机、CPO与可插拔光模块生态。这个外部事实至少说明：不能把今天某类芯片或模块的短缺，直接延长为未来十年以上不变的产品形态和超额毛利。<a class="ref" href="#S19" aria-label="来源S19">S19</a></p>
+<h3>10月的新信息：原产地比例传闻不能当作确定的经营事实</h3>
+<p>10月8日，公司在投资者交流中称，市场关于“65%美国原产物料比例”的说法属于非官方传闻，相关传闻尚未影响当期经营；公司也称模块使用的光芯片在整体BOM成本中占比不超过10%，并表示可能通过区域产能和供应链调整应对未来变化。<a class="ref" href="#S23" aria-label="来源S23">S23</a></p>
+<p>这里<strong>只记录管理层说法</strong>。本稿未取得可独立定性该比例要求的正式监管文件，因此既不把“65%”写成已经生效的规则，也不把公司回应写成长期合规风险归零的证明。真正改变估值的证据将是正式规则范围、生效安排、客户采购与认证要求，以及迁移产能所需的资本和时间。</p>
+<h2 id="section-8">八、H股融资：稀释不是唯一影响，也不能忽略</h2>
+<p>截至研究日的资料显示，公司已取得境外发行备案，备案上限为234,038,600股H股；10月又有港交所上市进程披露。本稿未取得最终发行定价、发行数量与净所得款文件，没有把上市申请、聆讯后资料与已经募得资金混为一谈。<a class="ref" href="#S14" aria-label="来源S14">S14</a><a class="ref" href="#S15" aria-label="来源S15">S15</a></p>
+<p>若按上限发行，股数将从18.3161亿股增加至20.6565亿股，增加12.78%；仅看权益占比，旧股比例下降约11.33%。但这<strong>不是</strong>每股价值必然下降11.33%，因为公司也收到募集资金。</p>
+<p>例：仅为机械算术，若按当前市值作为发行前价值、增发上限股数、净募资200亿元且现金完整保留，则每股对应值约119.81元，而不是把124.20元直接乘以88.67%。这不预测发行价格或上市后的交易价格。资金一旦投入产能，就必须通过新增利润与回报体现，不能再把同一笔募资现金额外加一次；用于还债时则要同步处理净债务和未来利息。[模型计算]</p>
+<p>基础经营估值未把未确定H股融资当作既成事实。融资使扩产可能更稳健，但能否提高旧股股东价值取决于发行价格、资金用途与资本回报，而不是“赴港上市”这个事件标签。</p>
+<h2 id="section-9">九、估值先分引擎，再讨论价格</h2>
+<h3>1. 已知利润口径给出的只是尺度</h3>
+<p>按124.20元与现有股数计算，研究日市值约2274.86亿元。用2025全年加2026H1减2025H1，归母TTM约35.85亿元，对应63.46倍；扣非TTM约27.89亿元，对应81.57倍。并购使这个TTM并不包含完整同口径历史，不能仅凭高TTM倍数断言未来必然贵。<a class="ref" href="#S03" aria-label="来源S03">S03</a><a class="ref" href="#S07" aria-label="来源S07">S07</a><span class="mixed-ref"><a class="ref" href="#S16">S16</a>；计算</span></p>
+<p>反过来，把2026H1扣非简单乘二约49.59亿元，市值仍约为45.87倍；把2026Q2扣非乘四约56.81亿元，则约40.04倍。两者都只是年化尺度，不是未来全年预测。它们提醒我们：<strong>即使不再拿旧年度利润衡量，现价仍要求经营持续改善或维持较长的高回报期。</strong></p>
+<h3>2. 基础业务先独立定价</h3>
+<p>模型假设2028年基础业务正常化股东收益20亿元，已包含现有电子电路、精密及显示业务的净贡献和应分摊成本，不能再把现有AI PCB盈利重新追加。这个20亿元是以历史盈利为参照的研究假设，不是公司分部披露或保底。</p>
+<p>在基础业务长期增长3%、增量股本回报12%、要求收益率10%的假设下，留存再投资后现金对应的收益倍数约11.04倍；基础业务2028年股权价值约220.71亿元，折回研究日约178.76亿元。把利润看作免费的全额分红，会高估这一价值。</p>
+<p>该估算对周期、减值和利润口径敏感，不构成可变现清算底价。在这组假设下，约2096亿元研究日市值需要由光业务、新增AI PCB价值或比基础假设更好的经济结果解释。<strong>这个“剩余”是后续经营反推的起点，不是结论。</strong></p>
+<h3>3. 三个有具体经济内容的条件世界</h3>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>2028条件世界</th>
+  <th>光收入</th>
+  <th>光调整后净收益率</th>
+  <th>非光归属收益</th>
+  <th>集团股东收益</th>
+  <th>当年股东现金近似</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>旧业务修复、光增长减速</td>
+  <td>160</td>
+  <td>18%</td>
+  <td>20</td>
+  <td>48.07</td>
+  <td>31.58</td>
+</tr>
+<tr>
+  <td>光业务扩张、其他业务平稳</td>
+  <td>240</td>
+  <td>22%</td>
+  <td>20</td>
+  <td>71.47</td>
+  <td>28.62</td>
+</tr>
+<tr>
+  <td>光与AI PCB共同兑现</td>
+  <td>320</td>
+  <td>25%</td>
+  <td>30</td>
+  <td>107.98</td>
+  <td>48.99</td>
+</tr>
+</tbody>
+</table></div>
+<p>单位：亿元。光净收益率为调整后口径假设，已考虑税、分摊融资及租赁经济成本，再按97.479%权益归属；并非声称公司披露了这些分部净利率。非光收益的20亿元是共同基础；最强情景多出的10亿元只作为超出基础的增量AI PCB盈利，单独估值。</p>
+<p>这些情景不是三个任意利润数字：光业务2027→2028收入分别为150→160、190→240、240→320亿元；销售/新增运营资本比取1.5、1.75、2.0。因而光业务2028净再投资约6.67、28.57、40.00亿元，另给非光净再投资10、15、20亿元，在不新增净债务或股本条件下，得到表中普通股现金近似值。</p>
+<p>这里的净再投资包含净经营资产与非现金营运资金变化；维护投入不能为零，不能把折旧加回后忘了维持产能的成本。1.5–2.0倍的资本周转只是以索尔思旧财务中的设备、应收、存货、应付规模作参照的区间，不是已验收的新厂效率；未将商誉当作产能。该模型并非完整逐年三张报表，不足以证明每一季度融资缺口都能被填平。<span class="mixed-ref"><a class="ref" href="#S10">S10</a>；模型假设</span></p>
+<p><strong>中间情景的利润比第一种高，但现金近似值更低</strong>，因为扩张消耗更多资本。这正是“利润成长”和“股东现金成长”可能暂时分离的机制，而不是模型错误。</p>
+<h3>4. 倍数由现金与持续期推导，不直接抄同行</h3>
+<p>对2028年末光业务收益，每年可归股东现金采用：</p>
+<p><strong>股东现金 = 当年调整后净收益 ×（1 − 增长率 / 增量股本回报）。</strong></p>
+<p>高增长期取十年；之后采用3%稳定增长、20%增量股本回报与10%要求收益率。三种光业务十年增长分别6%、15%、20%，增量股本回报分别18%、25%、30%，由现金折现推导出14.10、24.66、35.41倍，而不是为贴合现价直接指定倍数。</p>
+<p>基础业务只使用前述11.04倍。最强情景的增量AI PCB使用其自身15%增长、25%增量股本回报对应的24.66倍，不让旧业务分享光业务的长增长期。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>条件世界</th>
+  <th>光业务后续十年增长/增量ROE</th>
+  <th>推导光业务P/E</th>
+  <th>折回研究日每股演算</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>旧业务修复、光增长减速</td>
+  <td>6% / 18%</td>
+  <td>14.10倍</td>
+  <td>27.27元</td>
+</tr>
+<tr>
+  <td>光业务扩张、其他业务平稳</td>
+  <td>15% / 25%</td>
+  <td>24.66倍</td>
+  <td>65.88元</td>
+</tr>
+<tr>
+  <td>光与AI PCB共同兑现</td>
+  <td>20% / 30%</td>
+  <td>35.41倍</td>
+  <td>142.75元</td>
+</tr>
+</tbody>
+</table></div>
+<p>这些数值是<strong>条件股权价值演算，不是27–143元的统计置信区间，也不是正式目标价</strong>。没有概率，不能混成一个“期望目标价”。估值日期是2026年10月15日，2028年末距离约2.212年；现有债务成本已放进收益假设，不再把同一债务从股权价值扣第二次。</p>
+<p>模型没有另加2028年前分红和额外闲置现金，这可能低估价值；未确定的后续融资、坏账、整合失败与额外扩产成本又可能使价值被高估。主观参数缺乏足够锚点的地方明确保留条件，而不是用小数点营造确定性。</p>
+<p>最强情景尤其不能轻读：35.41倍的光业务价值中，约84%来自十年之后的终值现值。它相当于要求2028之后光业务继续以20%增长十年，同时保持30%的增量股本回报。<strong>所谓“给35倍”，背后其实是一个很长、很强的资本回报承诺。</strong></p>
+<h2 id="section-10">十、把124.20元反推到收入、资本，再正算回来</h2>
+<p>这一反推不预设额外AI PCB超额利润，保留前述基础业务20亿元收益及独立价值；光调整后净收益率假设22%，权益97.479%，2028年末定价折回研究日使用10%要求收益率。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>2028光业务P/E</th>
+  <th>集团股东收益要求</th>
+  <th>所需光收入</th>
+  <th>相对Q2年化</th>
+  <th>新增运营资本尺度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>18倍</td>
+  <td>163.78</td>
+  <td>670.46</td>
+  <td>5.16倍</td>
+  <td>270–360</td>
+</tr>
+<tr>
+  <td>25倍</td>
+  <td>123.52</td>
+  <td>482.73</td>
+  <td>3.72倍</td>
+  <td>176–235</td>
+</tr>
+<tr>
+  <td>35倍</td>
+  <td>93.95</td>
+  <td>344.81</td>
+  <td>2.66倍</td>
+  <td>107–143</td>
+</tr>
+</tbody>
+</table></div>
+<p>金额为亿元。资本尺度按“所需光收入减Q2估算年化129.85亿元”除以1.5–2.0倍运营资本周转得到，<strong>不等于</strong>全部未来现金资本开支；维护资本、追加研发、并购及融资费用不能自动免费。</p>
+<p>取35倍这一行：所需光收入约344.81亿元，对应光业务归属收益约73.95亿元，加基础业务20亿元，集团股东收益要求约93.95亿元。收入规模约为Q2估算年化的2.66倍；对应新增运营资本约107–143亿元，已经与约119亿元的光业务扩产预算处在同一数量级，而预算还存在执行时点、维护资本和实际支付范围的不确定性。</p>
+<p>同一行的完整闭合是：</p>
+<p><strong>基础业务2028价值220.71 + 光收入344.81 × 22% × 97.479% × 35<br />
+≈ 2808.81亿元2028年股权价值；<br />
+再除以1.10^2.212与18.3161亿股 ≈ 124.20元。</strong></p>
+<p>如果光业务只获得25倍，收入要求升至约482.73亿元，新增运营资本尺度约176–235亿元。此时不能只说“AI市场很大”就认为问题已解决，必须说明更多产能、资金、客户与持续利润从哪里来。</p>
+<p>这并不证明35倍世界不可能，也不证明25倍一定发生。它说明当前价格的一个关键押注：<strong>利润扩大之后，市场和实际现金经济性都必须容纳很长的高回报持续期。</strong></p>
+<h2 id="section-11">十一、反证、自查与实际修订</h2>
+<p>本研究在建模之前已经看到现价及AI成长叙事，不声称“市场盲研究”；同一上下文的挑战是自查，不冒充独立研究者投票。</p>
+<p><strong>挑战一：增长是否只是并表？</strong> 重新按并表季度、Q1贡献比例和H1分部收入计算，出现光业务约14.36→21.05→32.46亿元的连续收入提升。因此结论从“并表可能解释大部分同比”修订为“同比仍不可比，但真实环比放量也已出现”。</p>
+<p><strong>挑战二：高利润是否含不可持续收益？</strong> 阅读GMD收购附注，确认2025负商誉收益；阅读索尔思旧财务，确认2024优先股条款收益；2026H1以扣非口径作主要利润尺度。未将2024高净利率移植为模型常态，也未将4.77亿元2026H1非经常差额全部未经核实地命名为某一种投资收益。</p>
+<p><strong>挑战三：现金不足是否直接否定生意？</strong> 从原始现金流重建2025及Q1资金桥，区分购建资产、收购尾款、融资与汇率。负自由现金的原因可能是合理扩产，也可能是低回报投入；目前证据足以说明融资依赖，不足以证明投资失败或财务造假。H1投资净流出也没有再误称纯资本开支。</p>
+<p><strong>挑战四：高倍数是否错误覆盖旧业务？</strong> 初始演算曾让整个集团共享较长增长期。自查发现，这等于无证据地给传统业务附加光业务持续期，遂改成基础、光业务、增量AI PCB分别估值。中间世界的每股演算从77.92元降至65.88元，最强世界从169.05元降至142.75元；这是真正改变计算结果的修订，而不只是增加风险文字。</p>
+<p><strong>挑战五：历史毛利口径是否混用？</strong> 2025年报的13.85%对应“计算机、通信及其他电子”行业口径；集团总收入/成本口径应为14.09%。二者不是同一分母。2026H1 A股口径约20.15%与最新港交所材料报道约19.4%的差异，因未取得最新原件与重分类桥，仍保留为口径限制，不据此认定经营恶化或粉饰。<a class="ref" href="#S04" aria-label="来源S04">S04</a><a class="ref" href="#S15" aria-label="来源S15">S15</a></p>
+<p><strong>挑战六：融资是不是只会稀释？</strong> 加入募集资金及用途的权益桥，否定“股数增12.78%，价值必跌12.78%”的机械说法。但同样否定“募资既能增利润，还能永久保留全额现金估值”的双重计价。</p>
+<h2 id="section-12">十二、下行机制与具体重开条件</h2>
+<p>最大的下行未必是收入立即崩塌，而可能是收入仍增长、毛利因客户降价/路线变化下降、扩产现金继续流出，市场同时缩短高回报持续期。这会让利润、现金和估值倍数同时承压。新易盛的季度案例也提醒，产品需求与净利润可以被汇率等因素暂时拉开，不能把毛利和净利润混同。<a class="ref" href="#S20" aria-label="来源S20">S20</a></p>
+<p>三种条件演算不是完整尾部概率分布。旧业务不能恢复20亿元、光业务出现客户准入或产能闲置问题、并购资产减值、融资约束加强，均可能使第一种世界仍然偏乐观。因此27.27元不是“估值底”或损失上限。反过来，新厂良率、外售芯片收入或资本周转明显好于假设，也可能提升每股价值；在未取得证据之前，没有预先赠送这些收益。</p>
+<p>后续最有判别力的观察是：</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>观察项</th>
+  <th>本次基准</th>
+  <th>何种证据会改变判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>经常性利润</td>
+  <td>2026Q2扣非14.20亿元</td>
+  <td>同口径后续季度能否持续；不能只看含投资收益的归母</td>
+</tr>
+<tr>
+  <td>光业务兑现</td>
+  <td>H1收入53.51亿元、毛利率39.33%；Q2估算32.46亿元</td>
+  <td>可核对的分产品交付、毛利、回款与产能利用率</td>
+</tr>
+<tr>
+  <td>现金与资本</td>
+  <td>Q1 CFO减现金资本开支负10.33亿元</td>
+  <td>回款、存货去化、真实资本开支及投入批次回报，是否减少对新增融资的依赖</td>
+</tr>
+<tr>
+  <td>扩产与融资</td>
+  <td>17亿美元预算；H股数量仅有上限</td>
+  <td>最终发行价格/净募资/用途；建设进度与对应销售；单位资本产出</td>
+</tr>
+<tr>
+  <td>技术/政策</td>
+  <td>公司10月回应为管理层口径</td>
+  <td>正式规则、客户认证及采购要求，而非未经证实的比例传闻</td>
+</tr>
+<tr>
+  <td>旧业务拖累</td>
+  <td>2024Q4与2025Q4扣非均负</td>
+  <td>显示/汽车整合是否减少反复减值与现金消耗</td>
+</tr>
+</tbody>
+</table></div>
+<p>这些是重新打开判断的条件，不是已创建的自动化、通知或买卖规则。</p>
+<h2 id="section-13">十三、研究边界与接续位置</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+  <th>问题</th>
+  <th>本次结果</th>
+  <th>判断边界及重开证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>经济结构与盈利来源</td>
+  <td>形成判断</td>
+  <td>不是纯FPC或纯光芯片公司；AI PCB尚不能与FPC精确拆出财务</td>
+</tr>
+<tr>
+  <td>跨期财务矛盾</td>
+  <td>形成判断</td>
+  <td>五年主要指标及八季差分已完成；2021–2022资本开支未补齐，不影响2025/26转型现金矛盾</td>
+</tr>
+<tr>
+  <td>并购价格与利润质量</td>
+  <td>较充分</td>
+  <td>Source、GMD年报附注及Source旧优先股收益已核；未完整核到全部底层法律合同与后续少数权益变更</td>
+</tr>
+<tr>
+  <td>经营现金、资本与融资</td>
+  <td>部分充分</td>
+  <td>2025及2026Q1现金桥勾稽；2026H1完整现金流附注、受限资金与债务到期仍缺</td>
+</tr>
+<tr>
+  <td>竞争与技术持续期</td>
+  <td>有边界判断</td>
+  <td>有原始厂商公告及公司IR；无可核验的分客户订单、ASP、良率及客户资格完整清单</td>
+</tr>
+<tr>
+  <td>估值与价格反推</td>
+  <td>条件闭合</td>
+  <td>按明确参数完成收入、资本与同一每股价格的正反算；不是已认证目标价或有概率的期望收益</td>
+</tr>
+<tr>
+  <td>最强反证与修订</td>
+  <td>实际完成自查</td>
+  <td>修正一次性收益、现金口径、总毛利率、集团统一倍数；不是独立专家复核</td>
+</tr>
+<tr>
+  <td>保存与接续</td>
+  <td>对话附件保存</td>
+  <td>提供完整正文、公式底稿、来源及问题状态；未写入公开GitHub records，未取得其公开授权</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>还缺哪些真正有价值的材料？</strong> 首先是2026H1完整原始现金流量表及附注，尤其购建资产、受限资金、债务期限和非经常收益细目；其次是2026年10月11日最新港交所文件与最终H股发行资料；再其次是可公开核验的客户订单、产能批次与资本回报证据。它们分别影响当前企业价值、融资后每股结果与长持续期的可信度。</p>
+<p>本次已尝试交易所/巨潮定位、公告转载、公告索引、港交所www与www1原文件以及财务数据页面。部分搜索结果显示最新内容，但打开后回退到7月缓存；10月11日港交所原PDF读取失败。没有把索引存在当作原件已读，也没有用同一个转载的多个入口当作独立证据。原始PDF表格截图有部分调用失败，相关数字按可解析文本与算术勾稽读取，不宣称所有表格已完成视觉复核。</p>
+<p>找到上海证券2026年9月2日、李心语署名半年报研究索引，但未取得盈利预测表；因此本稿没有“假装比对过一致预期”。公开网页的124.20元用于条件反推，没有取得系统Relay合格快照；附件并非正式Odds/Decision对象。<a class="ref" href="#S22" aria-label="来源S22">S22</a><a class="ref" href="#S16" aria-label="来源S16">S16</a></p>
+<p><strong>现在可以判断的是：东山的光业务转型已经在收入和经常性利润上兑现；能否成为有安全边际的投资，还依赖资本回报、融资后归属和较长盈利持续期的共同成立。</strong> 进一步给出无条件买入价，需要的不是再加几个标题，而是补齐上述决定现金与每股价值的证据。</p>
+<hr />
+<h2 id="section-14">来源目录</h2>
+<p>来源等级说明：primary为实际读取的原始公告/公司资料；management为管理层表态；issuer-republication为公告转载；secondary为新闻转述；index-only为仅定位到索引。相同原报告的中英文版本、同一新闻的多个转载，不算独立事实生成源。</p>
+<div class="source" id="S01"><strong>S01 · 东山精密2022年年度报告</strong><br><span>2023-04-21 · 2021–2022；主要指标 · primary</span><br><a href="https://static.cninfo.com.cn/finalpage/2023-04-21/1216496394.PDF" target="_blank" rel="noopener">来源入口</a> <small>原始PDF解析文本；历史资本开支未补齐</small></div>
+
+<div class="source" id="S02"><strong>S02 · 东山精密2024年年度报告</strong><br><span>2025-04-24 · 2023–2024；主要指标、季度数据、现金流量表 · primary</span><br><a href="https://disc.static.szse.cn/disc/disk03/finalpage/2025-04-24/4da149d5-8b60-4b57-a620-a69f5b7b8b26.PDF" target="_blank" rel="noopener">来源入口</a> <small>原始PDF解析文本</small></div>
+
+<div class="source" id="S03"><strong>S03 · 东山精密2025年年度报告（中文）</strong><br><span>2026-04-22 · 2025年度、季度与经营分部 · primary</span><br><a href="https://disc.static.szse.cn/disc/disk03/finalpage/2026-04-22/54b4de5b-9f4f-41f6-a380-2b08ab4d71bd.PDF" target="_blank" rel="noopener">来源入口</a> <small>原始PDF解析文本</small></div>
+
+<div class="source" id="S04"><strong>S04 · DSBJ 2025 Annual Report（英文）</strong><br><span>2026-05-23 · PDF页108、180–188；现金、债务、并购及非现金调整 · primary</span><br><a href="https://disc.static.szse.cn/disc/disk03/finalpage/2026-05-23/dfb085f2-b654-4e3e-a4df-2d53fb360ea4.PDF" target="_blank" rel="noopener">来源入口</a> <small>中文报告的另一语言版本，不算独立外部验证</small></div>
+
+<div class="source" id="S05"><strong>S05 · 东山精密2025年第三季度报告</strong><br><span>2025-10-22 · 2025Q3及前三季度 · primary</span><br><a href="https://disc.static.szse.cn/disc/disk03/finalpage/2025-10-22/d89101ab-fefc-4b28-8e72-34e1b1aa123c.PDF" target="_blank" rel="noopener">来源入口</a> <small>原始PDF；首页截图读取成功</small></div>
+
+<div class="source" id="S06"><strong>S06 · 东山精密2026年第一季度报告</strong><br><span>2026-04-28 · 2026Q1；PDF页1–2、9–10 · primary</span><br><a href="https://disc.static.szse.cn/disc/disk03/finalpage/2026-04-28/acdacca2-ced0-4dc5-9e0b-a2e4a446866a.PDF" target="_blank" rel="noopener">来源入口</a> <small>原始PDF解析文本；第2页截图成功；未经审计</small></div>
+
+<div class="source" id="S07"><strong>S07 · 东山精密2026半年报摘要公告转载</strong><br><span>2026-08-21 · 2026H1及2025H1对照 · issuer-republication</span><br><a href="https://wap.stockstar.com/detail/AN2026082100038931" target="_blank" rel="noopener">来源入口</a> <small>取得索引中的精确主要指标，未取得完整原始半年报及附注</small></div>
+
+<div class="source" id="S08"><strong>S08 · 中国证券报：东山精密2026年半年报</strong><br><span>2026-08-21 · 2026H1主要指标、存货、现金流 · secondary</span><br><a href="https://finance.eastmoney.com/a/202608213849683278.html" target="_blank" rel="noopener">来源入口</a> <small>证券报转载/检索文本；非原始PDF</small></div>
+
+<div class="source" id="S09"><strong>S09 · 上海证券报：千亿市值龙头，加码5亿美元“追光”</strong><br><span>2026-08-22 · 2026H1分部及新增扩产预算 · secondary</span><br><a href="https://news.10jqka.com.cn/20260822/c679187944.shtml" target="_blank" rel="noopener">来源入口</a> <small>分部数据及17亿美元预算采用此层级；不冒充原件核验</small></div>
+
+<div class="source" id="S10"><strong>S10 · 东山精密港交所申请版本</strong><br><span>2026-05-19 · 索尔思2023–2024财务；PDF页239–242 · primary</span><br><a href="https://www1.hkexnews.hk/app/sehk/2026/108550/documents/sehk26051901435_c.pdf" target="_blank" rel="noopener">来源入口</a> <small>草拟本；不是2026年10月11日的最新聆讯后版本</small></div>
+
+<div class="source" id="S11"><strong>S11 · 投资者关系活动记录表（4月28日）</strong><br><span>2026-04-29 · 经营、光芯片、客户、产能、良率 · management</span><br><a href="https://static.cninfo.com.cn/finalpage/2026-04-29/1225266940.PDF" target="_blank" rel="noopener">来源入口</a> <small>实际读取；管理层声明不等于订单及现金证明</small></div>
+
+<div class="source" id="S12"><strong>S12 · 投资者关系活动记录表（7月15日）</strong><br><span>2026-07-16 · 经营趋势与投资收益 · management</span><br><a href="https://static.cninfo.com.cn/finalpage/2026-07-16/1225427885.PDF" target="_blank" rel="noopener">来源入口</a> <small>实际读取；无量化分部盈利保证</small></div>
+
+<div class="source" id="S13"><strong>S13 · 光模块（含光芯片）扩产公告</strong><br><span>2026-06-17 · 12亿美元方案、Q1索尔思贡献与资金来源 · primary</span><br><a href="https://disc.static.szse.cn/disc/disk03/finalpage/2026-06-17/a6f08cf0-8be1-4276-863b-4b36212ade28.PDF" target="_blank" rel="noopener">来源入口</a> <small>原始PDF；后续17亿美元方案见S09，不能把旧预算当最新</small></div>
+
+<div class="source" id="S14"><strong>S14 · H股境外发行备案公告转述</strong><br><span>2026-09-30 · 最多234,038,600股；未构成实际发行 · secondary</span><br><a href="https://www.newtimespace.com/zh-cn/ipo/1450206.html" target="_blank" rel="noopener">来源入口</a> <small>原备案文件及最终发行文件未取得；条件性融资情景</small></div>
+
+<div class="source" id="S15"><strong>S15 · 港交所10月11日披露材料的报道</strong><br><span>2026-10-11 · 上市进程、客户集中度与港报口径 · secondary</span><br><a href="https://www.guandian.hk/article/20261011/10025096.html" target="_blank" rel="noopener">来源入口</a> <small>最新原PDF读取失败；不把May版当最新；毛利口径冲突保留</small></div>
+
+<div class="source" id="S16"><strong>S16 · 东方财富Choice：2026年10月15日大宗交易</strong><br><span>2026-10-15 · 收盘价124.20元、当日数据 · market</span><br><a href="https://wap.eastmoney.com/a/202610153896946339.html" target="_blank" rel="noopener">来源入口</a> <small>公开网页行情；未经Decision OS Relay合格快照认证</small></div>
+
+<div class="source" id="S17"><strong>S17 · Investing.com：东山精密历史行情</strong><br><span>2026-10-15 · 2026-10-15收盘124.20元 · market</span><br><a href="https://cn.investing.com/equities/suzhou-dongshan-a-historical-data" target="_blank" rel="noopener">来源入口</a> <small>仅作行情交叉核对，不用于技术择时</small></div>
+
+<div class="source" id="S18"><strong>S18 · NVIDIA：与Lumentum的战略合作</strong><br><span>2026-03-02 · 非排他采购承诺、产能权及20亿美元投资 · primary</span><br><a href="https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Strategic-Partnership-With-Lumentum-to-Develop-State-of-the-Art-Optics-Technology/default.aspx" target="_blank" rel="noopener">来源入口</a> <small>行业资本与议价机制；不证明东山获得相同订单</small></div>
+
+<div class="source" id="S19"><strong>S19 · NVIDIA：光子交换机产品公告</strong><br><span>2025-03-18 · 硅光、CPO与可插拔的技术路径 · primary</span><br><a href="https://nvidianews.nvidia.com/news/nvidia-spectrum-x-co-packaged-optics-networking-switches-ai-factories" target="_blank" rel="noopener">来源入口</a> <small>产品及生态声明；不外推东山份额</small></div>
+
+<div class="source" id="S20"><strong>S20 · 每日经济新闻：新易盛2025及2026Q1</strong><br><span>2026-04-24 · 光模块经营参照、汇兑损益与存货风险 · secondary</span><br><a href="https://www.nbd.com.cn/articles/2026-04-24/4356799.html" target="_blank" rel="noopener">来源入口</a> <small>未将其高净利率直接移植给东山</small></div>
+
+<div class="source" id="S21"><strong>S21 · 经济观察网：中际旭创2025业绩</strong><br><span>2026-03-31 · 收入382.4亿元、归母107.97亿元 · secondary</span><br><a href="https://www.eeo.com.cn/2026/0331/823234.shtml" target="_blank" rel="noopener">来源入口</a> <small>仅作规模/经济机制参照，不作同日估值可比</small></div>
+
+<div class="source" id="S22"><strong>S22 · 上海证券证券研究报告索引</strong><br><span>2026-09-02 · 分析师李心语；半年报点评 · index-only</span><br><a href="https://data.eastmoney.com/report/info/AP202609021828932204.html" target="_blank" rel="noopener">来源入口</a> <small>识别到报告，正文/盈利预测表未取得；不称已接入一致预期</small></div>
+
+<div class="source" id="M01"><strong>M01 · Decision OS 2.0 Full v2</strong><br><span>2026-10-15 · main=347990c799a3c386f5ae0a13690b3b377c76f685 · method</span><br><a href="https://github.com/auguspp/Decision-OS-2/blob/347990c799a3c386f5ae0a13690b3b377c76f685/src/decision_kernel/methods/full_v2.py" target="_blank" rel="noopener">来源入口</a> <small>通过GitHub连接器读取实际源文件及研究入口；无仓库写入</small></div>
+
+<div class="source" id="S23"><strong>S23 · 证券时报：公司10月8日投资者关系回应</strong><br><span>2026-10-09 · 原产地比例传闻、供应链及经营影响 · management-republication</span><br><a href="https://finance.eastmoney.com/a/202610093890039577.html" target="_blank" rel="noopener">来源入口</a> <small>仅代表公司说法；未取得原IR全文和可独立定性的正式监管文件</small></div>
+
+<div class="source" id="S24"><strong>S24 · 财中社：9月末回购进展</strong><br><span>2026-10-09 · 截至2026-09-30约4999万元回购 · secondary</span><br><a href="https://finance.eastmoney.com/a/202610093891431982.html" target="_blank" rel="noopener">来源入口</a> <small>回购不是价值底或未来价格保证</small></div>
+
+<div class="source" id="S25"><strong>S25 · 上海证券报：光模块扩产与2026H1分部</strong><br><span>2026-08-22 · H1光收入53.51亿元、39.33%毛利率；新增5亿美元 · secondary</span><br><a href="https://www.sfccn.com/2026/8-22/wNMDE1MjBfMjIxNjgwNg.html" target="_blank" rel="noopener">来源入口</a> <small>独立入口交叉核对S09，非另一个独立原始数据生成者</small></div>
+
+<div class="source" id="S26"><strong>S26 · 新浪财经：2026H1分部财务数据整理</strong><br><span>2026-09-12 · 显示及其他业务补充财务数据 · secondary-low-confidence</span><br><a href="https://finance.sina.com.cn/stock/aigc/agcbld/2026-09-12/doc-inirntfs8847939.shtml" target="_blank" rel="noopener">来源入口</a> <small>补充财务转载，未完成原表核验；不采用其小分部毛利率估值</small></div>
+
+<h2 id="section-15">附件与使用</h2>
+<p>计算底稿含十张工作表：说明、年度财务、八季财务、现金桥、模型输入、经营情景、估值机制、价格反推、融资稀释和来源。公式保留，关键主观假设单列；修改参数会改变结果，不会改变证据等级。</p>
+<p>正文与底稿仅保存在本对话附件，未发布到公共GitHub分支，未创建仓库记录、后台任务、通知或交易。版本、来源、修订和未决问题保存在本地接续文件中；它不是已有远端records合同的写入回执。</p>
+<p>本报告为一般性证券研究，未结合你的持仓、资金用途和风险承受能力，不构成个性化买卖指令。</p>
+
+<div class="doc-foot">配套文件：<a href="东山精密_FullResearch_计算底稿.xlsx">十表计算底稿</a> · <a href="东山精密_FullResearch_20261015.md">可编辑正文</a><br>本地交付文件。未发布到GitHub records；同一会话自查，不是独立审阅。</div>
+</main></div></body></html>

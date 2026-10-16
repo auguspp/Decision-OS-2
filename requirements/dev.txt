@@ -1,4 +1,5 @@
 -r contracts.txt
+-r rss.txt
 execnet==2.1.1
 pytest-xdist==3.8.0
 pytest-split==0.11.0

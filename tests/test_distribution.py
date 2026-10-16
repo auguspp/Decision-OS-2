@@ -1,4 +1,5 @@
 """Cold wheel installation outside the checkout, with no dependency/network access."""
+from email.parser import Parser
 import json
 import os
 from pathlib import Path
@@ -6,6 +7,8 @@ import shutil
 import subprocess
 import sys
 import zipfile
+
+from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,7 +26,14 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     with zipfile.ZipFile(wheel) as archive:
         assert all(name.startswith(("decision_kernel/", "decision_os_2-0.1.0.dist-info/")) for name in archive.namelist())
         metadata = archive.read("decision_os_2-0.1.0.dist-info/METADATA").decode()
-        assert "Requires-Dist:" not in metadata
+        headers = Parser().parsestr(metadata)
+        requirements = [Requirement(item) for item in headers.get_all("Requires-Dist", [])]
+        # Optional RSS is declared, but installing the base wheel must activate no dependency.
+        assert headers.get_all("Provides-Extra", []) == ["rss"]
+        assert all(item.marker is not None and not item.marker.evaluate({"extra": ""}) for item in requirements)
+        assert {str(item) for item in requirements} == {
+            'feedparser==6.0.14; extra == "rss"', 'feedparser-sgmllib==2.1.0; extra == "rss"'}
+        assert all(item.marker.evaluate({"extra": "rss"}) for item in requirements)
     venv = tmp_path / "installed"
     subprocess.run(["uv", "venv", "--python", sys.executable, str(venv)], check=True, capture_output=True)
     python = venv / "bin/python"
@@ -35,6 +45,10 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     assert json.loads(result.stdout)["version"] == "0.1.0"
     result = subprocess.run([str(python), "-I", "-c", "import decision_kernel; print(decision_kernel.__file__)"], cwd=outside, env=env, check=True, capture_output=True, text=True)
     assert str(venv) in result.stdout and str(source) not in result.stdout
+    subprocess.run([str(python), "-I", "-c",
+                    "from importlib.util import find_spec; assert find_spec('feedparser') is None; "
+                    "from decision_kernel.application.rss_intake import read_capture"],
+                   cwd=outside, env=env, check=True, capture_output=True, text=True)
 
     # Extend this same real installation consumer; do not build a second wheel/pilot.
     store = outside / "synthetic.git"

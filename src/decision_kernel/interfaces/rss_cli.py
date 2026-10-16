@@ -11,6 +11,7 @@ import sys
 
 from decision_kernel.application.rss_intake import collect, now, open_capture, read_capture, source_input, verify_capture
 from decision_kernel.application.versioned_store import VersionedStore
+from decision_kernel.observations.rss_failure import SCHEMA as FAILURE_SCHEMA
 from decision_kernel.domain.records import Conflict, MissingObject, RecordError, SHA, SourceInput, UnknownWrite, encoded, identifier, require
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.infrastructure.rss_http import fetch_feed
@@ -83,7 +84,10 @@ def run_native(output):
             else:
                 raise RecordError("RSS_SUBMISSION_EXISTS_RECONCILE_WITHOUT_FETCH")
             store = VersionedStore(backend)
-            value = collect(store, plan, batch_id="rss-run-" + os.environ["GITHUB_RUN_ID"], fetch=fetch_feed)
+            value = collect(store, plan, batch_id="rss-run-" + os.environ["GITHUB_RUN_ID"], fetch=fetch_feed, retain_failure=True)
+            if value["schema"] == FAILURE_SCHEMA:
+                report.update(source_outcome="unavailable", source_error_code=value["error_code"],
+                              failure_stage=value["stage"])
             source = source_input(value, inputs["submission_id"])
             # Freeze the exact original intent BEFORE the only possible native CAS write.
             (output / "source.json").write_bytes(encoded(asdict(source)))
@@ -97,6 +101,13 @@ def run_native(output):
             (output / "capture.json").write_bytes(encoded(value))
             (output / "reading.json").write_bytes(encoded(read_capture(value)))
             report["reference"] = plan["reference"]
+        if value["schema"] == FAILURE_SCHEMA:
+            report.update(status="source-failed-receipt-saved" if operation == "capture" else "completed",
+                          source_outcome="unavailable", source_error_code=value["error_code"],
+                          failure_stage=value["stage"], capture_sha256=value["capture_sha256"],
+                          observations=None, original_status=value["original"]["status"],
+                          predecessor=value["predecessor"])
+            return 2 if operation == "capture" else 0
         report.update(status="completed", capture_sha256=value["capture_sha256"],
                       observations=len(value["observations"]), delta=value["delta"],
                       original_status=value["original"]["status"], predecessor=value["predecessor"])

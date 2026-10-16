@@ -18,6 +18,7 @@ from decision_kernel.domain.records import RecordError, SourceRef, digest, encod
 from decision_kernel.observations.news_windows import _bytes_json, _claim, _reading, verify_reading
 from decision_kernel.observations.rss_reading import news_outcome, news_rows, verify_news_row
 from decision_kernel.application.rss_intake import SCHEMA as RSS_SCHEMA, open_capture
+from decision_kernel.observations.rss_failure import SCHEMA as RSS_FAILURE_SCHEMA
 
 SCHEMA = "dos2-news-rolling-v1"
 WINDOW_HOURS = 24
@@ -76,7 +77,7 @@ def read_news_batch(reader, ref):
     exact = reference(ref)
     result = _read_verified(reader, exact)
     value = _bytes_json(result["data"].encode("utf-8"))
-    if not isinstance(value, dict) or value.get("schema") != RSS_SCHEMA:
+    if not isinstance(value, dict) or value.get("schema") not in (RSS_SCHEMA, RSS_FAILURE_SCHEMA):
         return verify_reading(value)
     # Adapt the existing reader, not its store/writer. Verify predecessor bytes too.
     store = SimpleNamespace(read_source=lambda r: result if reference(r) == exact

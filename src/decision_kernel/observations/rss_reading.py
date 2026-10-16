@@ -11,6 +11,7 @@ from datetime import datetime
 import re
 
 from decision_kernel.domain.records import SourceRef, digest, encoded, require
+from decision_kernel.observations import rss_failure
 from decision_kernel.observations.rss_news import ATTRIBUTION, FEEDS, _entry, publication_claim
 
 ROW_KEYS = {"article_id", "body_archived", "event_verified", "observed_at", "other_time_claims",
@@ -54,11 +55,16 @@ def verify_news_row(row):
 
 def news_rows(capture):
     """Use this capture's receipt clock, not its inherited first-seen/publication."""
+    if capture.get("schema") == rss_failure.SCHEMA:
+        rss_failure.verify_failure(capture)
+        return []
     return [_news_row(entry, capture["window"]["feed_id"], capture["received_at"])
             for entry in capture["window"]["entries"]]
 
 
 def news_outcome(capture):
+    if capture.get("schema") == rss_failure.SCHEMA:
+        return verify_news_outcome(rss_failure.news_outcome(capture))
     delta = capture["delta"]
     result = {"source": capture["window"]["feed_id"], "provider": "rss", "status": "captured",
               "observations": len(capture["observations"]),
@@ -77,6 +83,9 @@ def news_outcome(capture):
 
 
 def verify_news_outcome(value):
+    if isinstance(value, dict) and isinstance(value.get("rss"), dict) and "failure" in value["rss"]:
+        require(value == rss_failure.news_outcome(value["rss"]["failure"]), "RSS_NEWS_FAILURE_OUTCOME")
+        return value
     require(isinstance(value, dict) and set(value) == {"source", "provider", "status", "observations", "capture", "rss"}
             and value["provider"] == "rss" and value["status"] == "captured"
             and isinstance(value["source"], str) and value["source"] in FEEDS

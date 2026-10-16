@@ -14,6 +14,7 @@ import json
 import zlib
 
 from decision_kernel.domain.records import RecordError, SourceInput, SourceRef, digest, encoded, require
+from decision_kernel.observations import rss_failure
 from decision_kernel.observations.rss_news import (
     ATTRIBUTION, FEEDS, MAX_BODY, parse_window, publication_claim, text, verify_window,
 )
@@ -105,6 +106,8 @@ def _assemble(window, *, batch_id, requested_at, received_at, previous, predeces
 
 
 def verify_capture(value):
+    if isinstance(value, dict) and value.get("schema") == rss_failure.SCHEMA:
+        return rss_failure.verify_failure(value)
     require(isinstance(value, dict) and set(value) == {"schema", "batch_id", "window", "requested_at", "received_at", "source_outcome", "attribution", "authority", "predecessor", "observations", "original", "count_meaning", "delta", "capture_sha256"}, "RSS_CAPTURE_SHAPE")
     require(value["schema"] == SCHEMA and value["authority"] == AUTHORITY
             and value["source_outcome"] == "captured" and value["attribution"] == ATTRIBUTION
@@ -169,6 +172,7 @@ def _load(store, ref):
 
 
 def _check_previous(previous, feed_id, requested_at, batch_id):
+    require(previous["source_outcome"] == "captured", "RSS_PREDECESSOR_NOT_CAPTURED")
     require(previous["window"]["feed_id"] == feed_id, "RSS_PREDECESSOR_FEED_MISMATCH")
     require(clock(previous["received_at"]) <= clock(requested_at)
             and previous["batch_id"] != batch_id, "RSS_PREDECESSOR_NOT_EARLIER")
@@ -177,6 +181,9 @@ def _check_previous(previous, feed_id, requested_at, batch_id):
 def open_capture(store, ref):
     """Reparse available original bytes and reconstruct exactly one saved transition."""
     value = _load(store, ref)
+    if value["schema"] == rss_failure.SCHEMA:
+        # A historical failure is not a transition. Never retry its missing predecessor.
+        return value
     prior_ref = value["predecessor"]["reference"]
     previous = _load(store, prior_ref) if prior_ref is not None else None
     if previous:
@@ -187,7 +194,7 @@ def open_capture(store, ref):
     return value
 
 
-def collect(store, plan, *, batch_id, fetch, clock_fn=now):
+def collect(store, plan, *, batch_id, fetch, clock_fn=now, retain_failure=False):
     require(isinstance(plan, dict) and set(plan) <= {"feed_id", "bootstrap", "predecessor", "retain_original", "rights_basis"}
             and {"feed_id", "bootstrap"} <= set(plan), "RSS_PLAN_SHAPE")
     feed = plan["feed_id"]
@@ -198,25 +205,51 @@ def collect(store, plan, *, batch_id, fetch, clock_fn=now):
     require(type(retain) is bool, "RSS_ORIGINAL_RIGHTS_REQUIRED")
     basis = text(plan.get("rights_basis", ""))
     require(bool(basis.strip()) if retain else not basis, "RSS_ORIGINAL_RIGHTS_REQUIRED")
-    # Exact predecessor is read and checked before the only publisher request.
-    previous = open_capture(store, prior_ref) if prior_ref is not None else None
-    requested = clock_fn(); clock(requested)
-    if previous:
-        _check_previous(previous, feed, requested, batch_id)
-    raw = fetch(feed)
-    received = clock_fn()
-    require(clock(requested) <= clock(received), "RSS_CAPTURE_CLOCK_ORDER")
-    window = parse_window(raw, feed)
-    original = {"status": "not-retained-rights-unconfirmed"}
-    if retain:
-        original = {"status": "retained-with-explicit-public-rights", "rights_basis": basis,
-                    "gzip_base64": base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")}
-    return verify_capture(_assemble(window, batch_id=batch_id, requested_at=requested, received_at=received,
-                                    previous=previous, predecessor=prior_ref, original=original))
+    require(type(retain_failure) is bool, "RSS_FAILURE_MODE_REQUIRED")
+    require(bool(text(batch_id, 96).strip()), "RSS_BATCH_REQUIRED")
+    # Failure receipts are opt-in for direct callers; the native custody host opts in.
+    # Invalid plans/rights above never become a purported failed source observation.
+    started = clock_fn() if retain_failure else None
+    if started is not None:
+        clock(started)
+    previous, requested, received, raw = None, None, None, None
+    stage = "predecessor"
+    try:
+        previous = open_capture(store, prior_ref) if prior_ref is not None else None
+        checked_at = clock_fn(); clock(checked_at)
+        if previous:
+            _check_previous(previous, feed, checked_at, batch_id)
+        stage, requested = "fetch", checked_at
+        raw = fetch(feed)
+        # A custom fetcher cannot inject an unbounded response into a failure receipt.
+        require(isinstance(raw, bytes) and len(raw) <= MAX_BODY, "RSS_BODY_OR_FEED_REJECTED")
+        received = clock_fn()
+        require(clock(requested) <= clock(received), "RSS_CAPTURE_CLOCK_ORDER")
+        stage = "parse"
+        window = parse_window(raw, feed)
+        original = {"status": "not-retained-rights-unconfirmed"}
+        if retain:
+            original = {"status": "retained-with-explicit-public-rights", "rights_basis": basis,
+                        "gzip_base64": base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")}
+        return verify_capture(_assemble(window, batch_id=batch_id, requested_at=requested, received_at=received,
+                                        previous=previous, predecessor=prior_ref, original=original))
+    except (RecordError, OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, ImportError) as error:
+        if not retain_failure:
+            raise
+        return rss_failure.failed_attempt(feed_id=feed, batch_id=batch_id, started_at=started,
+            requested_at=requested, received_at=received if stage == "parse" else None,
+            finished_at=clock_fn(), stage=stage, error=error, predecessor=prior_ref,
+            previous=previous, raw=raw)
 
 
 def source_input(value, submission_id):
     verify_capture(value)
+    if value["schema"] == rss_failure.SCHEMA:
+        return SourceInput(source_id="rss-" + submission_id, kind="content",
+            title="RSS失败回执 / " + value["feed_id"], origin=value["feed_url"],
+            text=encoded(value).decode("utf-8"), custody="provided", acquired_at=value["finished_at"],
+            limitations=(rss_failure.MEANING, "SYSTEM_RECEIPT_NOT_PUBLISHER_CONTENT",
+                         "RSS_ORIGINAL_NOT_RETAINED", "NO_FEED_VERSION_OR_PREDECESSOR_ADVANCE"))
     return SourceInput(source_id="rss-" + submission_id, kind="content", title="RSS观察 / " + value["window"]["feed_id"],
                        origin=value["window"]["feed_url"], text=encoded(value).decode("utf-8"), custody="provided",
                        acquired_at=value["received_at"], limitations=(ATTRIBUTION,
@@ -229,6 +262,13 @@ def read_capture(value, *, query="", offset=0, limit=40):
     verify_capture(value)
     require(isinstance(query, str) and len(query) <= 512 and type(offset) is int and offset >= 0
             and type(limit) is int and 1 <= limit <= 200, "RSS_READ_FILTER")
+    if value["schema"] == rss_failure.SCHEMA:
+        require(offset == 0, "RSS_READ_OFFSET")
+        return {"capture_sha256": value["capture_sha256"], "feed_id": value["feed_id"],
+                "rows": [], "selected_count": 0, "next_offset": None, "observations": None,
+                "source_outcome": "unavailable", "failure": deepcopy(value),
+                "predecessor": deepcopy(value["predecessor"]), "authority": AUTHORITY,
+                "health_scope": "whole-selected-feed-attempt", "meaning": rss_failure.MEANING}
     selected = [row for row in value["observations"] if query.casefold() in row["entry"]["payload"]["title"].casefold()]
     require(offset <= len(selected), "RSS_READ_OFFSET")
     rows = deepcopy(selected[offset:offset+limit])

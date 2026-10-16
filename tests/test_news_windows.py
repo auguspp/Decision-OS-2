@@ -173,3 +173,19 @@ def test_narrow_relay_only_uses_fixed_api_and_existing_security_transport():
     with pytest.raises(RecordError):
         capture_relay_news("p_delete", observed_at=NOW, transport=transport)
     assert len(transport.calls) == 1
+
+
+def test_cross_source_merge_is_one_reproducible_view_without_event_promotion():
+    from decision_kernel.observations.news_windows import merge_readings, verify_reading
+    first = combine([newsnow_window(newsnow(title="模拟标题"), "cls", observed_at=NOW)])
+    second = combine([relay_window(relay(), "news", "cls", observed_at=NOW, request={})])
+    merged = merge_readings([first, second])
+    assert verify_reading(merged) == merged
+    assert len(merged["observations"]) == 2
+    assert merged["headline_repetition_candidates"][0]["article_count"] == 2
+    assert merged["headline_repetition_candidates"][0]["event_identity"] == "unverified"
+    assert len(source_locators(merged)) == 2
+    with pytest.raises(RecordError):
+        merge_readings([first, {**second, "reading_sha256": "f" * 64}])
+    with pytest.raises(RecordError):
+        source_locators({**merged, "observations": []})

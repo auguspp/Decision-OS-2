@@ -1,0 +1,28 @@
+name: member-recovery-development-sources
+on:
+  push:
+    branches: [fix/10-exact-member-recovery]
+    paths: [.github/workflows/member-recovery-sources.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 1aa8d0b99d07fead6b1c087de980d171eb1d559e
+          persist-credentials: false
+      - name: Pack exact public engineering tree only
+        run: |
+          mkdir "$RUNNER_TEMP/member-sources"
+          git archive --format=tar HEAD > "$RUNNER_TEMP/member-sources/source.tar"
+          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/member-sources/identity.txt"
+          cd "$RUNNER_TEMP/member-sources"
+          sha256sum source.tar > sha256.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: member-recovery-development-sources
+          path: ${{ runner.temp }}/member-sources
+          retention-days: 1

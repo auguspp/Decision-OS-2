@@ -113,3 +113,7 @@ def exercise_installed_source_use(command, outside, python, env, executable, sto
     assert report['pool'] == report['relay'] == 'not-executed' and report['reference'] == saved['reference']
     assert report['full_product_acceptance'] == 'not-performed'
     assert command('current','--case-id','source-use-work')['reference'] == saved['reference']
+
+    # Same installed wheel: complementary projections keep native row/version/null witnesses.
+    from test_multi_capture_coverage import exercise_installed_multi_capture
+    exercise_installed_multi_capture(outside, python, clean)

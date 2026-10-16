@@ -62,6 +62,26 @@ decision-os store --binding config/store-binding.json audit-source-use --input a
 
 字段改名只证明“修正后的捕获确实完成”，不认证改名的经济含义；返回complete-corrected-fields/captured-with-corrections以及RELAY_FIELD_CORRECTION_REQUIRES_REVIEW，仍不能自动通过。用户/研究者对不再需要的旧字段作范围取舍，也不能由自填原因自动代签。错误关联保留rejected_corrections并限制验收。仍失败的其他查询继续保持未完成，不因为现金流恢复就把公告等缺项消掉。
 
+### 多次补取共同覆盖（保留原单目标合同）
+
+一个失败需求可使用同一 `relay_recoveries` 中的 `parts`，替代该项的单一 `to`。不能同时填写两者，也不能以多条重复 `from` 绕过关系检查。每个目标都必须来自本次已认证的原生 capture：
+
+```json
+{"relay_recoveries":[{"from":{"run_id":123,"run_attempt":1,"query_index":0},"parts":[{"to":{"run_id":124,"run_attempt":1,"query_index":0},"field_map":{"old_cash":"cash"}},{"to":{"run_id":125,"run_attempt":1,"query_index":0}}],"reason":"两次有界补取分别提供原需求的不同字段；仅示例"}]}
+```
+
+每组2–8个不同目标；原8份proof上限不增。主体、API、期间、报表筛选及offset沿原同范围校验；仅fields/limit可以不同。每个目标必须完整、晚于原失败及该原查询当前尝试，且为其自身查询的最新实际尝试。不能用旧成功遮蔽后来的失败，也不按用户排列顺序决定版本。`field_map`逐part声明，全组映射必须一致且一对一，不能让一个字段兼任不同原需求。
+
+`field_coverage`逐原字段列出part、返回字段名、原capture摘要、page_index/row_index、采集时间及返回行身份；capture摘要与原生attempt在parts中，原artifact定位沿receipts。页/行索引均从0开始。字段从未在有数据的返回行出现才列 `missing_fields`；已返回null、空字符串和值分别记录，不填零、不取“最新非空”替换。空结果是成功空查询，但不能当成取得字段值。
+
+**字段有了不等于可拼成同一版本。** 三大报表复用 `observations/relay_financial.STATEMENT` 中的证券、公告日、实际公告日、报告期、报表类型及update_flag作为原值行身份。comp_type若任何目标返回，则全部目标也必须可核；所有目标都没返回时不推断公司类型。缺身份、同身份重复、返回行集合不同或重叠原值冲突均保持 `composition-requires-review` / `partial-recovery`，增加 `RELAY_COMPOSITION_REQUIRES_REVIEW`。其他API没有已定义行身份政策时，只列已观察字段，不能自动认证可组合性。行位置不作为版本身份，更新标记也不认证发行人重述或历史PIT。
+
+`cohorts`按原行身份分别给覆盖、缺字段及冲突字段；不会把update0的现金与update1的自由现金拼成一行。原值仅作比较，不在核查中生成合成报表、重写SourceRef或追加一套数值库。不同采集时间即使身份/重叠值相同，也不签同时点原子快照。列和行均一致时仅恢复声明的查询覆盖；改名仍 `RELAY_FIELD_CORRECTION_REQUIRES_REVIEW`，真实采用、来源保管权和经济质量仍单独验证。
+
+为保留可解释的完整证据，每目标最多128行，每组最多4096个字段观察，全部组合报告合计最多256KiB；超限留下rejected_corrections，不裁掉历史、重置请求预算或自动重采。原单目标to及无组合调用保持原义。已有8份回执用满时不能丢历史凑数，后续容量接续需另证，本扩展不宣称无限历史。
+
+此窄适配由#7维护，复用原生reader、inspect_result和现役报表字段合同；不是新采集器/存储或金融算法。退出时撤parts解释、专属测试和本说明，保留旧单目标、原回执、引用与方法。安装验证仍追加原唯一cold-wheel。官方字段依据沿[现金流量表doc44](https://tushare.pro/document/2?doc_id=44)及原报表合同；字段说明不替Relay数据认证。
+
 信息池同样保留`pool_history`。相同计划/原委托的新观察选择最近原生起点的固定快照，必须有该快照自身完整首/中/尾游标链；旧失败不会永远锁住已完成的新扫描，新失败或只有尾页也不能借旧快照通过。相同快照同输入游标的后继真实结果可替代该位置的失败，但失败回执仍在历史中。不同计划不会因为更晚而被自动视为等价。来源采用仍核当前选定查询链和确切SourceRef，不认证经济判断或时效。
 
 ## 输出与不足的处置

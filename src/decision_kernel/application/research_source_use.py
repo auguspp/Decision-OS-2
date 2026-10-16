@@ -84,7 +84,7 @@ class SourceUseAudit:
                 and len(reuse) == len(set(reuse)) and (not reuse or "relay" in exceptions), "SOURCE_USE_REUSE_REASON_REQUIRED")
         require(len(encoded(payload)) <= 2 * 1024 * 1024, "SOURCE_USE_INPUT_TOO_LARGE")
         observed, rejected, pool_pages, captures, plans, relay_results = [], [], [], [], [], []
-        seen = set()
+        seen, capture_rows = set(), {}
         for proof in receipts:
             try:
                 require(self.receipt_reader is not None, "SOURCE_USE_NATIVE_READER_REQUIRED")
@@ -99,7 +99,8 @@ class SourceUseAudit:
                         pool_pages.append(page)
                     stage = "pool-query" if page is not None else "method-only-not-pool-query"
                 else:
-                    stage, checked, outcomes = self._relay(verified, request, ident["run_id"] in reuse)
+                    stage, checked, outcomes, retained = self._relay(verified, request, ident["run_id"] in reuse)
+                    capture_rows.update(retained)
                     relay_results.extend(outcomes)
                     plans.append(ident)
                     captures.extend(checked)
@@ -128,7 +129,7 @@ class SourceUseAudit:
                 row.update(status="unavailable", error="SOURCE_USE_SOURCE_UNAVAILABLE")
             sources.append(row)
         from decision_kernel.application.research_source_recovery import relay_recovery
-        recovery = relay_recovery(relay_results, payload.get("relay_recoveries", []))
+        recovery = relay_recovery(relay_results, payload.get("relay_recoveries", []), captures=capture_rows)
         relay_state = recovery["state"]
         good = [s for s in sources if s["status"] == "stored-representation" and s["adopted_by_author"]]
         gaps = []
@@ -136,6 +137,8 @@ class SourceUseAudit:
             gaps.append("POOL_USE_NOT_COMPLETE")
         if recovery["rejected_corrections"]:
             gaps.append("RELAY_RECOVERY_NOT_VERIFIED")
+        if recovery.get("row_consistency_review_required"):
+            gaps.append("RELAY_COMPOSITION_REQUIRES_REVIEW")
         if recovery["field_mapping_review_required"]:
             gaps.append("RELAY_FIELD_CORRECTION_REQUIRES_REVIEW")
         if relay_state not in ("captured", "captured-with-corrections"):
@@ -201,7 +204,7 @@ class SourceUseAudit:
         if selected["operation"] == "plan":
             require(result["status"] == "planned-not-captured", "SOURCE_USE_RELAY_PLAN_STATUS")
             return "relay-plan-only", [], [self._attempt(ident, selected, i, p, "planned-not-captured")
-                                            for i,p in enumerate(checked["requests"])]
+                                            for i,p in enumerate(checked["requests"])], {}
         require(selected["operation"] == "capture" and selected["public_rights_confirmed"] is True
                 and result["status"] in ("capture-returned", "capture-incomplete"), "SOURCE_USE_RELAY_NOT_CAPTURED")
         step = [s for s in verified["jobs"]["source"].get("steps", [])
@@ -209,7 +212,7 @@ class SourceUseAudit:
         require(len(step) == 1 and step[0]["conclusion"] in ("success", "failure"), "SOURCE_USE_CAPTURE_NOT_EXECUTED")
         rows = docs.get("capture.jsonl", [])
         require(isinstance(rows, list) and len(rows) <= len(checked["requests"]), "SOURCE_USE_CAPTURE_SHAPE")
-        usable, outcomes = [], []
+        usable, outcomes, retained = [], [], {}
         for i, planned in enumerate(checked["requests"]):
             outcome = self._attempt(ident, selected, i, planned, "not-returned")
             if i < len(rows):
@@ -221,13 +224,14 @@ class SourceUseAudit:
                     outcome.update(state="complete" if inspected["complete"] else "incomplete",
                                    row_count=inspected["row_count"], error=inspected["error"])
                     usable.append(row)
+                    retained[(ident["run_id"], ident["run_attempt"], i)] = row
                 else:
                     outcome["state"] = "not-attempted"
             outcomes.append(outcome)
         if result["status"] == "capture-returned":
             require(verified["jobs"]["source"]["conclusion"] == "success"
                     and all(o["state"] == "complete" for o in outcomes), "SOURCE_USE_CAPTURE_STATUS_MISMATCH")
-        return ("relay-reused-native-capture" if reuse else "relay-capture"), usable, outcomes
+        return ("relay-reused-native-capture" if reuse else "relay-capture"), usable, outcomes, retained
 
     @staticmethod
     def _attempt(identity, selected, index, planned, state):

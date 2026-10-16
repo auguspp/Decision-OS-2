@@ -37,6 +37,37 @@ def _code(exc):
     return value if re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", value) else "NEWS_REJECTED"
 
 
+def _headline_profile(rows):
+    """Bounded measurements only; admission remains owned by news_windows."""
+    if not isinstance(rows, list) or len(rows) > 30:
+        return None
+    out = {"rows": len(rows), "non_object_rows": 0, "non_string_titles": 0,
+           "blank_titles": 0, "invalid_utf8_titles": 0, "max_characters": 0,
+           "max_stripped_characters": 0, "max_utf8_bytes": 0,
+           "titles_with_controls": 0, "control_codepoints": {}}
+    for row in rows:
+        if not isinstance(row, dict):
+            out["non_object_rows"] += 1
+            continue
+        title = row.get("title")
+        if not isinstance(title, str):
+            out["non_string_titles"] += 1
+            continue
+        out["blank_titles"] += not bool(title.strip())
+        out["max_characters"] = max(out["max_characters"], len(title))
+        out["max_stripped_characters"] = max(out["max_stripped_characters"], len(title.strip()))
+        try:
+            out["max_utf8_bytes"] = max(out["max_utf8_bytes"], len(title.encode("utf-8")))
+        except UnicodeError:
+            out["invalid_utf8_titles"] += 1
+        controls = [ord(c) for c in title if ord(c) < 32 or ord(c) == 127]
+        out["titles_with_controls"] += bool(controls)
+        for point in controls:
+            key = f"U+{point:04X}"  # Only the fixed 33 C0/DEL codepoints can become keys.
+            out["control_codepoints"][key] = out["control_codepoints"].get(key, 0) + 1
+    return out
+
+
 def _shape(raw):
     """Only structure counts; never raw error messages, headlines or credentials."""
     if raw is None:
@@ -47,6 +78,10 @@ def _shape(raw):
             return {"object": False}
         out = {"object": True, "top_field_count": len(data)}
         rows = data.get("items")
+        if isinstance(rows, list):
+            profile = _headline_profile(rows)
+            if profile is not None:
+                out["headline_profile"] = profile
         if isinstance(data.get("data"), dict):
             rows = data["data"].get("items")
             fields = data["data"].get("fields")

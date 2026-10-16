@@ -29,6 +29,7 @@ from decision_kernel.application.market_security_inputs import (
     qualified_adj_factors, qualified_security_master, inspect_security_master,
 )
 from decision_kernel.application.market_reading import read_market_payload
+from decision_kernel.application.market_member_recovery import member_code as checked_member_code, member_context, retry_context
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
 from decision_kernel.domain.records import RecordError, encoded, require
@@ -82,7 +83,7 @@ def _code(value: object) -> str:
     return value if isinstance(value, str) and value in PUBLIC_CODES else 'CHECK_REJECTED'
 
 
-SELECTIONS = ('sample', 'catalogues', 'stock', 'us-indices', 'availability', 'stock-availability')
+SELECTIONS = ('sample', 'catalogues', 'stock', 'us-indices', 'availability', 'stock-availability', 'members')
 AVAILABILITY_HORIZONS = (5, 20, 60)
 AVAILABILITY_SELECTIONS = ('availability', 'stock-availability')
 US_INDEX_SLOTS = {'us_calendar': 'us_tradecal',
@@ -224,7 +225,8 @@ def check_scope(exchange: str, start: str, end: str, now: datetime,
 
 def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: str,
                   access_confirmed: bool = False, selection: str = 'sample', client=None, now: datetime | None = None,
-                  progress=None, sleep=time.sleep, monotonic=time.monotonic, clock=None) -> dict:
+                  progress=None, sleep=time.sleep, monotonic=time.monotonic, clock=None,
+                  request_context_confirmed=False, member_code=None) -> dict:
     """Check selected source slices; stock is independent of all THS inputs.
 
     Access authorization is not publication authorization. Unlike capture_plan,
@@ -235,8 +237,16 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     require(access_confirmed is True, 'MARKET_CHECK_ACCESS_REQUIRED')
     require(isinstance(registry, RelayRegistry), 'MARKET_CHECK_REGISTRY')
     require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
+    require(type(request_context_confirmed) is bool, 'MARKET_CHECK_CONTEXT_PERMISSION')
+    require(not request_context_confirmed or selection in ('sample', 'availability', 'members'),
+            'MARKET_CHECK_CONTEXT_SELECTION')
+    if selection == 'members':
+        checked_member_code(member_code)
+        require(request_context_confirmed, 'MARKET_CHECK_CONTEXT_PERMISSION')
+    else:
+        require(member_code is None, 'MARKET_CHECK_MEMBER_CODE_UNUSED')
     isolated = selection in AVAILABILITY_SELECTIONS
-    selected_slots = (US_INDEX_SLOTS if selection == 'us-indices' else SLOTS if selection in ('sample', 'availability') else
+    selected_slots = ({'members': 'ths_member'} if selection == 'members' else US_INDEX_SLOTS if selection == 'us-indices' else SLOTS if selection in ('sample', 'availability') else
                       {k: SLOTS[k] for k in (STOCK_SLOTS if selection in ('stock', 'stock-availability') else
                                              ('sector_catalog', 'concept_catalog'))})
     now = datetime.now(timezone.utc) if now is None else now
@@ -255,6 +265,11 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             'ONE_SOURCE_SORTED_SAMPLE_NOT_FULL_MARKET_DISCOVERY_OR_RESEARCH_ADOPTION',
             'CURRENT_DIRECTORY_NOT_HISTORICAL_MEMBERSHIP_OR_PIT',
             'NO_SOURCE_VALUES_NAMES_IDENTIFIERS_OR_DIGESTS_IN_RECEIPT']}
+    if request_context_confirmed:
+        report['request_context_confirmed'] = True
+        report['limitations'][-1] = 'GENERATED_MEMBER_REQUEST_CONTEXT_ONLY; NO_RETURNED_MEMBER_ROWS_OR_SOURCE_CUSTODY'
+    if selection == 'members':
+        report['sample_policy'] = 'one-explicit-member-query-not-catalogue-or-market-coverage'
     if selection == 'us-indices':
         report.update(scope={'market': 'US', 'start': start, 'end': end},
             sample_policy='four-code-owned-US-indices-not-stock-candidates',
@@ -298,12 +313,20 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             use = validate_plan({'schema': 'research-source-plan-v1', 'case_id': 'market-source-check',
                                  'requests': [request]}, registry)['requests'][0]
             item.update(status='in-progress', reason_code=None)
+            if request_context_confirmed and api == 'ths_member':
+                context = member_context(params['ts_code'], registry)
+                require(context['parameters'] == use['parameters'] and context['max_pages'] == max_pages,
+                        'MARKET_CHECK_MEMBER_REQUEST_CHANGED')
+                item['request_context'] = context
+                item['retry_context'] = {'eligible': False}
             emit()
             capture = capture_registered(use, registry, session, max_pages=max_pages)
             stopped = ((capture.get('failure') or {}).get('classification') in {'auth-or-entitlement', 'rate-limit'}
                        or capture['error'] in {'RELAY_RUN_DEADLINE', 'RELAY_SECRET_REFLECTED'})
             report['stopped'] = stopped
             item['last_attempt_failure'] = _last_attempt_failure(capture)
+            if request_context_confirmed and api == 'ths_member':
+                item['retry_context'] = retry_context(capture)
             result = {'case_id': 'market-source-check', 'use': use,
                       'status': 'captured' if capture['complete'] else 'capture-incomplete', 'capture': capture}
             view = inspect_result(result, registry)
@@ -330,6 +353,17 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             item['http_attempts'] = client.requests - before
             report['http_attempts'] = client.requests - initial_requests
             emit()
+
+    if selection == 'members':
+        _, qualified = take('members', {'ts_code': member_code}, MEMBER_FIELDS,
+                            lambda r: qualified_ths_members(r, registry=registry, ts_code=member_code))
+        report['surfaces']['members'] = {
+            'status': 'read' if qualified is not None else 'rejected',
+            'row_count': qualified['row_count'] if qualified is not None else None,
+            'semantics': 'as-returned-rows-not-dated-current-or-historical-membership'}
+        report['status'] = 'checked-members' if report['queries']['members']['status'] == 'checked' else 'completed-with-gaps'
+        emit()
+        return report
 
     if selection == 'catalogues':
         # No calendar, master, price, factor, members or three-surface invocation.

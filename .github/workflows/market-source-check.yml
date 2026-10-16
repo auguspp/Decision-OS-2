@@ -7,9 +7,9 @@ on:
         type: string
         required: true
       selection:
-        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; US: us-indices'
+        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; US: us-indices'
         type: choice
-        options: [sample, catalogues, stock, us-indices, availability, stock-availability]
+        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members]
         default: sample
       exchange:
         description: 'SSE/SZSE for domestic selections; US required for us-indices'
@@ -29,6 +29,18 @@ on:
         type: boolean
         default: false
         required: true
+      request_context_confirmed:
+        description: 'Explicitly retain generated member API request arguments for exact recovery; no returned rows'
+        type: boolean
+        default: false
+      member_code:
+        description: 'members only: one explicit six-digit .TI code; not a saved failed-query substitute'
+        type: string
+        default: ''
+      resume:
+        description: 'resume-members only: JSON run_id/run_attempt/artifact_id/slot from the exact failed receipt'
+        type: string
+        default: ''
 permissions: {}
 concurrency:
   group: decision-os-relay-source
@@ -40,6 +52,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -50,6 +63,7 @@ jobs:
           profile: contracts
       - name: Check in memory without exporting supplier data
         env:
+          DECISION_OS_CHECK_READ_TOKEN: ${{ inputs.selection == 'resume-members' && github.token || '' }}
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
         run: python -m decision_kernel.interfaces.market_source_check_cli --out "$RUNNER_TEMP/dos2-market-check"
       - name: Preserve only the allowlisted engineering receipt

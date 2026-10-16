@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import sys
 
-from decision_kernel.application.market_source_check import check_scope, check_sources
+from decision_kernel.application.market_source_check import SELECTIONS, check_scope, check_sources
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.domain.records import require
 
@@ -21,7 +21,7 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
     require(env.get('GITHUB_REPOSITORY') == REPO and env.get('GITHUB_REF') == 'refs/heads/main'
             and env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'MARKET_CHECK_MANUAL_MAIN_ONLY')
     require(isinstance(event, dict) and isinstance(event.get('inputs'), dict)
-            and event['inputs'].keys() == INPUTS, 'MARKET_CHECK_INPUT')
+            and INPUTS <= event['inputs'].keys() <= INPUTS | {'selection'}, 'MARKET_CHECK_INPUT')
     data = event['inputs']
     require(isinstance(data['code_sha'], str) and re.fullmatch(r'[a-f0-9]{40}', data['code_sha'])
             and data['code_sha'] == env.get('GITHUB_SHA'), 'MARKET_CHECK_CODE_CHANGED')
@@ -29,9 +29,11 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
             and data['access_confirmed'] == 'true', 'MARKET_CHECK_ACCESS_REQUIRED')
     require(isinstance(env.get('GITHUB_RUN_ID'), str) and re.fullmatch(r'[1-9][0-9]*', env['GITHUB_RUN_ID'])
             and env.get('GITHUB_RUN_ATTEMPT') == '1', 'MARKET_CHECK_NEW_EXPLICIT_RUN_REQUIRED')
+    selection = data.get('selection', 'sample')
+    require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
     check_scope(data['exchange'], data['start'], data['end'], now)
     return {'exchange': data['exchange'], 'start': data['start'], 'end': data['end'],
-            'access_confirmed': True}
+            'access_confirmed': True, 'selection': selection}
 
 
 def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
@@ -61,7 +63,7 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
         progress({**latest, 'status': 'interrupted', 'reason_code': 'MARKET_CHECK_INTERRUPTED'})
         return 2
     progress(result)
-    return 0 if result['status'] == 'checked-sample' else 2
+    return 0 if result['status'] in ('checked-sample', 'checked-catalogues') else 2
 
 
 def main(argv: list[str] | None = None) -> int:

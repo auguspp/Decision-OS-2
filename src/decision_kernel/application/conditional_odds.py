@@ -24,6 +24,7 @@ from decision_kernel.infrastructure.relay_http import ROOT
 SPEC_RECORD = "frozen-valuation-record-v1"
 RESULT_RECORD = "conditional-odds-record-v1"
 RECORD_LAYOUTS = {
+    "odds-watch-activity-record-v1": ("odds-watch-activity-", "odds-watch-activity.json"),
     "frozen-odds-watch-record-v1": ("odds-watch-", "odds-watch.json"),
     "odds-watch-check-record-v1": ("odds-watch-check-", "odds-watch-check.json"),
     SPEC_RECORD: ("odds-spec-", "valuation-spec.json"),
@@ -31,6 +32,14 @@ RECORD_LAYOUTS = {
     "frozen-odds-assessment-record-v1": ("odds-assessment-", "odds-assessment.json"),
     "probability-odds-record-v1": ("odds-probability-result-", "probability-odds.json"),
 }
+
+
+def record_artifact(schema, value, rights_basis):
+    """Same immutable record encoding, also usable in one owner-controlled CAS."""
+    raw = encoded({"schema": schema, "value": value, "rights_basis": rights_basis})
+    require(schema in RECORD_LAYOUTS, "ODDS_RECORD_SCHEMA")
+    prefix, filename = RECORD_LAYOUTS[schema]
+    return ArtifactInput.from_bytes(prefix + digest(raw), filename, "application/json", raw)
 
 
 def publication(payload, key):
@@ -66,14 +75,8 @@ class ConditionalOdds:
                 "research_sources": sources, "cited_source_readback": evidence,
                 "economic_assessment": "not-performed"}
 
-    def _put(self, submission_id, schema, value, rights_basis):
-        raw = encoded({"schema": schema, "value": value, "rights_basis": rights_basis})
-        require(schema in RECORD_LAYOUTS, "ODDS_RECORD_SCHEMA")
-        prefix, filename = RECORD_LAYOUTS[schema]
-        artifact = ArtifactInput.from_bytes(prefix + digest(raw),
-            filename,
-            "application/json", raw)
-        return self.artifacts.put(submission_id, artifact)
+    def _put(self, submission_id, schema, value, rights_basis, *, before_new_write=None):
+        return self.artifacts.put(submission_id, record_artifact(schema, value, rights_basis), before_new_write=before_new_write)
 
     def _open(self, reference, schema):
         ref = artifact_reference(reference)

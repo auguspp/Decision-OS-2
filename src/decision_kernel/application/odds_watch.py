@@ -126,8 +126,10 @@ class OddsWatch:
             return RelayRegistry(Path("docs/sources/relay-registry.json"))
         return self.registry
 
-    def _observe(self, frozen, request, previous, reader):
+    def _observe(self, frozen, request, previous, reader, *, known_dates_first=False):
         try:
+            if known_dates_first:
+                return self._observe_supported(frozen, request, previous, reader, known_dates_first=True)
             return self._observe_supported(frozen, request, previous, reader)
         except RecordError as exc:
             code = str(exc)
@@ -144,7 +146,7 @@ class OddsWatch:
                     "condition_met": None, "research_at_snapshot": None, "calculation": None,
                     "value": None, "reason": code}
 
-    def _observe_supported(self, frozen, request, previous, reader):
+    def _observe_supported(self, frozen, request, previous, reader, *, known_dates_first=False):
         watch = frozen["watch"]
         gated = gate(watch, request, previous)
         out = {"status": gated, "condition_met": None, "research_at_snapshot": None,
@@ -163,7 +165,8 @@ class OddsWatch:
                     "reason": "VERSION_COMPARISON_ONLY_NOT_ECONOMIC_REVIEW"}
         if changed or request["review_reasons"]:
             return {**out, "status": "review-required", "reason": "WATCH_RESEARCH_OR_ASSUMPTIONS_CHANGED"}
-        if request["input"] is None:
+        if request["input"] is None and not known_dates_first:
+            # Preserve the v1 standalone-check projection during historical replay.
             return {**out, "status": "cannot-determine", "reason": "WATCH_NEW_PRICE_INPUT_MISSING"}
         conditional = ConditionalOdds(reader)
         if watch["basis"]["kind"] == "conditional":
@@ -178,6 +181,8 @@ class OddsWatch:
             return {**out, "status": "ended", "reason": "WATCH_FIXED_HORIZON_REACHED"}
         if any(day(flow["date"]) <= calendar_at.date() for w in spec["worlds"] for flow in w["distributions"]):
             return {**out, "status": "review-required", "reason": "WATCH_ELAPSED_CASH_REQUIRES_NEW_SPEC"}
+        if request["input"] is None:
+            return {**out, "status": "cannot-determine", "reason": "WATCH_NEW_PRICE_INPUT_MISSING"}
         if watch["basis"]["kind"] == "probability":
             calculation = ProbabilityOdds(reader, self._registry(), clock=self.clock).compute({
                 "assessment_ref": watch["basis"]["reference"], "market": request["input"], "evaluated_at": request["checked_at"]})
@@ -235,8 +240,11 @@ class OddsWatch:
         return json.loads(encoded(result))
 
     def save(self, payload, *, submission_id):
-        result = self.check(publication(payload, "check"))
-        ref = self.custody._put(submission_id, CHECK_RECORD, result, payload["rights_basis"])
+        from decision_kernel.application.watch_activity import assert_unmanaged
+        reader = _Sources(self.store.backend)
+        result = self.check(publication(payload, "check"), reader=reader)
+        ref = self.custody._put(submission_id, CHECK_RECORD, result, payload["rights_basis"],
+            before_new_write=lambda head: assert_unmanaged(reader, result["request"]["watch_ref"], snapshot=head))
         return {"reference": asdict(ref), "check_sha256": digest(encoded(result)), "status": result["status"],
                 "watch_ref": result["request"]["watch_ref"]}
 
@@ -264,7 +272,9 @@ class OddsWatch:
         return hint
 
     def inspect(self, payload):
+        from decision_kernel.application.watch_activity import assert_unmanaged
         reader = _Sources(self.store.backend)
+        assert_unmanaged(reader, validate_request(payload)["watch_ref"])
         result = self.check(payload, reader=reader)
         frozen = self.read_watch(result["request"]["watch_ref"], reader=reader)
         return {"result": result, "current_use": self._hint(frozen)}

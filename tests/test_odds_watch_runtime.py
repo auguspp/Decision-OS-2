@@ -125,3 +125,6 @@ def exercise_installed_watch(command, outside, executable, env):
     read = call("read-odds-watch-check", saved["reference"], reference=True)
     assert read["result"] == result["result"] and read["recalculation"] == "matches"
     assert command("current", "--case-id", "odds-case")["reference"] == research
+
+    from test_watch_activity_runtime import exercise_installed_activity
+    exercise_installed_activity(call, frozen["reference"], saved["reference"])

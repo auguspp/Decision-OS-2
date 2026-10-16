@@ -1,0 +1,134 @@
+name: decision-os-news-intake
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        type: choice
+        options: [newsnow, relay]
+        default: newsnow
+        required: true
+      code_sha:
+        description: 'Exact inspected main SHA with successful independent CI'
+        type: string
+        required: true
+      public_metadata_capture_confirmed:
+        description: 'I authorize finite headline/URL metadata retained in the public 7-day Actions artifact'
+        type: boolean
+        default: false
+        required: true
+      api:
+        description: 'Relay only: reviewed news API'
+        type: choice
+        options: [news, major_news, cctv_news]
+        default: news
+      source:
+        description: 'Reviewed src for Relay news and major_news'
+        type: string
+        default: cls
+      start:
+        description: 'Relay news start YYYY-MM-DD HH:MM:SS'
+        type: string
+        default: ''
+      end:
+        description: 'Relay news end YYYY-MM-DD HH:MM:SS'
+        type: string
+        default: ''
+      date:
+        description: 'Relay cctv_news YYYYMMDD'
+        type: string
+        default: ''
+permissions: {}
+concurrency:
+  group: decision-os-news-intake
+  cancel-in-progress: false
+jobs:
+  capture:
+    if: >-
+      github.repository == 'auguspp/Decision-OS-2' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 &&
+      inputs.public_metadata_capture_confirmed
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Preflight exact main and independently successful CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_CODE: ${{ inputs.code_sha }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_CODE" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 \
+            > "$RUNNER_TEMP/news-ci.json"
+          python - <<'PY'
+          import json, os
+          with open(os.environ["RUNNER_TEMP"] + "/news-ci.json") as stream:
+              runs = json.load(stream)["workflow_runs"]
+          assert any(r["head_sha"] == os.environ["GITHUB_SHA"] and r["event"] == "push"
+                     and r["path"] == ".github/workflows/ci.yml"
+                     and r["run_attempt"] == 1 and r["conclusion"] == "success"
+                     and r["status"] == "completed" for r in runs), "NO_EXACT_SUCCESSFUL_MAIN_CI"
+          PY
+      - name: NewsNow local service, pinned legacy image, no credentials
+        if: inputs.family == 'newsnow'
+        run: |
+          set -euo pipefail
+          image=ghcr.io/ourongxing/newsnow@sha256:98b62bd971d308040937fdfde5263a00715b357894936e88b3ce3c0d8adbf55a
+          docker pull "$image"
+          docker run -d --name dos2-newsnow -p 127.0.0.1:4444:4444 \
+            -e HOST=0.0.0.0 -e PORT=4444 -e NODE_ENV=production \
+            -e ENABLE_CACHE=false -e INIT_TABLE=true "$image"
+          ready=0
+          for i in $(seq 1 30); do
+            if curl --silent --fail --max-time 2 http://127.0.0.1:4444/ > /dev/null; then
+              ready=1; break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+      - name: NewsNow finite seven-source capture
+        if: inputs.family == 'newsnow'
+        run: python -m decision_kernel.interfaces.news_cli capture-newsnow --output "$RUNNER_TEMP/news-window.json"
+      - name: Relay fixed-host reviewed news capture
+        if: inputs.family == 'relay'
+        env:
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+          NEWS_API: ${{ inputs.api }}
+          NEWS_SRC: ${{ inputs.source }}
+          NEWS_START: ${{ inputs.start }}
+          NEWS_END: ${{ inputs.end }}
+          NEWS_DATE: ${{ inputs.date }}
+        run: |
+          set -euo pipefail
+          if test "$NEWS_API" = cctv_news; then
+            python -m decision_kernel.interfaces.news_cli capture-relay --api "$NEWS_API" \
+              --date "$NEWS_DATE" --output "$RUNNER_TEMP/news-window.json"
+          else
+            python -m decision_kernel.interfaces.news_cli capture-relay --api "$NEWS_API" \
+              --source "$NEWS_SRC" --start "$NEWS_START" --end "$NEWS_END" \
+              --output "$RUNNER_TEMP/news-window.json"
+          fi
+      - name: Stop NewsNow local service
+        if: always() && inputs.family == 'newsnow'
+        run: docker rm -f dos2-newsnow > /dev/null 2>&1 || true
+      - name: Retain only metadata-only finite news observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-news-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/news-window.json
+          if-no-files-found: warn
+          retention-days: 7

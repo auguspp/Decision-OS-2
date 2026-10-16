@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict
+import json
 
 from decision_kernel.application.research_agenda import ResearchAgenda, clock, research_reference
 from decision_kernel.domain.records import BlobRef, RecordError, digest, encoded, require
@@ -73,7 +74,10 @@ def read_rows(store, plan, cutoff):
                     row.update(status="after-cutoff", stored_at=card["stored_at"])
                 else:
                     research = store.read_revision(BlobRef(**item["reference"]))
-                    row.update(context=deepcopy(card), excerpt=excerpt(research, item),
+                    # Workpaper dataclasses contain tuple evidence collections.
+                    # Normalize at the JSON artifact boundary, preserving wire bytes,
+                    # so an independent reader compares the same data model.
+                    row.update(context=json.loads(encoded(card)), excerpt=excerpt(research, item),
                                predecessor=deepcopy(research["record"]["input"]["predecessor"]))
             except (RecordError, KeyError, TypeError):
                 row = {"item": deepcopy(item), "version_id": row["version_id"],

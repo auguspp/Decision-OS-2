@@ -10,13 +10,13 @@ from decision_kernel.domain.records import encoded
 from decision_kernel.interfaces import news_rolling_cli as host, research_runtime
 from test_news_read_budget import sources, setup, transport
 from test_news_rolling import save
-from test_brief_research import revision
+from test_brief_workpaper import structured_revision
 from test_news_delivery import END
 
 
 def mixed_setup(sources, monkeypatch, tmp_path, saving=True):
     model, store, _, _, index = sources
-    item = revision(store, monkeypatch)
+    item = structured_revision(store, monkeypatch)
     window = save(store, 'mixed-index', index)
     plan = {'window':asdict(window), 'cutoff':END, 'kind':'evening', 'research':{'items':[item]}}
     api, inputs = setup(monkeypatch, tmp_path, model, plan, saving=saving, operation='desk')
@@ -101,7 +101,9 @@ from pathlib import Path
 from decision_kernel.application import versioned_store
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.infrastructure.git_store import GitStore
-from decision_kernel.domain.records import SourceInput,RevisionInput,encoded
+from decision_kernel.domain.records import SourceInput,BlobRef,encoded
+from decision_kernel.application.research_workflow import ResearchWorkflow
+from decision_kernel.domain.research_work import ResearchRequest,ResearchProgress
 from decision_kernel.domain.research_artifacts import ArtifactInput
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.news_rolling_index import rolling_index
@@ -115,7 +117,13 @@ def save(name,value):
 raw=encoded({'status':'success','id':'cls','items':[{'id':'b','title':'Synthetic observation','url':'https://www.cls.cn/detail/456'}]})
 batch=save('mixed-batch',combine([newsnow_window(raw,'cls',observed_at='2026-10-16T10:00:00Z')]))
 window=save('mixed-window',rolling_index(store.read_source,[batch],as_of='2026-10-16T12:00:00Z'))
-r=store.submit_revision('mixed-research',RevisionInput('mixed-research','r1','full','Original finding.\nMaterial unresolved question.\n','Synthetic mandate','synthetic',unresolved=('No independent evidence.',)))
+request=ResearchRequest.from_dict({'case_id':'mixed-research','kind':'full','mandate':'Synthetic mandate',
+ 'questions':[{'question_id':'q1','text':'Qualified answer?'}]})
+progress=ResearchProgress.from_dict({'body':'Original finding.\nMaterial unresolved question.\n',
+ 'sources':[asdict(batch)],'findings':[{'question_id':'q1','status':'answered','finding':'Qualified','evidence':[0]}],
+ 'challenges':[{'question_id':'q1','argument':'Alternative','disposition':'unresolved','response':'Investigate','evidence':[0]}],
+ 'stop':'continue','stop_reason':'Unresolved challenge'})
+r=BlobRef(**ResearchWorkflow(store).checkpoint(request,progress,submission_id='mixed-research',revision_id='r1')['reference'])
 plan={'window':asdict(window),'cutoff':'2026-10-16T12:00:00Z','kind':'evening','research':{'items':[{'reference':asdict(r),'start':1,'end':2}]}}
 artifacts=ResearchArtifacts(store)
 doc,logical=build_edition(store.read_source,artifacts,plan)

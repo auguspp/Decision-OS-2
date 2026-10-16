@@ -13,14 +13,14 @@ on:
         type: string
         required: true
       family:
-        description: 'Reviewed source family; no arbitrary interface dispatch'
+        description: 'Typed source family or catalogue-gated public research plan'
         type: choice
-        options: [financial, participants]
+        options: [financial, participants, research]
         default: financial
       codes:
-        description: 'Explicit securities separated by spaces or commas; no credentials'
+        description: 'Typed families only: securities separated by spaces or commas'
         type: string
-        required: true
+        required: false
       periods:
         description: 'Financial only: quarter-end YYYYMMDD periods'
         type: string
@@ -41,6 +41,10 @@ on:
         description: 'Per-query safety bound; not a purchased-use quota'
         type: string
         default: '100'
+      source_plan:
+        description: 'Research only: JSON schema/case_id/requests with stage, purpose, api, parameters; no credentials'
+        type: string
+        required: false
       public_rights_confirmed:
         description: 'Capture only: I authorize querying and retaining these data in this public repository artifacts'
         type: boolean

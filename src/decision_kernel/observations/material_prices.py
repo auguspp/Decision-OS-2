@@ -118,6 +118,7 @@ def discover(raw, url):
     results = {}
     for title, href in _Page(raw).links:
         if TITLE.fullmatch(title):
+            period(title)
             target = allowed(urljoin(url, href))
             require(target not in results or results[target] == title, "MATERIAL_LINK_CONFLICT")
             results[target] = title

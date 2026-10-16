@@ -81,10 +81,12 @@ def capture(*, fetcher=fetch, clock=now, predecessor=None):
         request(url)
     candidates = sorted(links.items(), key=lambda pair: (period(pair[1])[1], pair[0]), reverse=True)
     # Multiple links for the same statistical period are ambiguous, not fallback.
-    seen = set()
+    periods = [period(title)[1] for _, title in candidates]
+    if len(periods) != len(set(periods)):
+        for receipt in receipts:
+            if receipt["status"] == "captured":
+                receipt.update(status="rejected", error_code="MATERIAL_DISCOVERY_PERIOD_CONFLICT")
+        candidates = []
     for url, title in candidates[:3]:
-        key = period(title)[1]
-        require(key not in seen, "MATERIAL_DISCOVERY_PERIOD_CONFLICT")
-        seen.add(key)
         request(url, title)
     return monitor(releases, as_of=clock(), receipts=receipts, predecessor=predecessor), originals

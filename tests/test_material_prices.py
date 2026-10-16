@@ -117,6 +117,17 @@ def test_refusal_stops_actual_network_calls_and_keeps_unavailable_receipt():
     assert all(r["status"] == "not-attempted-budget-or-refusal" for r in value["report"]["receipts"][1:])
 
 
+def test_ambiguous_release_links_preserve_originals_without_selecting_a_fallback():
+    def ambiguous(url):
+        return fixture_fetch(url) + ('<a href="' + ROOT +
+            '202610/t20261001_99.html">' + TITLES[2] + "</a>").encode()
+    value, raw = collect(ambiguous)
+    report = replay(value, raw)
+    assert report["status"] == "partial-or-unavailable"
+    assert len(raw) == 3 and not report["releases"]
+    assert all(r["error_code"] == "MATERIAL_DISCOVERY_PERIOD_CONFLICT" for r in report["receipts"])
+
+
 def test_off_scope_redirects_and_bodies_are_rejected_before_parsing():
     with pytest.raises(RecordError, match="MATERIAL_URL_OUTSIDE_SCOPE"):
         discover('<a href="https://example.org/">2026年9月下旬流通领域重要生产资料市场价格变动情况</a>'.encode(), ROOT)

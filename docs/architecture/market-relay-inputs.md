@@ -1,0 +1,9 @@
+# Market Relay input qualification — second bounded engineering group
+
+This module consumes **the existing** `research_sources.capture_registered` envelope. It adds only strict `trade_cal` and `daily` field/row checks for downstream `market_daily`; it does not fetch the network, invoke a new host, persist sources, verify rights, adjust prices, or establish a live universe. The original response and full capture must remain with the existing #6 custody writer to produce a real SourceRef; this adapter returns a lossy normalized *view* only.
+
+`qualified_trade_calendar` requires exact query exchange, date range, complete capture, fields `exchange/cal_date/is_open`, consistent exchange, valid open flags, unique days, and every calendar date including closed sessions. `qualified_daily` requires exact stock code and requested dates, `ts_code/trade_date/close`, in-calendar observations, no duplicates and positive finite decimal raw closes. Missing stock prices are **not** silently filled; the prior observation module reports gaps at each N-session window.
+
+Capture `complete=true` alone does not prove source, rights, actual API availability, point-in-time corporate actions, complete listing universe, correct timezone, or per-security adjustment. Callers must establish capture pagination and obtain the true Relay business response via existing reviewed `RelayHTTP.request_registered` and existing Registry/Retry. Requesting fields here is not execution authority. These synthetic tests make no external calls.
+
+Further #10 work: confirm actual Relay field shapes and request acceptance for `trade_cal`/`daily` (and `stock_basic`/`adj_factor`), adapt actual service conventions if justified, retain source bytes through #6, qualify industry/concept membership separately, establish bounded discovery and #7/#13 consumer use. No global background family, scheduled ingestion, records write or market deployment is delivered by this group. 

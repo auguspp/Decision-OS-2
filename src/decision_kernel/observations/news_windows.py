@@ -28,6 +28,8 @@ RELAY_APIS = ("news", "major_news", "cctv_news")
 MAX_WINDOW = 2 * 1024 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
 SCHEMA = "dos2-news-window-v1"
+HEADLINE_PROJECTION_SOURCES = ("wallstreetcn", "thepaper")
+HEADLINE_PROJECTION_POLICY = "newsnow-lf-to-space-v1"
 
 
 def _sha(value) -> str:
@@ -45,10 +47,34 @@ def _seen_at(value: str) -> str:
 
 
 def _headline(value) -> str:
-    require(isinstance(value, str) and 0 < len(value.strip()) <= 4096
-            and len(value.encode("utf-8")) <= 8192
+    require(isinstance(value, str), "NEWS_HEADLINE_INVALID")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeError:
+        raise RecordError("NEWS_HEADLINE_INVALID") from None
+    require(0 < len(value.strip()) <= 4096 and size <= 8192
             and not any(ord(x) < 32 or ord(x) == 127 for x in value), "NEWS_HEADLINE_INVALID")
     return value
+
+
+def _newsnow_headline(value, source):
+    # Live fixed-profile evidence: these two sources use LF inside valid titles.
+    # One-for-one projection preserves size limits and all non-LF characters.
+    # CR, HT, other controls, blank/oversized values still go to the strict guard.
+    if source in HEADLINE_PROJECTION_SOURCES and isinstance(value, str):
+        value = value.replace("\n", " ")
+    return _headline(value)
+
+
+def _verify_headline_projection(outcome):
+    value = outcome["headline_projection"]
+    count = outcome.get("observations")
+    require(outcome.get("source") in HEADLINE_PROJECTION_SOURCES
+            and outcome.get("status") == "captured" and type(count) is int and 1 <= count <= 30
+            and isinstance(value, dict) and set(value) == {"policy", "changed_titles", "raw_titles_retained"}
+            and value["policy"] == HEADLINE_PROJECTION_POLICY
+            and type(value["changed_titles"]) is int and 1 <= value["changed_titles"] <= count
+            and value["raw_titles_retained"] is False, "NEWS_HEADLINE_PROJECTION_INVALID")
 
 
 def _claim(value):
@@ -129,6 +155,7 @@ def newsnow_window(raw: bytes, source: str, *, observed_at: str):
     items = doc.get("items")
     require(isinstance(items, list) and len(items) <= 30, "NEWSNOW_WINDOW_LIMIT")
     rows, identities = [], {}
+    projected_titles = 0
     for item in items:
         require(isinstance(item, dict), "NEWSNOW_ROW_INVALID")
         link = _link(item.get("url"), NEWSNOW_DOMAINS[source])
@@ -144,14 +171,19 @@ def newsnow_window(raw: bytes, source: str, *, observed_at: str):
         # Keep distinct publisher claims; never infer a timezone from pubDate.
         date_claim = {"pubDate": _claim(item.get("pubDate")),
                       "extra.date": _claim(extra.get("date"))}
+        title = _newsnow_headline(item.get("title"), source)
+        projected_titles += title != item["title"]
         rows.append(_row("newsnow", source,
-                         {"item_id": key, "url": link}, _headline(item.get("title")),
+                         {"item_id": key, "url": link}, title,
                          link, date_claim["pubDate"], observed_at,
                          _sha({"title": item["title"], "extra_date": date_claim["extra.date"]["raw"]}),
                          other_time_claims={"extra.date": date_claim["extra.date"]}))
     return _window("newsnow", source, observed_at, raw, rows,
                    service_status=doc["status"], item_limit=30,
-                   provider_timestamp_claim=_claim(doc.get("updatedTime")))
+                   provider_timestamp_claim=_claim(doc.get("updatedTime")),
+                   **({"headline_projection": {"policy": HEADLINE_PROJECTION_POLICY,
+                        "changed_titles": projected_titles, "raw_titles_retained": False}}
+                      if projected_titles else {}))
 
 
 def relay_window(body: bytes, api: str, source: str, *, observed_at: str, request: dict):
@@ -223,6 +255,8 @@ def combine(windows):
         seen.add(key)
         counts.append({"source": p["source_id"], "status": p["status"],
                        "observations": len(p["observations"])})
+        if "headline_projection" in p:
+            counts[-1]["headline_projection"] = p["headline_projection"]
         rows.extend(p["observations"])
     return _reading(rows, counts)
 
@@ -230,6 +264,8 @@ def combine(windows):
 def _reading(rows, counts):
     rss_sources = set()
     for item in counts:
+        if isinstance(item, dict) and "headline_projection" in item:
+            _verify_headline_projection(item)
         if isinstance(item, dict) and (item.get("provider") == "rss" or "rss" in item):
             verify_news_outcome(item)
             rss_sources.add(item["source"])

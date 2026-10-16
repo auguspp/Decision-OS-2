@@ -27,7 +27,7 @@ def _scope(row):
     return encoded({'case_id':row['case_id'], 'api':row['api'], 'parameters':parameters})
 
 
-def relay_recovery(attempts, corrections):
+def relay_recovery(attempts, corrections, *, captures=None):
     """Exact retries recover automatically; field changes require explicit explanation.
 
     Corrections verify scope/returned fields, NOT the economic meaning of a field
@@ -51,8 +51,26 @@ def relay_recovery(attempts, corrections):
         if selected['state'] == 'complete' and current[key]['historical_incomplete_count']:
             current[key]['recovered_by'] = current[key]['selected_attempt']
     applied, rejected, used = [], [], set()
+    composition_bytes = 0
     for index, item in enumerate(corrections):
         try:
+            if isinstance(item, dict) and 'parts' in item:
+                from decision_kernel.application.research_field_coverage import compose_fields
+                # No mutation until the entire relation, raw rows and bounds pass.
+                combined, key = compose_fields(item, by_attempt, current, captures or {})
+                require(key not in used, 'SOURCE_RECOVERY_DUPLICATE')
+                size = len(encoded(combined))
+                require(composition_bytes + size <= 256 * 1024, 'SOURCE_RECOVERY_COMPOSITION_BYTES')
+                composition_bytes += size
+                current[key].update(state=combined['state'], recovered_by=[p['to'] for p in combined['parts']],
+                    missing_fields=combined['missing_fields'],
+                    field_mapping_review_required=combined['field_semantics']=='requires-review',
+                    row_consistency_review_required=combined['row_consistency']!='aligned-retained-rows',
+                    field_coverage_complete=combined['field_coverage_complete'],
+                    row_consistency=combined['row_consistency'])
+                used.add(key)
+                applied.append(combined)
+                continue
             require(isinstance(item, dict) and {'from','to','reason'} <= set(item)
                     <= {'from','to','reason','field_map'}, 'SOURCE_RECOVERY_INPUT_INVALID')
             checked_text(item['reason'], limit=4096)
@@ -91,4 +109,5 @@ def relay_recovery(attempts, corrections):
         else 'planned-not-captured' if rows else 'not-executed')
     return {'state':state, 'current_queries':rows, 'corrections':applied, 'rejected_corrections':rejected,
             'historical_attempt_count':len(attempts), 'field_mapping_review_required':review,
+            'row_consistency_review_required':any(row.get('row_consistency_review_required',False) for row in rows),
             'meaning':'current-declared-query-coverage-not-economic-or-freshness-approval'}

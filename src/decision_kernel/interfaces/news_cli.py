@@ -13,7 +13,7 @@ import sys
 
 from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.news_capture import capture_newsnow, capture_relay_news
-from decision_kernel.observations.news_windows import source_locators
+from decision_kernel.observations.news_windows import source_locators, verify_reading, merge_readings
 
 MAX_INPUT = 5 * 1024 * 1024
 
@@ -31,9 +31,7 @@ def _read(path: Path) -> dict:
             return result
         value = json.loads(raw, object_pairs_hook=unique,
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-        require(isinstance(value, dict) and value.get("schema") == "dos2-news-reading-v1",
-                "NEWS_READING_SCHEMA")
-        return value
+        return verify_reading(value)
     except (OSError, ValueError, UnicodeError, RecursionError):
         raise RecordError("NEWS_READING_UNAVAILABLE_OR_INVALID") from None
 
@@ -64,6 +62,9 @@ def main(argv=None):
     read.add_argument("--window", type=Path, required=True)
     read.add_argument("--source")
     read.add_argument("--limit", type=int, default=40)
+    merge = sub.add_parser("merge", help="merge explicit NewsNow/Relay windows; no network")
+    merge.add_argument("--windows", type=Path, nargs="+", required=True)
+    merge.add_argument("--output", type=Path, required=True)
     loc = sub.add_parser("export-locators")
     loc.add_argument("--window", type=Path, required=True)
     loc.add_argument("--output", type=Path, required=True)
@@ -84,6 +85,13 @@ def main(argv=None):
                     "source_outcomes": result["source_outcomes"],
                     "output": str(args.output)}, ensure_ascii=False))
             return 0 if all(x["status"] == "captured" for x in result["source_outcomes"]) else 2
+        if args.action == "merge":
+            result = merge_readings([_read(path) for path in args.windows])
+            _write(args.output, result)
+            print(json.dumps({"status": "merged", "source_windows": len(args.windows),
+                              "observations": len(result["observations"]),
+                              "complete_news_coverage": False}))
+            return 0
         reading = _read(args.window)
         if args.action == "read":
             require(0 < args.limit <= 200, "NEWS_READ_LIMIT")

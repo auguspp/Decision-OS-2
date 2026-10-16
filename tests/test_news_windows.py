@@ -44,6 +44,7 @@ def test_newsnow_preserves_publisher_claims_and_identity_without_fulltext():
     assert p["item_limit"] == 30 and not p["complete_news_coverage"]
     assert row["url"].startswith("https://") and not row["event_verified"]
     assert row["published_claim"]["status"] == "unverified-provider-claim"
+    assert row["other_time_claims"]["extra.date"]["raw"] is None
     assert a == newsnow_window(newsnow(), "cls", observed_at=NOW)
     assert row["body_archived"] is False
 
@@ -148,6 +149,8 @@ def test_limited_external_locators_can_use_single_existing_versioned_store(tmp_p
     assert len(sources) == 2 and all(s.custody == "external" and s.text is None for s in sources)
     assert sources[1].origin == "https://pcd.mobcvb.cn/tushare/pro/news"
     assert sources[0].published_at is None
+    assert any(x == "ARTICLE_VERSION_SHA256_" + view["observations"][0]["version_id"]
+               for x in sources[0].limitations)
     storage = VersionedStore(GitStore.init_synthetic(tmp_path / "synthetic-news.git"))
     for n, source in enumerate(sources):
         ref = storage.put_source("synthetic-news-" + str(n), source)

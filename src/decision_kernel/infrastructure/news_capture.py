@@ -1,6 +1,7 @@
 """Finite news capture; preserve safe receipts and never refetch successful peers."""
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from http.client import HTTPException
@@ -210,5 +211,10 @@ def capture_relay_news(api, *, source=None, start=None, end=None, date=None,
         receipt.update(status="unavailable-or-rejected", error_code=_code(exc),
                        finished_at=observed_at if observed_at is not None else clock(),
                        safe_structure=_shape(raw))
+        # RelayHTTP already redacts and classifies this attempt. Reuse its facts,
+        # not the error body, and detach them from the reusable transport client.
+        failure = getattr(transport, "last_error_meta", None)
+        if isinstance(failure, dict):
+            receipt["failure"] = deepcopy(failure)
         window = {"status": "source-unavailable", "source_id": "relay:" + api + ":" + name}
     return _attach(combine([window]), [receipt])

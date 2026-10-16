@@ -205,9 +205,28 @@ def calculate(spec, price):
     """Pure declared-world calculation. Storage and evidence validation are upstream."""
     spec = validate_spec(spec)
     price = validate_price(price, spec)
+    rows = world_results(spec, number(price["price"]))
+    limitations = list(BASE_LIMITATIONS) + spec["limitations"]
+    price_day = timestamp(price["as_of"]).date()
+    if price_day < day(spec["valuation_date"]):
+        limitations.append("PRE_VALUATION_REFERENCE_NOT_POINT_IN_TIME_ANALYSIS")
+    elif price_day != day(spec["valuation_date"]):
+        limitations.append("NEW_PRICE_DOES_NOT_REFRESH_VALUATION_OR_RESEARCH")
+    return {"schema": VERSION, "method": spec["method"], "value_kind": spec["value_kind"],
+            "valuation_date": spec["valuation_date"], "target_date": spec["target_date"],
+            "price": price, "world_results": rows, "probability_status": "not-established",
+            "weighted_aggregate": None, "market_qualification": "not-established",
+            "human_acceptance": "not-confirmed", "investment_authority": "none",
+            "is_annualized": False, "is_discounted": False,
+            "decimal_precision": 80, "decimal_rounding": "ROUND_HALF_EVEN",
+            "limitations": limitations}
+
+
+def world_results(spec, entry):
+    """Internal shared arithmetic over validated inputs; no qualification claim."""
     rows = []
     with localcontext(CONTEXT):
-        shares, entry = number(spec["share_count"]), number(price["price"])
+        shares = number(spec["share_count"])
         for world in sorted(spec["worlds"], key=lambda w: (w["name"], w["id"])):
             value = number(world["value"])
             terminal = _normalized(value if world["basis"] == "per-share" else value / shares)
@@ -231,17 +250,4 @@ def calculate(spec, price):
                            total_payoff_per_share=decimal_text(total_payoff),
                            undiscounted_holding_period_return=decimal_text(holding_period_return))
             rows.append(row)
-    limitations = list(BASE_LIMITATIONS) + spec["limitations"]
-    price_day = timestamp(price["as_of"]).date()
-    if price_day < day(spec["valuation_date"]):
-        limitations.append("PRE_VALUATION_REFERENCE_NOT_POINT_IN_TIME_ANALYSIS")
-    elif price_day != day(spec["valuation_date"]):
-        limitations.append("NEW_PRICE_DOES_NOT_REFRESH_VALUATION_OR_RESEARCH")
-    return {"schema": VERSION, "method": spec["method"], "value_kind": spec["value_kind"],
-            "valuation_date": spec["valuation_date"], "target_date": spec["target_date"],
-            "price": price, "world_results": rows, "probability_status": "not-established",
-            "weighted_aggregate": None, "market_qualification": "not-established",
-            "human_acceptance": "not-confirmed", "investment_authority": "none",
-            "is_annualized": False, "is_discounted": False,
-            "decimal_precision": 80, "decimal_rounding": "ROUND_HALF_EVEN",
-            "limitations": limitations}
+    return rows

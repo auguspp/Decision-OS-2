@@ -181,6 +181,39 @@ isolation and every incremental host receipt. Retire these diagnostic additions,
 their predicates where unused, this section and exclusive tests together; retain
 all current qualification, transport, custody and CI protections.
 
+## Independent stock-only operational check
+
+`selection=stock` is a bounded use of the same checker, not another feed or host.
+It executes only `calendar`, `master`, `stock_daily` and `stock_factor`. The first
+source-code-sorted security from the qualified venue/L master supplies the two
+price/factor queries; the complete returned master still supplies the denominator.
+There are no THS catalogue, member or index requests, even when those sources
+are unavailable or known to contain conflicting records. The existing composed
+reader receives only the stock input; only its stock result is counted or emitted.
+Unrequested channels are neither tested nor passed, and no group inference runs.
+
+Four nonempty qualified queries plus at least one usable qfq stock window produce
+`checked-stock-sample`. Missing/invalid calendars, empty or rejected masters,
+incomplete transport, missing factors and unusable stock windows keep the gap
+status and exit 2. Original raw/qfq, listing, calendar, decimal and factor-endpoint
+checks are reused unchanged. Access, exact main SHA, first-attempt-only execution,
+retry/deadline, stop rules and non-publication protections remain unchanged.
+The default ten-slot `sample` and two-directory `catalogues` modes are unchanged.
+
+This check cannot certify full-market discovery, a ranking policy, all horizons,
+healthy group directories, source custody, issuer identity or research adoption.
+It does not resolve previous THS duplicate-code failures. Those retain a separate
+source-contract responsibility; choosing the first or last conflicting record
+without evidence is not an allowed repair. Only diagnostic counts/statuses leave
+the process. No production SourceRef, source archive or private rights are added.
+
+`tests/test_market_stock_check.py` uses the original synthetic opener and real
+Relay/capture/reader/host chain. It checks exact four-slot traffic, no THS calls,
+full master denominators, negative and empty inputs, retry and terminal refusal,
+permission-before-traffic and redacted host output. Retire this selection, host
+success marker, workflow choice, section and tests together when unused; retain
+the existing modes and shared qualification/custody/CI protections.
+
 ## Maintenance and evidence ownership
 
 `tests/test_market_source_check.py` uses the existing synthetic Response and

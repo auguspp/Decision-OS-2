@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 
 from decision_kernel.interfaces import odds_commands
+from decision_kernel.interfaces.research_use_commands import audit_source_use
 
 from decision_kernel.application.numerical_audit import NumericalAudit
 from decision_kernel.application.research_artifacts import ResearchArtifacts
@@ -32,7 +33,7 @@ from decision_kernel.interfaces.research_payload import (
 
 WRITE_OPERATIONS = {"put-source", "checkpoint", "deliver", "put-artifact"} | set(odds_commands.WRITE_COMMANDS)
 RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"} | set(odds_commands.RECONCILE_COMMANDS)
-READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS)
+READ_OPERATIONS = {"audit-source-use", "prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS)
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -70,6 +71,8 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation == "audit-source-use":
+        return audit_source_use(store, payload)
     if operation in odds_commands.COMMANDS + odds_commands.RECONCILE_COMMANDS:
         return odds_commands.perform(store, operation, payload, command["submission_id"])
     if operation in ("deliver", "reconcile-delivery"):
@@ -207,6 +210,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS:
             result = odds_commands.verify_fresh(result, operation, lambda: VersionedStore(GitHubStore(binding, api)))
         report.update(result=result, status="completed")
+        if operation == "audit-source-use" and result["status"] != "usage-demonstrated":
+            report["status"] = "source-use-not-demonstrated"
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS and result["readback"]["status"] != "verified":
             report["status"] = "odds-readback-failed"
         if operation in ("deliver", "reconcile-delivery", "verify-delivery"):

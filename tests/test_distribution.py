@@ -209,3 +209,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same cold wheel: exact Research -> frozen spec -> two prices -> saved readback.
     from test_odds_runtime import exercise_installed_odds
     exercise_installed_odds(command, outside, python, env, venv / "bin/decision-os", store)
+
+    # Same installation: source-use acceptance cannot be inferred from a saved report.
+    from test_research_source_use_integration import exercise_installed_source_use
+    exercise_installed_source_use(command, outside, python, env, venv / "bin/decision-os", store)

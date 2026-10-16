@@ -71,7 +71,8 @@ def _code(value: object) -> str:
     return value if isinstance(value, str) and value in PUBLIC_CODES else 'CHECK_REJECTED'
 
 
-SELECTIONS = ('sample', 'catalogues')
+SELECTIONS = ('sample', 'catalogues', 'stock')
+STOCK_SLOTS = ('calendar', 'master', 'stock_daily', 'stock_factor')
 FAILURE_CLASSES = frozenset({
     'auth-or-entitlement', 'rate-limit', 'source-unavailable', 'request-rejected',
     'temporary-upstream', 'temporary-gateway', 'http-unclassified',
@@ -160,7 +161,7 @@ def check_scope(exchange: str, start: str, end: str, now: datetime) -> None:
 def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: str,
                   access_confirmed: bool = False, selection: str = 'sample', client=None, now: datetime | None = None,
                   progress=None, sleep=time.sleep, monotonic=time.monotonic, clock=None) -> dict:
-    """Check one current listing slice and one source-selected member of each channel.
+    """Check selected source slices; stock is independent of all THS inputs.
 
     Access authorization is not publication authorization. Unlike capture_plan,
     this use case has no capture/export result or writer. Its only output is the
@@ -170,13 +171,16 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     require(access_confirmed is True, 'MARKET_CHECK_ACCESS_REQUIRED')
     require(isinstance(registry, RelayRegistry), 'MARKET_CHECK_REGISTRY')
     require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
-    selected_slots = SLOTS if selection == 'sample' else {k: SLOTS[k] for k in ('sector_catalog', 'concept_catalog')}
+    selected_slots = (SLOTS if selection == 'sample' else
+                      {k: SLOTS[k] for k in (STOCK_SLOTS if selection == 'stock' else
+                                             ('sector_catalog', 'concept_catalog'))})
     now = datetime.now(timezone.utc) if now is None else now
     check_scope(exchange, start, end, now)
     report = {'schema': 'market-source-check-v1', 'status': 'in-progress', 'selection': selection,
         'scope': {'exchange': exchange, 'start': start, 'end': end, 'list_status': 'L'},
-        'sample_policy': ('first-sorted-code-per-qualified-source-catalogue-not-candidates' if selection == 'sample'
-                          else 'catalogue-qualification-only-no-sample-or-dated-membership'),
+        'sample_policy': ('catalogue-qualification-only-no-sample-or-dated-membership' if selection == 'catalogues'
+                          else 'first-sorted-code-from-qualified-stock-master-not-candidates' if selection == 'stock'
+                          else 'first-sorted-code-per-qualified-source-catalogue-not-candidates'),
         'queries': {k: {'api': api, 'status': 'not-attempted', 'reason_code': 'DEPENDENCY_UNAVAILABLE',
                         'row_count': None, 'page_count': None, 'http_attempts': 0, 'last_attempt_failure': None}
                     for k, api in selected_slots.items()},
@@ -256,7 +260,8 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     master_result, master = take('master', {'exchange': exchange, 'list_status': 'L'}, MASTER_FIELDS,
         lambda r: qualified_security_master({'L': r}, registry=registry, exchange=exchange))
     catalog_results, catalogs = {}, {}
-    for kind in GROUP_TYPES:
+    group_kinds = GROUP_TYPES if selection == 'sample' else ()
+    for kind in group_kinds:
         catalog_results[kind], catalogs[kind] = take(kind + '_catalog',
             {'exchange': 'A', 'type': GROUP_TYPES[kind]}, CATALOG_FIELDS,
             lambda r, k=kind: qualified_ths_catalog(r, registry=registry, kind=k))
@@ -273,7 +278,7 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                 target[code] = result
     surfaces = {'stock': {'calendar_result': cal or {}, 'master_results': {'L': master_result or {}},
         'stock_results': stocks, 'factor_results': factors, 'exchange': exchange, 'start': start, 'end': end}}
-    for kind in GROUP_TYPES:
+    for kind in group_kinds:
         levels, members = {}, {}
         catalog = catalogs[kind]
         if catalog and catalog['groups']:
@@ -292,6 +297,8 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             'index_results': levels, 'calendar_result': cal or {}, 'exchange': exchange, 'start': start, 'end': end}
     views = read_three_market_surfaces(surfaces=surfaces, registry=registry, limit=1)
     for kind, outcome in views['surfaces'].items():
+        if selection == 'stock' and kind != 'stock':
+            continue  # Unrequested group surfaces are neither tested nor passed.
         item = {'status': outcome['status'], 'scope_count': None, 'observed_count': None}
         if outcome['status'] == 'read':
             view = outcome['view']
@@ -306,7 +313,8 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
         for item in report['queries'].values():
             if item['status'] == 'not-attempted':
                 item['reason_code'] = 'GLOBAL_SOURCE_STOP'
-    report['status'] = 'checked-sample' if good else 'completed-with-gaps'
+    success_status = 'checked-stock-sample' if selection == 'stock' else 'checked-sample'
+    report['status'] = success_status if good else 'completed-with-gaps'
     emit()
     return report
 

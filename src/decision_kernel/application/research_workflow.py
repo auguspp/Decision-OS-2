@@ -7,6 +7,7 @@ from decision_kernel.application.numerical_audit import START as NUMBERS_START, 
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_evidence import ResearchEvidence, guidance as evidence_guidance
 from decision_kernel.application.research_sources import source_use_guidance
+from decision_kernel.application.research_source_use import execution_contract, acceptance_pending
 from decision_kernel.application.research_continuation import continuation_plan
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, RecordError, RevisionInput, SourceRef, encoded, identifier, require
@@ -66,7 +67,7 @@ class ResearchWorkflow:
                     "evidence_plan": evidence["plan"], "evidence_cursor": evidence["next_cursor"],
                     "evidence_limit": evidence_limit}
         return {"schema": "research-preparation-v1", "request": asdict(request),
-                "evidence": evidence,
+                "evidence": evidence, "full_execution": execution_contract(request, evidence),
                 "method": research_method(request.kind), "previous_context": previous_context,
                 "continuation": continuation_plan(request, previous_context),
                 "source_use": source_use_guidance(request.kind),
@@ -109,6 +110,8 @@ class ResearchWorkflow:
         result = {"reference": asdict(saved), "declared_stop": progress.stop,
                 "research_assessment": "not-performed", "human_acceptance": "not-confirmed",
                 "execution_authority": "not-granted-by-save"}
+        if request.kind == "full":
+            result["source_use_acceptance"] = acceptance_pending(asdict(saved))
         if NUMBERS_START in progress.body:
             # Preserve the successful store receipt even if a numerical check fails.
             # This is post-save mechanical assessment, not a new persistence intent.

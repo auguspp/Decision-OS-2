@@ -1,33 +1,57 @@
 """Odds routes on the existing explicit store and host, without new credentials."""
 from pathlib import Path
 
-from decision_kernel.application.conditional_odds import ConditionalOdds, publication, verify_fresh
+from decision_kernel.application.conditional_odds import ConditionalOdds, publication, verify_fresh as verify_conditional
 from decision_kernel.domain.conditional_odds import shape, validate_spec
 
-WRITE_COMMANDS = ("freeze-valuation", "save-odds")
-RECONCILE_COMMANDS = ("reconcile-valuation", "reconcile-odds")
-READ_COMMANDS = ("read-valuation", "calculate-odds", "read-odds")
+PROBABILITY_WRITES = ("freeze-odds-assessment", "save-probability-odds")
+PROBABILITY_RECONCILES = ("reconcile-odds-assessment", "reconcile-probability-odds")
+PROBABILITY_READS = ("read-odds-assessment", "calculate-probability-odds", "read-probability-odds")
+PROBABILITY_COMMANDS = PROBABILITY_WRITES + PROBABILITY_RECONCILES + PROBABILITY_READS
+REGISTRY_COMMANDS = ("calculate-probability-odds", "save-probability-odds", "reconcile-probability-odds", "read-probability-odds")
+REFERENCE_COMMANDS = ("read-valuation", "read-odds", "read-odds-assessment", "read-probability-odds")
+WRITE_COMMANDS = ("freeze-valuation", "save-odds") + PROBABILITY_WRITES
+RECONCILE_COMMANDS = ("reconcile-valuation", "reconcile-odds") + PROBABILITY_RECONCILES
+READ_COMMANDS = ("read-valuation", "calculate-odds", "read-odds") + PROBABILITY_READS
 COMMANDS = WRITE_COMMANDS + READ_COMMANDS
 
 
 def configure(actions):
     for name in COMMANDS:
-        action = actions.add_parser(name, help="exact research conditional analysis, not qualified probability Odds")
-        action.add_argument("--ref" if name in ("read-valuation", "read-odds") else "--input", type=Path, required=True)
+        action = actions.add_parser(name, help="frozen research Odds with explicit method and source limitations")
+        action.add_argument("--ref" if name in REFERENCE_COMMANDS else "--input", type=Path, required=True)
+        if name in REGISTRY_COMMANDS:
+            action.add_argument("--registry", type=Path, required=True, help="matching retained Relay registry, not a feed")
         if name in WRITE_COMMANDS:
             action.add_argument("--submission-id", required=True)
 
 
 def preflight(operation, payload):
-    if operation in ("freeze-valuation", "reconcile-valuation"):
+    if operation in ("freeze-odds-assessment", "reconcile-odds-assessment"):
+        from decision_kernel.domain.probability_odds import validate_assessment
+        validate_assessment(publication(payload, "assessment"))
+    elif operation in ("save-probability-odds", "reconcile-probability-odds"):
+        shape(publication(payload, "calculation"), {"assessment_ref", "market", "evaluated_at"})
+    elif operation in ("freeze-valuation", "reconcile-valuation"):
         validate_spec(publication(payload, "spec"))
     elif operation in ("save-odds", "reconcile-odds"):
         shape(publication(payload, "calculation"), {"spec_ref", "price"})
 
 
-def perform(store, operation, payload, submission_id=""):
-    service = ConditionalOdds(store)
+def perform(store, operation, payload, submission_id="", registry=None):
     preflight(operation, payload)
+    if operation in PROBABILITY_COMMANDS:
+        from decision_kernel.application.probability_odds import ProbabilityOdds
+        service = ProbabilityOdds(store, _registry(operation, registry))
+        if operation in ("freeze-odds-assessment", "reconcile-odds-assessment"):
+            return service.freeze(payload, submission_id=submission_id)
+        if operation in ("save-probability-odds", "reconcile-probability-odds"):
+            return service.save(payload, submission_id=submission_id)
+        if operation == "calculate-probability-odds":
+            return service.compute(payload)
+        shape(payload, {"reference"})
+        return service.read_assessment(payload["reference"]) if operation == "read-odds-assessment" else service.read(payload["reference"])
+    service = ConditionalOdds(store)
     if operation in ("freeze-valuation", "reconcile-valuation"):
         return service.freeze(payload, submission_id=submission_id)
     if operation in ("save-odds", "reconcile-odds"):
@@ -39,8 +63,23 @@ def perform(store, operation, payload, submission_id=""):
 
 
 def execute(args, store, load, reader_factory):
-    payload = {"reference": load(args.ref)} if args.store_command in ("read-valuation", "read-odds") else load(args.input)
-    result = perform(store, args.store_command, payload, getattr(args, "submission_id", ""))
+    payload = {"reference": load(args.ref)} if args.store_command in REFERENCE_COMMANDS else load(args.input)
+    registry = _registry(args.store_command, getattr(args, "registry", None))
+    result = perform(store, args.store_command, payload, getattr(args, "submission_id", ""), registry)
     if args.store_command in WRITE_COMMANDS:
-        return verify_fresh(result, args.store_command, reader_factory)
+        return verify_fresh(result, args.store_command, reader_factory, registry)
     return result
+
+
+def _registry(operation, registry=None):
+    if operation not in REGISTRY_COMMANDS:
+        return None
+    from decision_kernel.application.relay_registry import RelayRegistry
+    return registry if isinstance(registry, RelayRegistry) else RelayRegistry(registry or Path("docs/sources/relay-registry.json"))
+
+
+def verify_fresh(receipt, operation, reader_factory, registry=None):
+    if operation in PROBABILITY_WRITES + PROBABILITY_RECONCILES:
+        from decision_kernel.application.probability_odds import verify_fresh as verify_probability
+        return verify_probability(receipt, operation, reader_factory, _registry(operation, registry))
+    return verify_conditional(receipt, operation, reader_factory)

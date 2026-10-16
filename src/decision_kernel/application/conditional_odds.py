@@ -23,6 +23,12 @@ from decision_kernel.infrastructure.relay_http import ROOT
 
 SPEC_RECORD = "frozen-valuation-record-v1"
 RESULT_RECORD = "conditional-odds-record-v1"
+RECORD_LAYOUTS = {
+    SPEC_RECORD: ("odds-spec-", "valuation-spec.json"),
+    RESULT_RECORD: ("odds-result-", "conditional-odds.json"),
+    "frozen-odds-assessment-record-v1": ("odds-assessment-", "odds-assessment.json"),
+    "probability-odds-record-v1": ("odds-probability-result-", "probability-odds.json"),
+}
 
 
 def publication(payload, key):
@@ -60,9 +66,10 @@ class ConditionalOdds:
 
     def _put(self, submission_id, schema, value, rights_basis):
         raw = encoded({"schema": schema, "value": value, "rights_basis": rights_basis})
-        prefix = "odds-spec-" if schema == SPEC_RECORD else "odds-result-"
+        require(schema in RECORD_LAYOUTS, "ODDS_RECORD_SCHEMA")
+        prefix, filename = RECORD_LAYOUTS[schema]
         artifact = ArtifactInput.from_bytes(prefix + digest(raw),
-            "valuation-spec.json" if schema == SPEC_RECORD else "conditional-odds.json",
+            filename,
             "application/json", raw)
         return self.artifacts.put(submission_id, artifact)
 
@@ -75,7 +82,8 @@ class ConditionalOdds:
             shape(value, {"schema", "value", "rights_basis"})
             require(value["schema"] == schema and encoded(value) == raw, "ODDS_RECORD_MISMATCH")
             checked_text(value["rights_basis"], limit=4096)
-            prefix = "odds-spec-" if schema == SPEC_RECORD else "odds-result-"
+            require(schema in RECORD_LAYOUTS, "ODDS_RECORD_SCHEMA")
+            prefix, _ = RECORD_LAYOUTS[schema]
             require(view["metadata"]["artifact_id"] == prefix + digest(raw)
                     and view["metadata"]["media_type"] == "application/json", "ODDS_ARTIFACT_IDENTITY_MISMATCH")
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):

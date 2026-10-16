@@ -201,3 +201,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same cold wheel: complete originals, source registration, and independent readback.
     from test_research_delivery_integration import exercise_installed_delivery
     exercise_installed_delivery(command, outside, python, env, venv / "bin/decision-os", store)
+
+    # Same cold wheel: exact Research -> frozen spec -> two prices -> saved readback.
+    from test_odds_runtime import exercise_installed_odds
+    exercise_installed_odds(command, outside, python, env, venv / "bin/decision-os", store)

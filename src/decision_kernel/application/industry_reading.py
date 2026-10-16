@@ -147,12 +147,16 @@ def _change(previous, current):
         if new_period[0] <= old_period[1]:
             return {**result, "reason_code": "INDUSTRY_PERIODS_OVERLAP"}
         if current["period_kind"] == "period-flow" or current["assessment"] == "period-average":
-            # Equal duration or whole calendar months are comparable flow windows.
+            # Calendar months and official ten-day survey periods vary in length.
             a, b, c, d = map(_day, (*old_period, *new_period))
             monthly = current["frequency"] == "monthly" and all(
                 x.day == 1 and y.day == monthrange(y.year, y.month)[1]
                 and (x.year, x.month) == (y.year, y.month) for x, y in ((a, b), (c, d)))
-            if b - a != d - c and not monthly:
+            ten_day = current["frequency"] == "ten-day" and all(
+                (x.year, x.month) == (y.year, y.month) and
+                (x.day, y.day) in ((1, 10), (11, 20), (21, monthrange(y.year, y.month)[1]))
+                for x, y in ((a, b), (c, d)))
+            if b - a != d - c and not (monthly or ten_day):
                 return {**result, "reason_code": "INDUSTRY_PERIOD_WINDOWS_DIFFER"}
     with localcontext() as context:
         context.prec = 128

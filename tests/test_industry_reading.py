@@ -148,6 +148,14 @@ def test_missing_zero_negative_and_unknown_basis_are_distinct(store):
     assert change(store, row_changes={1: {"value": "NaN"}})["reason_code"] == "INDUSTRY_POINT_UNAVAILABLE"
 
 
+def test_official_ten_day_periods_allow_variable_last_window_but_not_arbitrary_days(store):
+    periods = {0: {"frequency": "ten-day", "period_start": "2026-02-11", "period_end": "2026-02-20"},
+               1: {"frequency": "ten-day", "period_start": "2026-02-21", "period_end": "2026-02-28"}}
+    assert change(store, row_changes=periods)["delta"] == "10"
+    periods[0]["period_start"] = "2026-02-12"
+    assert change(store, row_changes=periods)["reason_code"] == "INDUSTRY_PERIOD_WINDOWS_DIFFER"
+
+
 def test_revision_regression_overlap_and_cumulative_not_monthly_flow(store):
     same = {"period_start": "2026-08-01", "period_end": "2026-08-31"}
     assert change(store, row_changes={1: same})["status"] == "same-period-revision"

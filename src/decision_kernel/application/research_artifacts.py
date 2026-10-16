@@ -49,7 +49,7 @@ class ResearchArtifacts:
             meta = manifest["input"]
             raw = self.store.backend.resolve(BlobRef(ref.repository, ref.commit, path, meta["sha256"]))
             artifact = ArtifactInput.from_bytes(meta["artifact_id"], meta["name"], meta["media_type"], raw)
-            require(artifact.metadata() == meta and artifact.path() == ref.path, "ARTIFACT_MANIFEST_MISMATCH")
+            require(encoded(artifact.metadata()) == encoded(meta) and artifact.path() == ref.path, "ARTIFACT_MANIFEST_MISMATCH")
         except (TypeError, KeyError, ValueError, UnicodeError, RecursionError) as exc:
             if isinstance(exc, RecordError):
                 raise

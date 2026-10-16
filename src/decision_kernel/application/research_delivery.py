@@ -306,7 +306,7 @@ class ResearchDelivery:
                     else:
                         require(item.get("kind") == "artifact", "INVALID_DELIVERY_ITEM_KIND")
                         view = self.artifacts.read(item["reference"], include_data=False)
-                        require(view["metadata"] == item["metadata"], "DELIVERY_ARTIFACT_MISMATCH")
+                        require(encoded(view["metadata"]) == encoded(item["metadata"]), "DELIVERY_ARTIFACT_MISMATCH")
                         row["readback"] = "verified"
                 except (RecordError, KeyError, TypeError) as exc:
                     row.update(readback="failed", error=str(exc) if isinstance(exc, RecordError) else "INVALID_DELIVERY_ITEM")

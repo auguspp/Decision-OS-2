@@ -10,6 +10,9 @@ from pathlib import Path
 import sys
 
 from decision_kernel.application.numerical_audit import NumericalAudit
+from decision_kernel.application.research_artifacts import ResearchArtifacts
+from decision_kernel.application.research_delivery import ResearchDelivery, validate_delivery, verify_fresh
+from decision_kernel.domain.research_artifacts import ArtifactInput, artifact_reference
 from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_workflow import ResearchWorkflow
@@ -25,9 +28,9 @@ from decision_kernel.interfaces.research_payload import (
     MAX_PAYLOAD_BYTES, decode_payload, json_object as _object,
 )
 
-WRITE_OPERATIONS = {"put-source", "checkpoint"}
-RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint"}
-READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue", "audit-numbers"} | RECONCILE_OPERATIONS
+WRITE_OPERATIONS = {"put-source", "checkpoint", "deliver", "put-artifact"}
+RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"}
+READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -65,6 +68,24 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation in ("deliver", "reconcile-delivery"):
+        if operation == "deliver":
+            require(payload["method_sha256"] == research_method(payload["request"]["kind"])["sha256"],
+                    "RESEARCH_METHOD_CHANGED_REPREPARE")
+        return ResearchDelivery(store).deliver(payload, submission_id=command["submission_id"])
+    if operation in ("verify-delivery", "open-delivery"):
+        require(set(payload) <= {"reference", "history_limit"} and "reference" in payload,
+                "EXACT_DELIVERY_REFERENCE_REQUIRED")
+        delivery, ref = ResearchDelivery(store), BlobRef(**payload["reference"])
+        if operation == "open-delivery":
+            return delivery.open(ref, history_limit=payload.get("history_limit", 2))
+        require(set(payload) == {"reference"}, "INVALID_DELIVERY_VERIFY_INPUT")
+        return delivery.verify(ref)
+    if operation in ("put-artifact", "reconcile-artifact"):
+        ref = ResearchArtifacts(store).put(command["submission_id"], ArtifactInput.from_dict(payload["artifact"]))
+        return {"reference": asdict(ref)}
+    if operation == "read-artifact":
+        return ResearchArtifacts(store).read(artifact_reference(payload))
     if operation == "audit-numbers":
         audit = NumericalAudit(store)
         return audit.saved(BlobRef(**payload["reference"])) if set(payload) == {"reference"} else audit.audit(payload)
@@ -110,6 +131,8 @@ class _CommandStore(GitHubStore):
         self.planned_head = command["expected_head"]
         self.reconcile_only = command["operation"] in RECONCILE_OPERATIONS
         self.commit_started, self.published = False, None
+        self.delivery = command["operation"] == "deliver"
+        self.published_stages = []
         super().__init__(binding, api)
 
     def commit(self, files, *, expected):
@@ -121,6 +144,11 @@ class _CommandStore(GitHubStore):
             raise Conflict("PLANNED_HEAD_CHANGED")
         self.commit_started = True
         self.published = super().commit(files, expected=expected)
+        if self.delivery:
+            # Advance only through this call's confirmed native-CAS commits.
+            self.planned_head = self.published
+            self.published_stages.append(self.published)
+            self.commit_started = False
         return self.published
 
 
@@ -131,6 +159,16 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     require(command["code_sha"] == code_sha, "RUNTIME_CODE_CHANGED")
     require(binding.visibility == "public" and not binding.write_enabled,
             "PUBLIC_READ_ONLY_CONFIG_REQUIRED")
+    # Reject unconfirmed publication before saving inputs into public job artifacts.
+    if command["operation"] in ("deliver", "reconcile-delivery"):
+        validate_delivery(command["payload"])
+    if command["operation"] in ("put-artifact", "reconcile-artifact"):
+        payload = command["payload"]
+        require(set(payload) == {"artifact", "rights_confirmed", "rights_basis"}
+                and payload["rights_confirmed"] is True, "ARTIFACT_RIGHTS_NOT_CONFIRMED")
+        require(isinstance(payload["rights_basis"], str) and bool(payload["rights_basis"].strip()),
+                "ARTIFACT_RIGHTS_NOT_CONFIRMED")
+        ArtifactInput.from_dict(payload["artifact"])
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     operation = command["operation"]
     report = {"schema": "research-operation-v1", "operation": operation,
@@ -158,7 +196,14 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         report["observed_head"] = backend.head()
         persist()
         result = _perform(VersionedStore(backend), command)
+        if operation in ("deliver", "reconcile-delivery"):
+            result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
         report.update(result=result, status="completed")
+        if operation in ("deliver", "reconcile-delivery", "verify-delivery"):
+            verification = result.get("delivery_verification", result)
+            if verification.get("status") != "verified-declared-inventory":
+                report["status"] = "delivery-not-complete"
+            report["published_stages"] = backend.published_stages
         if operation == "audit-numbers" and result["status"] not in ("checked", "conditional"):
             report["status"] = "numerical-not-cleared"  # Keep diagnostics; do not present a green audit.
         if operation in WRITE_OPERATIONS:
@@ -172,6 +217,9 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         uncertain = isinstance(error, UnknownWrite) or (
             backend is not None and backend.commit_started and not isinstance(error, Conflict))
         report.pop("result", None)
+        if backend is not None and backend.delivery and backend.published_stages:
+            report["published_stages"] = backend.published_stages
+            report["write"] = "partial-confirmed"
         report.update(status="unknown-write" if uncertain else "failed",
                       write="unconfirmed" if uncertain else report["write"],
                       error=str(error) if isinstance(error, RecordError) else "COMMAND_LOCAL_OR_SHAPE_FAILURE",

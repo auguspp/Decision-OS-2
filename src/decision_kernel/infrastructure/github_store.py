@@ -195,6 +195,7 @@ class GitHubStore:
         require(path == "store.json" or bool(re.fullmatch(
             rf"(?:source-views/{atom}/(?:identity\.json|[a-f0-9]{{64}}/(?:manifest\.json|content\.txt|data\.csv))"
             rf"|research/cases/{atom}/(?:current\.json|revisions/{atom}/(?:record\.json|research\.md))"
+            rf"|research/artifacts/{atom}/[a-f0-9]{{64}}/(?:manifest\.json|content\.bin)"
             rf"|submissions/{atom}\.json)", path)), "PATH_OUTSIDE_STORE")
 
     def _tree(self, commit: str) -> dict[str, dict]:
@@ -216,8 +217,8 @@ class GitHubStore:
             paths.add(path)
             _sha(row.get("sha"))
             if row.get("type") == "tree" and row.get("mode") == "040000":
-                require(path in ("source-views", "research", "research/cases", "submissions")
-                        or path.startswith(("source-views/", "research/cases/", "submissions/")),
+                require(path in ("source-views", "research", "research/cases", "research/artifacts", "submissions")
+                        or path.startswith(("source-views/", "research/cases/", "research/artifacts/", "submissions/")),
                         "PATH_OUTSIDE_STORE")
                 continue
             self._path(path)
@@ -287,7 +288,7 @@ class GitHubStore:
     def paths(self, commit: str, prefix: str = "") -> list[str]:
         self.check_commit(commit)
         if prefix:
-            require(isinstance(prefix, str) and prefix in ("source-views/", "research/cases/", "submissions/"),
+            require(isinstance(prefix, str) and prefix in ("source-views/", "research/cases/", "research/artifacts/", "submissions/"),
                     "PATH_OUTSIDE_STORE")
         return sorted(p for p in self._tree(commit) if p.startswith(prefix))
 

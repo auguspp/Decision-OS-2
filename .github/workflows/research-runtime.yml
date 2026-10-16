@@ -5,7 +5,7 @@ on:
       operation:
         description: 'Explicit public research I/O; never execute AI or a source URL'
         type: choice
-        options: [prepare, resume, read-source, catalogue, audit-numbers, put-source, checkpoint, reconcile-source, reconcile-checkpoint]
+        options: [prepare, resume, read-source, catalogue, audit-numbers, put-source, checkpoint, reconcile-source, reconcile-checkpoint, deliver, reconcile-delivery, verify-delivery, open-delivery, put-artifact, reconcile-artifact, read-artifact]
         default: prepare
         required: true
       payload:
@@ -27,7 +27,7 @@ on:
 permissions: {}
 jobs:
   read:
-    if: github.ref == 'refs/heads/main' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint'
+    if: github.ref == 'refs/heads/main' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint' && inputs.operation != 'deliver' && inputs.operation != 'put-artifact'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -54,7 +54,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   write:
-    if: github.ref == 'refs/heads/main' && (inputs.operation == 'put-source' || inputs.operation == 'checkpoint')
+    if: github.ref == 'refs/heads/main' && (inputs.operation == 'put-source' || inputs.operation == 'checkpoint' || inputs.operation == 'deliver' || inputs.operation == 'put-artifact')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

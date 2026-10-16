@@ -258,7 +258,7 @@ def test_workflow_has_separate_read_write_jobs_and_data_never_in_shell():
     flow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
     assert set(flow["on"]) == {"workflow_dispatch"} and flow["permissions"] == {}
     assert set(flow["jobs"]) == {"read", "write"}
-    assert flow["jobs"]["read"]["permissions"] == {"contents": "read"}
+    assert flow["jobs"]["read"]["permissions"] == {"contents": "read", "actions": "read"}
     assert flow["jobs"]["write"]["permissions"] == {"contents": "write"}
     assert set(flow["on"]["workflow_dispatch"]["inputs"]["operation"]["options"]) == runtime.WRITE_OPERATIONS | runtime.READ_OPERATIONS
     for name, job in flow["jobs"].items():

@@ -118,6 +118,8 @@ def execute(args: argparse.Namespace) -> int:
         if args.store_command in ("deliver-research", "verify-delivery"):
             status = result.get("delivery_verification", result).get("status")
             return 0 if status == "verified-declared-inventory" else 2
+        if args.store_command == "audit-source-use":
+            return 0 if result["status"] == "usage-demonstrated" else 2
         return 2 if args.store_command == "audit-numbers" and result["status"] not in ("checked", "conditional") else 0
     except RecordError as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)

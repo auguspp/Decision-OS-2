@@ -69,3 +69,7 @@ python -m decision_kernel.methods.research --kind full
 ## 6. 重要数字的实际检查与展示
 
 [数值证据与同源展示](numerical-audit.md)提供 `audit-numbers` 只读入口。把关键金额绑定确切 SourceRef、源字段/文本位置、单位和主体/期间/归属，复算后直接采用同一值生成的表格与正文片段；保存到原研究正文的数值附录可按确切研究版本重算。`checkpoint-research` 对带附录的成果自动返回独立数值检查摘要，保留成功保存回执与数值失败的区别。未声明数字不视作已审核，来源/口径声明或经济假设不靠算术升级为事实；数值通过仍不能代替实质研究。
+
+## 7. 将研究中的条件价值接到 Odds
+
+已有冻结研究的受支持价值/未来现金产出，可以按[条件Odds入口](conditional-odds.md)保存可选`valuation-spec-v1`，再使用`freeze-valuation → calculate-odds → save-odds → read-odds`。保留确切研究、股类/币种/股数、价值与目标日期以及原条件，价格单变不改研究。当前公允价值只给估值距离；未来退出/分配现金才给名义累计回报。本首组不提供概率/风险政策、合格Market、自动价格订阅或人工Decision，无概率不补等权，算术通过不代签Full质量。完整原文模型仍可自由研究与按原合同保管，不能为调用计算器倒调模型。

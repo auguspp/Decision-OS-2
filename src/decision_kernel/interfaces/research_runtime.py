@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import sys
 
+from decision_kernel.interfaces import odds_commands
+
 from decision_kernel.application.numerical_audit import NumericalAudit
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.research_delivery import ResearchDelivery, validate_delivery, verify_fresh
@@ -28,9 +30,9 @@ from decision_kernel.interfaces.research_payload import (
     MAX_PAYLOAD_BYTES, decode_payload, json_object as _object,
 )
 
-WRITE_OPERATIONS = {"put-source", "checkpoint", "deliver", "put-artifact"}
-RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"}
-READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS
+WRITE_OPERATIONS = {"put-source", "checkpoint", "deliver", "put-artifact"} | set(odds_commands.WRITE_COMMANDS)
+RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"} | set(odds_commands.RECONCILE_COMMANDS)
+READ_OPERATIONS = {"prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS)
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -68,6 +70,8 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation in odds_commands.COMMANDS + odds_commands.RECONCILE_COMMANDS:
+        return odds_commands.perform(store, operation, payload, command["submission_id"])
     if operation in ("deliver", "reconcile-delivery"):
         if operation == "deliver":
             require(payload["method_sha256"] == research_method(payload["request"]["kind"])["sha256"],
@@ -170,6 +174,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         require(isinstance(payload["rights_basis"], str) and bool(payload["rights_basis"].strip()),
                 "ARTIFACT_RIGHTS_NOT_CONFIRMED")
         ArtifactInput.from_dict(payload["artifact"])
+    odds_commands.preflight(command["operation"], command["payload"])
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     operation = command["operation"]
     report = {"schema": "research-operation-v1", "operation": operation,
@@ -199,7 +204,11 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         result = _perform(VersionedStore(backend), command)
         if operation in ("deliver", "reconcile-delivery"):
             result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
+        if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS:
+            result = odds_commands.verify_fresh(result, operation, lambda: VersionedStore(GitHubStore(binding, api)))
         report.update(result=result, status="completed")
+        if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS and result["readback"]["status"] != "verified":
+            report["status"] = "odds-readback-failed"
         if operation in ("deliver", "reconcile-delivery", "verify-delivery"):
             verification = result.get("delivery_verification", result)
             if verification.get("status") != "verified-declared-inventory":

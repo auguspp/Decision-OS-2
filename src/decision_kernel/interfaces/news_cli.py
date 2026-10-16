@@ -5,7 +5,6 @@ No implicit RSS refresh, model execution, research save, or GitHub data write.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -13,7 +12,7 @@ import sys
 
 from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.news_capture import capture_newsnow, capture_relay_news
-from decision_kernel.observations.news_windows import source_locators, verify_reading, merge_readings
+from decision_kernel.observations.news_windows import NEWSNOW_SOURCES, source_locators, verify_reading, merge_readings
 
 MAX_INPUT = 5 * 1024 * 1024
 
@@ -52,6 +51,8 @@ def main(argv=None):
     for name in ("capture-newsnow", "capture-relay"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--output", type=Path, required=True)
+    sub.choices["capture-newsnow"].add_argument("--sources", nargs="+", choices=NEWSNOW_SOURCES,
+                                              default=list(NEWSNOW_SOURCES))
     relay = sub.choices["capture-relay"]
     relay.add_argument("--api", choices=("news", "major_news", "cctv_news"), required=True)
     relay.add_argument("--source", default=None)
@@ -71,13 +72,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.action in ("capture-newsnow", "capture-relay"):
-            when = datetime.now(timezone.utc).isoformat()
+            require(not args.output.exists(), "NEWS_OUTPUT_EXISTS_OR_UNWRITABLE")
             if args.action == "capture-newsnow":
-                result = capture_newsnow(observed_at=when)
+                result = capture_newsnow(sources=args.sources)
             else:
                 result = capture_relay_news(args.api, source=args.source,
-                                            start=args.start, end=args.end,
-                                            date=args.date, observed_at=when)
+                                            start=args.start, end=args.end, date=args.date)
             _write(args.output, result)
             print(json.dumps({"status": "captured" if all(x["status"] == "captured"
                     for x in result["source_outcomes"]) else "partial",

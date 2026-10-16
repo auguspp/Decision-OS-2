@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 
 from decision_kernel.domain.records import RecordError, require
-from decision_kernel.infrastructure.relay_http import FINANCIAL_APIS
+from decision_kernel.infrastructure.relay_http import READ_APIS
 
 MAX_FILE = 2 * 1024 * 1024
 ROW = re.compile(r'^\| `([a-z0-9_]+)` \| (GET|POST|DELETE) \| ([^|]+)\|')
@@ -131,7 +131,7 @@ class RelayRegistry:
             'status_disagrees_with_manual': (manual['manual_enabled'] != service.get('enabled')
                 if manual['manual_enabled'] is not None and service is not None
                 and type(service.get('enabled')) is bool else None),
-            'shared_relay_client_admits_api': api in FINANCIAL_APIS | {'disclosure_date'},
+            'shared_relay_client_admits_api': api in READ_APIS,
             'scoped_business_evidence': None if sample is None else {
                 'run_id': evidence['run_id'], 'scope': evidence['scope'], **sample,
                 'qualification': evidence['qualification']},

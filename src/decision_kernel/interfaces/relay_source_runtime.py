@@ -1,4 +1,4 @@
-"""Manual Actions host for the existing financial CLI; no store or research writes."""
+"""Manual Actions host for reviewed financial and participant sources; no store or research writes."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,7 @@ import sys
 
 REPO = "auguspp/Decision-OS-2"
 INPUTS = {"operation", "code_sha", "codes", "periods", "apis", "page_size",
-          "max_pages", "public_rights_confirmed"}
+          "max_pages", "public_rights_confirmed", "family", "dates"}
 
 
 def settings(event: dict, env: dict) -> dict:
@@ -43,11 +43,16 @@ def settings(event: dict, env: dict) -> dict:
         if (not result and not optional) or any(not re.fullmatch(pattern, x) for x in result):
             raise ValueError("RELAY_RUNTIME_SELECTION_INVALID")
         return result
+    family = data.get("family", "financial")
+    if family not in ("financial", "participants"):
+        raise ValueError("RELAY_RUNTIME_FAMILY_INVALID")
+    if family == "financial" and data.get("dates", "") or family == "participants" and data.get("periods", ""):
+        raise ValueError("RELAY_RUNTIME_UNUSED_DATE_SELECTOR")
     codes = words("codes", r"[0-9]{6}\.(SH|SZ|BJ)")
-    periods = words("periods", r"[0-9]{8}")
+    periods = words("periods" if family == "financial" else "dates", r"[0-9]{8}")
     for period in periods:
         parsed = date(int(period[:4]), int(period[4:6]), int(period[6:]))
-        if parsed.strftime("%m%d") not in ("0331", "0630", "0930", "1231"):
+        if family == "financial" and parsed.strftime("%m%d") not in ("0331", "0630", "0930", "1231"):
             raise ValueError("RELAY_RUNTIME_REPORT_PERIOD_INVALID")
     apis = words("apis", r"[a-z][a-z_]*", optional=True)
     def positive(name, default):
@@ -55,9 +60,13 @@ def settings(event: dict, env: dict) -> dict:
         if not re.fullmatch(r"[1-9][0-9]{0,8}", value):
             raise ValueError("RELAY_RUNTIME_PAGINATION_INVALID")
         return value
-    return {"operation": operation, "code_sha": sha, "codes": codes, "periods": periods,
+    result = {"operation": operation, "code_sha": sha, "codes": codes, "periods": periods,
             "apis": apis, "page_size": positive("page_size", "100"),
             "max_pages": positive("max_pages", "100"), "public_rights_confirmed": rights}
+    if family == "participants":
+        result["family"] = family
+        result["dates"] = result.pop("periods")
+    return result
 
 
 def execute(stage: str, event: dict, env: dict, out: Path, *, run=subprocess.run) -> int:
@@ -65,10 +74,11 @@ def execute(stage: str, event: dict, env: dict, out: Path, *, run=subprocess.run
     root = Path(env["RUNNER_TEMP"]).resolve()
     if not out.resolve().is_relative_to(root) or out.resolve() == root or out.is_symlink():
         raise ValueError("RELAY_RUNTIME_OUTPUT_INVALID")
-    cli = [sys.executable, "-m", "decision_kernel.interfaces.relay_financial_cli"]
+    participant = selected.get("family") == "participants"
+    cli = [sys.executable, "-m", "decision_kernel.interfaces.relay_" + ("participant" if participant else "financial") + "_cli"]
     if stage == "prepare":
         out.mkdir(parents=False, exist_ok=False)
-        args = [*cli, "plan", "--codes", *selected["codes"], "--periods", *selected["periods"],
+        args = [*cli, "plan", "--codes", *selected["codes"], ("--dates" if participant else "--periods"), *selected["dates" if participant else "periods"],
                 "--output", str(out / "plan.jsonl")]
         if selected["apis"]:
             args += ["--apis", *selected["apis"]]

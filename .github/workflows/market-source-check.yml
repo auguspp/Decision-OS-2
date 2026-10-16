@@ -7,9 +7,9 @@ on:
         type: string
         required: true
       selection:
-        description: 'sample: ten domestic slots; catalogues: THS I/N; stock: four stock slots; us-indices: US calendar and four indices'
+        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; US: us-indices'
         type: choice
-        options: [sample, catalogues, stock, us-indices]
+        options: [sample, catalogues, stock, us-indices, availability, stock-availability]
         default: sample
       exchange:
         description: 'SSE/SZSE for domestic selections; US required for us-indices'

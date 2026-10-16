@@ -64,6 +64,8 @@ def _map_results(payload, transform):
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
+        if kind in ("stock", "sector", "concept"):
+            extras |= {"reference_policy"}
         require(isinstance(value, dict) and required <= value.keys() <= required | extras, "MARKET_CUSTODY_SURFACE")
         for field in ("calendar_result", "catalog_result", "rate_result"):
             if field in value:

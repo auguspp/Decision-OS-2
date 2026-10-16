@@ -111,6 +111,56 @@ def qualified_security_master(results: Mapping[str, dict], *, registry: RelayReg
         "identity_semantics": "source-security-code-not-issuer-or-permanent-security-id"}
 
 
+def inspect_security_master(results: Mapping[str, dict], *, registry: RelayRegistry,
+                            exchange: str) -> dict:
+    """Account for every identified reference; quarantine, never repair, bad groups.
+
+    Transport/scope/identity syntax failures still refuse the entire supplied
+    slice. All occurrences of a duplicate code are quarantined, including the
+    first: there is no first/last, identical-row deduplication or status priority.
+    This is availability inspection, NOT qualified_security_master approval.
+    """
+    _require(isinstance(exchange, str) and exchange in EXCHANGES, "EXCHANGE_UNSUPPORTED")
+    _require(isinstance(results, Mapping) and bool(results)
+             and all(isinstance(k, str) and k in LIST_STATUSES for k in results), "MASTER_SCOPE")
+    securities, qualification, lineage, counts = {}, {}, {}, {}
+    for status in LIST_STATUSES:
+        if status not in results:
+            continue
+        view = _view(results[status], registry, "stock_basic",
+                     {"exchange": exchange, "list_status": status}, MASTER_FIELDS)
+        lineage[status], counts[status] = _lineage(view), view["row_count"]
+        for row in _rows(view):
+            code = _security(row.get("ts_code"))
+            _require(code.endswith("." + EXCHANGES[exchange]), "MASTER_IDENTITY")
+            checks, reference = _master_row_checks(row, {}, exchange, status)
+            reasons = {reason for reason, passed in checks.items() if passed is not True}
+            prior = qualification.get(code)
+            if prior is not None:
+                reasons.update(prior["reason_codes"])
+                reasons.add("MASTER_DUPLICATE_SECURITY")
+            qualification[code] = {"status": "quarantined" if reasons else "checked",
+                "source_row_count": 1 + (prior["source_row_count"] if prior else 0),
+                "reason_codes": sorted(reasons)}
+            securities[code] = None if reasons else reference
+    quality = {"source_row_count": sum(counts.values()), "scope_count": len(securities),
+        "eligible_count": sum(v is not None for v in securities.values()),
+        "quarantined_count": sum(v is None for v in securities.values()),
+        "quarantined_row_count": sum(q["source_row_count"] for q in qualification.values()
+                                     if q["status"] == "quarantined"),
+        "duplicate_group_count": sum(q["source_row_count"] > 1 for q in qualification.values())}
+    return {"securities": dict(sorted(securities.items())), "scope_count": len(securities),
+        "supplied_statuses": [s for s in LIST_STATUSES if s in results],
+        "not_supplied_statuses": [s for s in LIST_STATUSES if s not in results],
+        "status_counts": counts, "lineage": lineage, "quality": quality,
+        "reference_policy": "isolate-identified", "qualification": dict(sorted(qualification.items())),
+        "version": digest(encoded({"policy": "isolate-identified", "lineage": lineage,
+                                   "qualification": qualification, "securities": securities})),
+        "scope_semantics": "all-identified-source-codes-including-quarantine-not-full-market",
+        "time_semantics": "retrieval-snapshots-not-atomic-or-historical-membership",
+        "identity_semantics": "source-security-code-not-issuer-or-permanent-security-id"}
+
+
 def _factors(view: dict, code: str, allowed: set[str]) -> list[dict]:
     found = {}
     for row in _rows(view):
@@ -173,14 +223,19 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
                                 registry: RelayRegistry, exchange: str, start: str, end: str,
                                 horizons: tuple[int, ...] = (5, 20, 60),
                                 offset: int = 0, limit: int = 50,
-                                entity_id: str | None = None) -> dict:
+                                entity_id: str | None = None,
+                                reference_policy: str = "strict") -> dict:
     """Read companion raw/qfq surfaces with one master-derived, undropped scope.
 
-    Bad master/calendar data refuses the shared scope. Bad stock/factor data is
-    isolated to the affected security and convention. No candidate policy runs.
+    Strict is the unchanged default. Explicit isolate-identified preserves all
+    identified master codes while quarantining their entire conflicting groups.
+    Bad shared calendar/capture or unidentifiable scope still refuses reading.
+    Bad stock/factor data is isolated by security and convention. No discovery runs.
     """
     lo, hi = _range(start, end)
-    master = qualified_security_master(master_results, registry=registry, exchange=exchange)
+    _require(reference_policy in ("strict", "isolate-identified"), "REFERENCE_POLICY")
+    inspect = qualified_security_master if reference_policy == "strict" else inspect_security_master
+    master = inspect(master_results, registry=registry, exchange=exchange)
     references = master["securities"]
     declared = list(references)
     for results in (stock_results, factor_results):
@@ -197,6 +252,14 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
         reference = references[code]
         state = {"price": {"status": "not-supplied"}, "factor": {"status": "not-supplied"},
                  "adjustment": {"status": "inputs-unavailable"}}
+        if reference_policy == "isolate-identified":
+            state["master"] = master["qualification"][code]
+            if reference is None:
+                state["price"] = {"status": "rejected", "reason_code": "MARKET_RELAY_MASTER_QUARANTINED"}
+                state["factor"] = {"status": "rejected", "reason_code": "MARKET_RELAY_MASTER_QUARANTINED"}
+                state["within_reported_listing_at_end"] = None
+                qualifications[code] = state
+                continue  # Even an individually valid quote cannot qualify a bad reference.
         scope = {"ts_code": code, "start_date": start, "end_date": end}
         if code in stock_results:
             try:

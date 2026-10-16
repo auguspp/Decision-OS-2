@@ -64,7 +64,8 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
         return 2
     progress(result)
     return 0 if result['status'] in ('checked-sample', 'checked-catalogues', 'checked-stock-sample',
-                                       'checked-us-index-context') else 2
+                                       'checked-us-index-context', 'checked-availability-sample',
+                                       'available-with-quarantine') else 2
 
 
 def main(argv: list[str] | None = None) -> int:

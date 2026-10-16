@@ -58,6 +58,26 @@ def _classification_checks(row: dict, seen: Mapping, expected_type: str) -> tupl
     )))
 
 
+def _catalogue_reference(row: dict, kind: str) -> dict:
+    """The original value predicates, used by both strict and isolated reading."""
+    count = row["count"]
+    if count in (None, ""):
+        count = None
+    elif type(count) is float:
+        # Relay may serialize integer counts as JSON numbers with a decimal
+        # point. Accept the same bounded integer VALUE, never round a fraction.
+        _require(math.isfinite(count) and count.is_integer() and 0 <= count <= 999999999,
+                 "GROUP_COUNT")
+        count = int(count)
+    else:
+        _require(type(count) in (int, str) and bool(re.fullmatch(r"[0-9]{1,9}", str(count))), "GROUP_COUNT")
+        count = int(count)
+    return {"ts_code": row["ts_code"], "entity_id": "ths-a-" + kind + ":" + row["ts_code"],
+        "name": _name(row["name"]), "kind": kind, "source_type": GROUP_TYPES[kind],
+        "reported_member_count": count,
+        "list_date": None if row["list_date"] in (None, "") else _day(row["list_date"])}
+
+
 def qualified_ths_catalog(result: dict, *, registry: RelayRegistry, kind: str) -> dict:
     """All rows in one explicit A/I or A/N slice; not a historical classification."""
     _require(isinstance(kind, str) and kind in GROUP_TYPES, "GROUP_KIND")
@@ -68,26 +88,49 @@ def qualified_ths_catalog(result: dict, *, registry: RelayRegistry, kind: str) -
         for reason, passed in _classification_checks(row, groups, GROUP_TYPES[kind]):
             _require(passed, reason)
         code = row["ts_code"]
-        count = row["count"]
-        if count in (None, ""):
-            count = None
-        elif type(count) is float:
-            # Relay may serialize integer counts as JSON numbers with a decimal
-            # point. Accept the same bounded integer VALUE, never round a fraction.
-            _require(math.isfinite(count) and count.is_integer() and 0 <= count <= 999999999,
-                     "GROUP_COUNT")
-            count = int(count)
-        else:
-            _require(type(count) in (int, str) and bool(re.fullmatch(r"[0-9]{1,9}", str(count))), "GROUP_COUNT")
-            count = int(count)
-        groups[code] = {"ts_code": code, "entity_id": namespace + ":" + code,
-            "name": _name(row["name"]), "kind": kind, "source_type": GROUP_TYPES[kind],
-            "reported_member_count": count,
-            "list_date": None if row["list_date"] in (None, "") else _day(row["list_date"])}
+        groups[code] = _catalogue_reference(row, kind)
     lineage = _lineage(view)
     return {"namespace": namespace, "groups": dict(sorted(groups.items())), "scope_count": len(groups),
         "lineage": lineage, "version": digest(encoded({"namespace": namespace, "lineage": lineage})),
         "effective_at": None, "semantics": "source-classification-slice-not-historical-or-full-market"}
+
+
+def inspect_ths_catalog(result: dict, *, registry: RelayRegistry, kind: str) -> dict:
+    """Keep all identifiable catalogue codes; no conflicting record is selected."""
+    _require(isinstance(kind, str) and kind in GROUP_TYPES, "GROUP_KIND")
+    view = _view(result, registry, "ths_index", {"exchange": "A", "type": GROUP_TYPES[kind]}, CATALOG_FIELDS)
+    groups, qualification = {}, {}
+    namespace = "ths-a-" + kind
+    for row in _rows(view):
+        code = _index_code(row.get("ts_code"))  # Unknown identity cannot be safely partitioned.
+        reasons = {reason for reason, passed in _classification_checks(row, {}, GROUP_TYPES[kind])
+                   if not passed}
+        reference = None
+        try:
+            reference = _catalogue_reference(row, kind)
+        except MarketRelayError as exc:
+            reasons.add(str(exc).removeprefix("MARKET_RELAY_"))
+        prior = qualification.get(code)
+        if prior is not None:
+            reasons.update(prior["reason_codes"])
+            reasons.add("GROUP_DUPLICATE_CODE")
+        qualification[code] = {"status": "quarantined" if reasons else "checked",
+            "source_row_count": 1 + (prior["source_row_count"] if prior else 0),
+            "reason_codes": sorted(reasons)}
+        groups[code] = None if reasons else reference
+    lineage = _lineage(view)
+    quality = {"source_row_count": view["row_count"], "scope_count": len(groups),
+        "eligible_count": sum(v is not None for v in groups.values()),
+        "quarantined_count": sum(v is None for v in groups.values()),
+        "quarantined_row_count": sum(q["source_row_count"] for q in qualification.values()
+                                     if q["status"] == "quarantined"),
+        "duplicate_group_count": sum(q["source_row_count"] > 1 for q in qualification.values())}
+    return {"namespace": namespace, "groups": dict(sorted(groups.items())), "scope_count": len(groups),
+        "lineage": lineage, "quality": quality, "reference_policy": "isolate-identified",
+        "qualification": dict(sorted(qualification.items())),
+        "version": digest(encoded({"namespace": namespace, "lineage": lineage,
+                                   "policy": "isolate-identified", "qualification": qualification})),
+        "effective_at": None, "semantics": "all-identified-source-codes-including-quarantine-not-full-market"}
 
 
 def qualified_ths_members(result: dict, *, registry: RelayRegistry, ts_code: str) -> dict:
@@ -121,10 +164,13 @@ def read_ths_group_surface(*, catalog_result: dict, member_results: Mapping[str,
                            index_results: Mapping[str, dict], calendar_result: dict,
                            registry: RelayRegistry, kind: str, exchange: str, start: str, end: str,
                            benchmark: dict | None = None, horizons: tuple[int, ...] = (5, 20, 60),
-                           offset: int = 0, limit: int = 50, entity_id: str | None = None) -> dict:
+                           offset: int = 0, limit: int = 50, entity_id: str | None = None,
+                           reference_policy: str = "strict") -> dict:
     """Read index levels independently of member availability; keep all catalogue rows."""
     lo, hi = _range(start, end)
-    catalog = qualified_ths_catalog(catalog_result, registry=registry, kind=kind)
+    _require(reference_policy in ("strict", "isolate-identified"), "REFERENCE_POLICY")
+    inspect = qualified_ths_catalog if reference_policy == "strict" else inspect_ths_catalog
+    catalog = inspect(catalog_result, registry=registry, kind=kind)
     groups = catalog["groups"]
     _require(isinstance(exchange, str) and exchange in EXCHANGES, "EXCHANGE_UNSUPPORTED")
     for mapping in (member_results, index_results):
@@ -137,8 +183,15 @@ def read_ths_group_surface(*, catalog_result: dict, member_results: Mapping[str,
     allowed = set(sessions)
     levels, sources, snapshots, qualification = {}, {}, {}, {}
     for code, group in groups.items():
-        key = group["entity_id"]
+        key = catalog["namespace"] + ":" + code
         state = {"index": {"status": "not-supplied"}, "members": {"status": "not-supplied"}}
+        if reference_policy == "isolate-identified":
+            state["catalogue"] = catalog["qualification"][code]
+            if group is None:
+                state["index"] = {"status": "rejected", "reason_code": "MARKET_RELAY_GROUP_QUARANTINED"}
+                state["members"] = {"status": "rejected", "reason_code": "MARKET_RELAY_GROUP_QUARANTINED"}
+                qualification[key] = state
+                continue
         if code in index_results:
             try:
                 levels[key], sources[key] = _levels(index_results[code], registry, code, start, end, allowed)
@@ -169,12 +222,12 @@ def read_ths_group_surface(*, catalog_result: dict, member_results: Mapping[str,
         except MarketRelayError as exc:
             benchmark_state = {"status": "rejected", "reason_code": str(exc)}
     surface = read_market_surface({"kind": kind, "as_of": hi, "entities": levels,
-        "declared_entities": [g["entity_id"] for g in groups.values()], "market_sessions": sessions,
+        "declared_entities": [catalog["namespace"] + ":" + code for code in groups], "market_sessions": sessions,
         "calendar_version": calendar_source["view_sha256"], "adjustment": "raw",
         "source_version": digest(encoded(sources)), "universe_version": catalog["version"],
         "coverage": "partial-universe", "market": "THS-A", "currency": "XXX",
         "horizons": horizons, "benchmark": baseline}, offset=offset, limit=limit, entity_id=entity_id)
-    by_id = {g["entity_id"]: g for g in groups.values()}
+    by_id = {catalog["namespace"] + ":" + code: g for code, g in groups.items()}
     for entry in surface["entries"]:
         key = entry["entity_id"]
         entry.update(classification=by_id[key], qualification=qualification[key],
@@ -216,7 +269,7 @@ def read_three_market_surfaces(*, surfaces: Mapping[str, dict], registry: RelayR
         try:
             value = surfaces[kind]
             required = STOCK_REQUIRED if kind == "stock" else GROUP_REQUIRED
-            optional = {"horizons"} if kind == "stock" else {"horizons", "benchmark"}
+            optional = {"horizons", "reference_policy"} if kind == "stock" else {"horizons", "benchmark", "reference_policy"}
             _require(isinstance(value, dict) and required <= value.keys()
                      and value.keys() <= required | optional, "SURFACE_INPUT_INVALID")
             if kind == "stock":

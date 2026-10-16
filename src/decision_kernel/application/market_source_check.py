@@ -19,14 +19,16 @@ from decision_kernel.application.global_index_inputs import (
 from decision_kernel.application.market_group_inputs import (
     CATALOG_FIELDS, GROUP_TYPES, LEVEL_FIELDS, MEMBER_FIELDS, qualified_ths_catalog,
     qualified_ths_members, read_three_market_surfaces, CLASSIFICATION_CODES, _classification_checks,
+    inspect_ths_catalog,
 )
 from decision_kernel.application.market_relay_inputs import (
     EXCHANGES, _daily, _range, _rows, _view, qualified_daily, qualified_trade_calendar,
 )
 from decision_kernel.application.market_security_inputs import (
     FACTOR_FIELDS, MASTER_FIELDS, MASTER_CHECK_CODES, _master_date, _master_row_checks,
-    qualified_adj_factors, qualified_security_master,
+    qualified_adj_factors, qualified_security_master, inspect_security_master,
 )
+from decision_kernel.application.market_reading import read_market_payload
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
 from decision_kernel.domain.records import RecordError, encoded, require
@@ -80,7 +82,9 @@ def _code(value: object) -> str:
     return value if isinstance(value, str) and value in PUBLIC_CODES else 'CHECK_REJECTED'
 
 
-SELECTIONS = ('sample', 'catalogues', 'stock', 'us-indices')
+SELECTIONS = ('sample', 'catalogues', 'stock', 'us-indices', 'availability', 'stock-availability')
+AVAILABILITY_HORIZONS = (5, 20, 60)
+AVAILABILITY_SELECTIONS = ('availability', 'stock-availability')
 US_INDEX_SLOTS = {'us_calendar': 'us_tradecal',
                   **{'us_' + code.lower(): 'index_global' for code in US_INDEX_CODES}}
 US_HORIZONS = (5, 20, 60)
@@ -231,8 +235,9 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     require(access_confirmed is True, 'MARKET_CHECK_ACCESS_REQUIRED')
     require(isinstance(registry, RelayRegistry), 'MARKET_CHECK_REGISTRY')
     require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
-    selected_slots = (US_INDEX_SLOTS if selection == 'us-indices' else SLOTS if selection == 'sample' else
-                      {k: SLOTS[k] for k in (STOCK_SLOTS if selection == 'stock' else
+    isolated = selection in AVAILABILITY_SELECTIONS
+    selected_slots = (US_INDEX_SLOTS if selection == 'us-indices' else SLOTS if selection in ('sample', 'availability') else
+                      {k: SLOTS[k] for k in (STOCK_SLOTS if selection in ('stock', 'stock-availability') else
                                              ('sector_catalog', 'concept_catalog'))})
     now = datetime.now(timezone.utc) if now is None else now
     check_scope(exchange, start, end, now, selection)
@@ -257,6 +262,9 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                 'FOUR_US_INDICES_NOT_WORLD_COVERAGE_OR_RESEARCH_ADOPTION',
                 'SOURCE_US_MARKET_DATE_NOT_CROSS_MARKET_SIMULTANEOUS_INSTANT',
                 'NO_SOURCE_VALUES_NAMES_IDENTIFIERS_OR_DIGESTS_IN_RECEIPT'])
+    if isolated:
+        report.update(reference_policy='isolate-identified', sample_readable=None, strict_reference_passed=None,
+            sample_policy='first-sorted-qualified-pre-start-reference-per-surface-not-candidates')
     def emit():
         if progress is not None:
             progress(deepcopy(report))
@@ -276,8 +284,14 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             emit()
             return None, None
         api = selected_slots[slot]
+        # Smaller reference pages test response-size sensitivity without raising
+        # the original 10,000-row ceiling, retry count or shared deadline.
+        small_pages = isolated and api in ('stock_basic', 'ths_index')
+        page_size, max_pages = (500, 20) if small_pages else (5000, 2)
+        if small_pages:
+            item['page_policy'] = {'page_size': page_size, 'max_pages': max_pages, 'row_ceiling': 10000}
         request = {'stage': 'baseline', 'purpose': 'Transient market field check; no source export',
-                   'api': api, 'parameters': {**params, 'fields': ','.join(sorted(fields)), 'limit': '5000'}}
+                   'api': api, 'parameters': {**params, 'fields': ','.join(sorted(fields)), 'limit': str(page_size)}}
         before = client.requests
         result = None
         try:
@@ -285,7 +299,7 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                                  'requests': [request]}, registry)['requests'][0]
             item.update(status='in-progress', reason_code=None)
             emit()
-            capture = capture_registered(use, registry, session, max_pages=2)
+            capture = capture_registered(use, registry, session, max_pages=max_pages)
             stopped = ((capture.get('failure') or {}).get('classification') in {'auth-or-entitlement', 'rate-limit'}
                        or capture['error'] in {'RELAY_RUN_DEADLINE', 'RELAY_SECRET_REFLECTED'})
             report['stopped'] = stopped
@@ -304,6 +318,10 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                 return result, None
             qualified = qualify(result)
             item.update(status='checked' if view['row_count'] else 'checked-empty', reason_code=None)
+            if isolated and api in ('stock_basic', 'ths_index'):
+                item['reference_quality'] = dict(qualified['quality'])
+                if qualified['quality']['quarantined_count']:
+                    item['status'] = 'checked-with-quarantine'
             return result, qualified
         except (RecordError, MarketInputError) as exc:
             item.update(status='rejected', reason_code=_code(str(exc)))
@@ -360,17 +378,22 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     cal, sessions = take('calendar', {'exchange': exchange, **period}, {'exchange', 'cal_date', 'is_open'},
         lambda r: qualified_trade_calendar(r, registry=registry, exchange=exchange, start=start, end=end))
     master_result, master = take('master', {'exchange': exchange, 'list_status': 'L'}, MASTER_FIELDS,
-        lambda r: qualified_security_master({'L': r}, registry=registry, exchange=exchange))
+        lambda r: (inspect_security_master if isolated else qualified_security_master)(
+            {'L': r}, registry=registry, exchange=exchange))
     catalog_results, catalogs = {}, {}
-    group_kinds = GROUP_TYPES if selection == 'sample' else ()
+    group_kinds = GROUP_TYPES if selection in ('sample', 'availability') else ()
     for kind in group_kinds:
         catalog_results[kind], catalogs[kind] = take(kind + '_catalog',
             {'exchange': 'A', 'type': GROUP_TYPES[kind]}, CATALOG_FIELDS,
-            lambda r, k=kind: qualified_ths_catalog(r, registry=registry, kind=k))
-    stocks, factors = {}, {}
+            lambda r, k=kind: (inspect_ths_catalog if isolated else qualified_ths_catalog)(
+                r, registry=registry, kind=k))
+    stocks, factors, samples = {}, {}, {}
     has_end = _range(start, end)[1] in (sessions or [])
-    if master and master['securities'] and has_end:
-        code = min(master['securities'])
+    usable = ({} if master is None else {c: v for c, v in master['securities'].items()
+        if not isolated or v is not None and v['list_date'] is not None and v['list_date'] <= _range(start, end)[0]})
+    if usable and has_end:
+        code = min(usable)
+        samples['stock'] = code
         for slot, fields, qualifier, target in (
                 ('stock_daily', LEVEL_FIELDS, qualified_daily, stocks),
                 ('stock_factor', FACTOR_FIELDS, qualified_adj_factors, factors)):
@@ -383,8 +406,11 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
     for kind in group_kinds:
         levels, members = {}, {}
         catalog = catalogs[kind]
-        if catalog and catalog['groups']:
-            code = min(catalog['groups'])
+        usable = ({} if catalog is None else {c: v for c, v in catalog['groups'].items()
+            if not isolated or v is not None and v['list_date'] is not None and v['list_date'] <= _range(start, end)[0]})
+        if usable:
+            code = min(usable)
+            samples[kind] = 'ths-a-' + kind + ':' + code
             if has_end:
                 result, _ = take(kind + '_daily', {'ts_code': code, **period}, LEVEL_FIELDS,
                     # THS uses source index points, not CNY; _levels enforces its existing contract.
@@ -397,6 +423,10 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                 members[code] = result
         surfaces[kind] = {'catalog_result': catalog_results[kind] or {}, 'member_results': members,
             'index_results': levels, 'calendar_result': cal or {}, 'exchange': exchange, 'start': start, 'end': end}
+    if isolated:
+        _availability_receipt(report, surfaces, samples, registry)
+        emit()
+        return report
     views = read_three_market_surfaces(surfaces=surfaces, registry=registry, limit=1)
     for kind, outcome in views['surfaces'].items():
         if selection == 'stock' and kind != 'stock':
@@ -449,3 +479,55 @@ def _us_index_receipt(view: dict) -> dict:
         'observed_count': sum(e['observation'] is not None and e['observation']['status']
                              in ('observed', 'partial-history') for e in entries),
         'source_qualification_counts': counts, 'window_counts': windows}
+
+
+def _availability_receipt(report, surfaces, samples, registry):
+    """Use the ordinary reading route; expose only full-scope counts and sample states.
+
+    Passing this new explicit operational purpose does not overturn strict
+    catalogue failures or certify marketwide price coverage. No source values,
+    identifiers, dates, hashes, references or rates are returned by this adapter.
+    """
+    for kind, supplied in surfaces.items():
+        item = {"status": "rejected", "scope_count": None, "observed_count": None,
+                "reference_quality": None, "sample_selected": kind in samples,
+                "sample_windows": None}
+        try:
+            payload = {**supplied, "reference_policy": "isolate-identified",
+                "schema": "relay-security-stock-reading-v1" if kind == "stock" else "relay-ths-group-reading-v1"}
+            if kind != "stock":
+                payload["kind"] = kind
+            view = read_market_payload(payload, registry, limit=1, entity_id=samples.get(kind))
+            parts = {k: view[k] for k in ("raw", "qfq")} if kind == "stock" else {"index": view}
+            windows = {}
+            for convention, part in parts.items():
+                entry = part["entries"][0] if kind in samples and part["entries"] else None
+                observation = entry if entry and entry.get("input_status") == "supplied" else None
+                windows[convention] = {str(h): "inputs-unavailable" for h in AVAILABILITY_HORIZONS}
+                if observation is not None:
+                    for value in observation["horizons"]:
+                        status = value["status"]
+                        require(status in ("observed", "missing-market-sessions", "insufficient-calendar-history"),
+                                "MARKET_CHECK_SAMPLE_WINDOWS")
+                        windows[convention][str(value["sessions"])] = status
+            source = view["qfq"] if kind == "stock" else view
+            quality = view["master" if kind == "stock" else "catalogue"]["quality"]
+            item.update(status="read", scope_count=source["scope_count"],
+                observed_count=source["observed_count"], reference_quality=dict(quality), sample_windows=windows)
+        except (RecordError, MarketInputError) as exc:
+            item["reason_code"] = _code(str(exc))
+        report["surfaces"][kind] = item
+    qualities = [s["reference_quality"] for s in report["surfaces"].values()]
+    report["strict_reference_passed"] = all(q is not None and q["quarantined_count"] == 0 for q in qualities)
+    good = (not report["stopped"]
+        and all(q["status"] in ("checked", "checked-with-quarantine") for q in report["queries"].values())
+        and all(s["status"] == "read" and s["sample_selected"] and s["sample_windows"] is not None
+                and all(v == "observed" for w in s["sample_windows"].values() for v in w.values())
+                for s in report["surfaces"].values()))
+    report["sample_readable"] = good
+    report["status"] = ("checked-availability-sample" if report["strict_reference_passed"] else
+                        "available-with-quarantine") if good else "completed-with-gaps"
+    if report["stopped"]:
+        for item in report["queries"].values():
+            if item["status"] == "not-attempted":
+                item["reason_code"] = "GLOBAL_SOURCE_STOP"

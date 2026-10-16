@@ -11,9 +11,13 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import json
 import re
+from importlib.metadata import PackageNotFoundError
+from types import SimpleNamespace
 
 from decision_kernel.domain.records import RecordError, SourceRef, digest, encoded, require
 from decision_kernel.observations.news_windows import _bytes_json, _claim, _reading, verify_reading
+from decision_kernel.observations.rss_reading import news_outcome, news_rows, verify_news_row
+from decision_kernel.application.rss_intake import SCHEMA as RSS_SCHEMA, open_capture
 
 SCHEMA = "dos2-news-rolling-v1"
 WINDOW_HOURS = 24
@@ -45,7 +49,7 @@ def _key(ref):
     return digest(encoded(ref))
 
 
-def _load(reader, ref):
+def _read_verified(reader, ref):
     """Require the source reader's exact, verified stored representation, not a URL."""
     result = reader(SourceRef.from_dict(ref))
     require(isinstance(result, dict) and reference(result.get("reference")) == ref
@@ -57,10 +61,31 @@ def _load(reader, ref):
             "NEWS_ROLL_MANIFEST_MISMATCH")
     raw = result["data"].encode("utf-8")
     representation = manifest.get("representation", {})
-    require(len(raw) <= 2 * 1024 * 1024
+    require(isinstance(representation, dict) and len(raw) <= 2 * 1024 * 1024
             and representation.get("size") == len(raw)
             and representation.get("sha256") == digest(raw), "NEWS_ROLL_SOURCE_BYTES_MISMATCH")
-    return _bytes_json(raw)
+    return result
+
+
+def _load(reader, ref):
+    return _bytes_json(_read_verified(reader, ref)["data"].encode("utf-8"))
+
+
+def read_news_batch(reader, ref):
+    """Read a news batch or qualify one native RSS transition, without source HTTP."""
+    exact = reference(ref)
+    result = _read_verified(reader, exact)
+    value = _bytes_json(result["data"].encode("utf-8"))
+    if not isinstance(value, dict) or value.get("schema") != RSS_SCHEMA:
+        return verify_reading(value)
+    # Adapt the existing reader, not its store/writer. Verify predecessor bytes too.
+    store = SimpleNamespace(read_source=lambda r: result if reference(r) == exact
+                            else _read_verified(reader, reference(r)))
+    try:
+        capture = open_capture(store, exact)
+    except (PackageNotFoundError, ModuleNotFoundError):
+        raise RecordError("NEWS_RSS_ORIGINAL_PARSER_REQUIRED") from None
+    return _reading(news_rows(capture), [news_outcome(capture)])
 
 
 def _metadata_rows(rows):
@@ -68,6 +93,9 @@ def _metadata_rows(rows):
                 "provider", "publication_verified", "published_claim", "representation",
                 "research_started", "source_id", "title", "url", "version_id"}
     for row in rows:
+        if isinstance(row, dict) and row.get("provider") == "rss":
+            verify_news_row(row)
+            continue
         require(isinstance(row, dict) and set(row) == row_keys and row["research_started"] is False,
                 "NEWS_ROLL_METADATA_ONLY")
         require(isinstance(row["published_claim"], dict)
@@ -238,7 +266,7 @@ def rolling_news(reader, references, *, as_of, predecessor=None):
     batches, rejected = [], []
     for ref in refs:
         try:
-            reading = verify_reading(_load(reader, ref))
+            reading = read_news_batch(reader, ref)
             health, times = _outcomes(reading, ref, end)
             if times and max(times) < start:
                 continue

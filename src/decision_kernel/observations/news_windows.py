@@ -1,4 +1,4 @@
-"""Finite NewsNow and reviewed Relay news observations, not verified economic events.
+"""Finite NewsNow, reviewed Relay and qualified RSS metadata, not verified events.
 
 The original HTTP bodies are transient. Projected headlines, URLs and version
 fingerprints are source *claims*, not publication rights or primary evidence.
@@ -12,6 +12,8 @@ import re
 from urllib.parse import urlsplit
 
 from decision_kernel.domain.records import RecordError, SourceInput, encoded, require, source_time
+from decision_kernel.observations.rss_reading import verify_news_outcome, verify_news_row
+from decision_kernel.observations.rss_news import ATTRIBUTION as RSS_ATTRIBUTION
 
 NEWSNOW_SOURCES = ("cls", "wallstreetcn", "fastbull", "jin10", "mktnews", "gelonghui", "thepaper")
 NEWSNOW_DOMAINS = {
@@ -226,6 +228,11 @@ def combine(windows):
 
 
 def _reading(rows, counts):
+    rss_sources = set()
+    for item in counts:
+        if isinstance(item, dict) and (item.get("provider") == "rss" or "rss" in item):
+            verify_news_outcome(item)
+            rss_sources.add(item["source"])
     distinct = {}
     for row in rows:
         require(isinstance(row, dict), "NEWS_ROW_INVALID")
@@ -233,9 +240,13 @@ def _reading(rows, counts):
         require(isinstance(version, str) and bool(re.fullmatch(r"[0-9a-f]{64}", version))
                 and isinstance(article, str) and bool(re.fullmatch(r"[0-9a-f]{64}", article)),
                 "NEWS_ROW_IDENTITY_INVALID")
-        _headline(title)
+        if row.get("provider") == "rss":
+            verify_news_row(row)
+            require(row["source_id"] in rss_sources, "RSS_NEWS_OUTCOME_REQUIRED")
+        else:
+            _headline(title)
         _seen_at(row.get("observed_at"))
-        require(row.get("provider") in ("relay", "newsnow")
+        require(row.get("provider") in ("relay", "newsnow", "rss")
                 and row.get("representation") == "headline-and-locator-only"
                 and row.get("event_verified") is False
                 and row.get("publication_verified") is False
@@ -244,7 +255,7 @@ def _reading(rows, counts):
         if row["provider"] == "newsnow":
             require(row["source_id"] in NEWSNOW_SOURCES, "NEWS_ROW_SOURCE_INVALID")
             _link(row.get("url"), NEWSNOW_DOMAINS[row["source_id"]])
-        else:
+        elif row["provider"] == "relay":
             source = row["source_id"].split(":")
             require(len(source) == 3 and source[0] == "relay"
                     and source[1] in RELAY_APIS and source[2], "NEWS_ROW_SOURCE_INVALID")
@@ -301,6 +312,9 @@ def source_locators(reading):
         limitations = ["NOT_A_VERIFIED_EVENT", "NO_PUBLISHER_PUBLICATION_TIME_VERIFICATION",
                        "EXTERNAL_LOCATOR_ONLY_NO_NEWS_BODY",
                        "ARTICLE_VERSION_SHA256_" + row["version_id"]]
+        if row["provider"] == "rss":
+            limitations.extend((RSS_ATTRIBUTION, "RSS_FEED_METADATA_NOT_LINKED_ARTICLE",
+                                "RSS_NATIVE_VERSION_SHA256_" + row["rss"]["version_id"]))
         if row["url"] is None:
             limitations.append("NO_INDIVIDUAL_ARTICLE_URL_AGGREGATE_ENDPOINT_ONLY")
         result.append(SourceInput(source_id="news-" + row["article_id"][:40], kind="content",

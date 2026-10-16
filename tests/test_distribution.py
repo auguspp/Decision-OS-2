@@ -117,7 +117,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     resumed = command("prepare-research", "--case-id", "work")
     assert resumed["request"]["predecessor"] == checkpoint["reference"]
     assert resumed["request"]["questions"] == initial_request["questions"]
-    request_file.write_text(json.dumps(resumed["request"]), ensure_ascii=False), encoding="utf-8")
+    request_file.write_text(json.dumps(resumed["request"], ensure_ascii=False), encoding="utf-8")
     finished = {**partial, "body": "合成修订：论证缩小到证据支持范围",
                 "findings": [{"question_id": "q1", "status": "answered", "finding": "限定回答", "evidence": [0]}],
                 "challenges": [{"question_id": "q1", "argument": "竞争解释", "disposition": "changed", "response": "已据此调整论证", "evidence": [0]}],

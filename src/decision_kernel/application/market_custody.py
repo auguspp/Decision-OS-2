@@ -10,6 +10,9 @@ from dataclasses import asdict
 import json
 import re
 
+from decision_kernel.application.global_index_inputs import (
+    INDEX_FIELDS, US_CALENDAR_FIELDS, US_INDEX_READING_SCHEMA, US_INDEX_REQUIRED,
+)
 from decision_kernel.application.market_group_inputs import (
     GROUP_REQUIRED, STOCK_REQUIRED,
 )
@@ -28,6 +31,8 @@ READING_SCHEMA = "market-reading-custody-v1"
 MAX_QUERIES = 32
 MAX_PAGES = 100
 MARKET_FIELDS = {
+    "us_tradecal": US_CALENDAR_FIELDS,
+    "index_global": INDEX_FIELDS,
     "trade_cal": {"exchange", "cal_date", "is_open"},
     "daily": {"ts_code", "trade_date", "close"},
     "adj_factor": {"ts_code", "trade_date", "adj_factor"},
@@ -49,6 +54,8 @@ def _map_results(payload, transform):
     output = deepcopy(payload)
     def one(value, kind, prefix):
         required = (STOCK_REQUIRED if kind == "stock" else GROUP_REQUIRED)
+        if kind == "us-index":
+            required = US_INDEX_REQUIRED
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
@@ -74,8 +81,9 @@ def _map_results(payload, transform):
     else:
         schema = output.pop("schema")
         kind = output.pop("kind") if schema == "relay-ths-group-reading-v1" else (
+            "us-index" if schema == US_INDEX_READING_SCHEMA else
             "raw" if schema == "relay-stock-reading-v1" else "stock")
-        require(kind in ("raw", "stock", "sector", "concept"), "MARKET_CUSTODY_KIND")
+        require(kind in ("raw", "stock", "sector", "concept", "us-index"), "MARKET_CUSTODY_KIND")
         one(output, kind, [])
         output["schema"] = schema
         if schema == "relay-ths-group-reading-v1":

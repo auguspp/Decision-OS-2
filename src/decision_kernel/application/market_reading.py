@@ -1,4 +1,7 @@
 """Shared dispatch for local and restored market reading; no storage or source I/O."""
+from decision_kernel.application.global_index_inputs import (
+    US_INDEX_READING_SCHEMA, US_INDEX_REQUIRED, read_us_index_context,
+)
 from decision_kernel.application.market_group_inputs import (
     GROUP_REQUIRED, read_ths_group_surface, read_three_market_surfaces,
 )
@@ -23,6 +26,9 @@ def _route(payload):
         required = GROUP_REQUIRED | {"schema", "kind"}
         optional |= {"benchmark"}
         reader = read_ths_group_surface
+    elif schema == US_INDEX_READING_SCHEMA:
+        required = US_INDEX_REQUIRED | {"schema"}
+        reader = read_us_index_context
     elif schema == "relay-three-market-reading-v1":
         required, optional = {"schema", "surfaces"}, set()
         reader = read_three_market_surfaces

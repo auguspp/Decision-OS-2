@@ -11,6 +11,9 @@ from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.domain.records import digest, encoded
 from decision_kernel.observations.us_index_daily import index_context, observe_us_index
 
+US_INDEX_READING_SCHEMA = "relay-us-index-reading-v1"
+US_INDEX_REQUIRED = {"calendar_result", "index_results", "declared_indices", "start", "end"}
+
 US_INDEX_CODES = ("DJI", "IXIC", "RUT", "SPX")
 INDEX_FIELDS = {"ts_code", "trade_date", "close"}
 US_CALENDAR_FIELDS = {"cal_date", "is_open"}

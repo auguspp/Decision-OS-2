@@ -18,7 +18,8 @@ from decision_kernel.application.market_relay_inputs import (
     EXCHANGES, _range, _rows, qualified_daily, qualified_trade_calendar,
 )
 from decision_kernel.application.market_security_inputs import (
-    FACTOR_FIELDS, MASTER_FIELDS, qualified_adj_factors, qualified_security_master,
+    FACTOR_FIELDS, MASTER_FIELDS, MASTER_CHECK_CODES, _master_date, _master_row_checks,
+    qualified_adj_factors, qualified_security_master,
 )
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
@@ -64,7 +65,7 @@ PUBLIC_CODES = frozenset({
     'RELAY_AUTH_OR_ENTITLEMENT', 'RELAY_RATE_LIMIT', 'RELAY_JSON_INVALID',
     'RELAY_HTTP_404', 'RELAY_HTTP_405', 'RELAY_HTTP_RESPONSE_INVALID',
     'SOURCE_COUNT_INVALID', 'SOURCE_CELL_INVALID', 'SOURCE_TEXT_TOO_LARGE',
-})
+}) | frozenset('MARKET_RELAY_' + code for code in MASTER_CHECK_CODES)
 
 
 def _code(value: object) -> str:
@@ -149,6 +150,50 @@ def _catalogue_shape(view: dict, expected_type: str) -> dict:
     return out
 
 
+def _master_shape(view: dict, exchange: str, status: str, end: str) -> dict:
+    """Inspect all received rows without exporting identity, dates or source values.
+
+    Failed checks overlap; unavailable prerequisites have separate counters.
+    Duplicates count later appearances against the first raw eight-column row,
+    not distinct issuers or market opportunities. This never qualifies a slice.
+    """
+    names = {type(None): 'null', bool: 'boolean', int: 'integer', float: 'number', str: 'string'}
+    types = {field: {kind: 0 for kind in ('missing', 'null', 'boolean', 'integer', 'number', 'string', 'other')}
+             for field in sorted(MASTER_FIELDS)}
+    out = {'coverage': 'complete-capture-not-qualified' if view['complete'] else 'received-pages-only',
+        'rows_checked': 0, 'rows_with_issues': 0, 'field_types': types,
+        'reason_counts': {'MARKET_RELAY_' + c: 0 for c in MASTER_CHECK_CODES},
+        'not_assessable_counts': {'MARKET_RELAY_' + c: 0 for c in MASTER_CHECK_CODES},
+        'date_counts': {f: {k: 0 for k in ('missing', 'invalid', 'on_or_before_end', 'after_end')}
+                        for f in ('list_date', 'delist_date')},
+        'duplicate_identical_rows': 0, 'duplicate_different_rows': 0}
+    seen = {}
+    for row in _rows(view):
+        checks, _ = _master_row_checks(row, seen, exchange, status)
+        out['rows_checked'] += 1
+        out['rows_with_issues'] += int(any(v is False for v in checks.values()))
+        for reason, passed in checks.items():
+            out['reason_counts']['MARKET_RELAY_' + reason] += int(passed is False)
+            out['not_assessable_counts']['MARKET_RELAY_' + reason] += int(passed is None)
+        for field, counts in types.items():
+            kind = names.get(type(row[field]), 'other') if field in row else 'missing'
+            counts[kind] += 1
+        for field, counts in out['date_counts'].items():
+            valid, day = _master_date(row.get(field))
+            kind = ('invalid' if not valid else 'missing' if day is None
+                    else 'on_or_before_end' if day <= end else 'after_end')
+            counts[kind] += 1
+        if checks['SECURITY_INVALID']:
+            code = row['ts_code']
+            representation = encoded({f: row.get(f) for f in sorted(MASTER_FIELDS)})
+            if code in seen:
+                key = 'duplicate_identical_rows' if representation == seen[code] else 'duplicate_different_rows'
+                out[key] += 1
+            else:
+                seen[code] = representation
+    return out
+
+
 def check_scope(exchange: str, start: str, end: str, now: datetime) -> None:
     require(isinstance(exchange, str) and exchange in EXCHANGES, 'MARKET_CHECK_EXCHANGE')
     lo, hi = _range(start, end)
@@ -229,6 +274,9 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
             item.update(row_count=view['row_count'], page_count=view['page_count'])
             if api == 'ths_index':
                 item['catalogue_shape'] = _catalogue_shape(view, params['type'])
+            elif api == 'stock_basic':
+                item['master_shape'] = _master_shape(view, exchange, params['list_status'],
+                                                      _range(start, end)[1])
             if not view['complete']:
                 item.update(status='capture-incomplete', reason_code=_code(capture['error']))
                 return result, None

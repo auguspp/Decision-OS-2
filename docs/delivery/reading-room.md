@@ -12,6 +12,8 @@
 
 HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文、逐题复核、已存 Brief、确切引用及原文下载。页面中的导出按钮只生成原操作请求或后继阅读计划，不联网、不调宿主、不写库、不新开研究。点击简报中的研究，已在本页的直接显示；否则导出带确切 `reference` 的同一阅读入口请求。已有新闻工作台仍由原 `read-desk` 打开，不另复制新闻页面。
 
+原附件、来源表示与前驱导航使用同一入口的可选 `materials` 计划，见[材料阅读](reading-materials.md)。仅显式请求时读取；材料公开权利独立确认，不由研究或反馈许可代签。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。
@@ -48,7 +50,7 @@ decision-os store --path /tmp/existing-synthetic.git research-room \
 
 目录权限/快照错误沿原owner失败，不能返回空目录冒称成功；单份研究、议程或简报失败显示missing/unavailable/invalid，只限制相依面板。读取正文不刷新来源资格或研究经济质量。重要未决项、挑战、来源分页和原读取请求保留；源缺失时可保留研究正文，但无法重建的简报不获得采用认证。
 
-原Catalogue卡片和Reader源页限额不变。本页单研究正文1MiB、正文总展示2MiB；可选面板768KiB、完整模型6MiB、HTML8MiB。超限对象整项显示not-included并保留原引用/读取通路，不截断、改写或删除原研究。过大整页或无法再次验证访问则明确失败。原8MiB结果、60KiB输入、512存储请求均不提高、不重置；Brief来源复用原 `_SourceReads`，统计仅代表新闻部分。全局请求预算耗尽可能阻止最终权限复核，不能伪称局部成功。
+原Catalogue卡片和Reader源页限额不变。本页单研究正文1MiB、正文总展示2MiB；议程/简报面板768KiB、可选材料面板2MiB、完整模型6MiB、HTML8MiB。超限对象整项显示not-included并保留原引用/读取通路，不截断、改写或删除原研究。过大整页或无法再次验证访问则明确失败。原8MiB结果、60KiB输入、512存储请求均不提高、不重置；Brief来源复用原 `_SourceReads`，统计仅代表新闻部分。全局请求预算耗尽可能阻止最终权限复核，不能伪称局部成功。
 
 沿原新闻页评估过的标准 DOM/textContent、JSON HTML边界转义、CSP脚本/样式摘要与标准库；这是有界固定离线投影，不需要React、CMS、模板执行器或第三方服务。来源与原文中的脚本、HTML和指令只是文本。无外部字体、自动网络、localStorage、表单或用户选择表。
 

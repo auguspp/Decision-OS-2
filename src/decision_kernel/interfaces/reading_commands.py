@@ -12,12 +12,16 @@ def preflight(operation, payload):
     if operation != OPERATION:
         return
     require(isinstance(payload, dict) and "plan" in payload and set(payload) <= {
-        "plan", "public_research_custody_confirmed", "public_feedback_custody_confirmed"},
+        "plan", "public_research_custody_confirmed", "public_feedback_custody_confirmed",
+        "public_material_custody_confirmed"},
         "ROOM_PAYLOAD_INVALID")
     plan = plan_input(payload["plan"])
     require(payload.get("public_research_custody_confirmed") is True, "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
     require(plan["agenda"] is None or payload.get("public_feedback_custody_confirmed") is True,
             "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
+
+    require(not plan.get("materials") or payload.get("public_material_custody_confirmed") is True,
+            "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
 
 
 def perform(store, payload, *, public=True):
@@ -26,7 +30,8 @@ def perform(store, payload, *, public=True):
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
     reads = _SourceReads(store.read_source)
     result = ReadingRoom(store, source_reader=reads).build(
-        payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True)
+        payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True,
+        material_export=not public or payload.get("public_material_custody_confirmed") is True)
     result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result
 

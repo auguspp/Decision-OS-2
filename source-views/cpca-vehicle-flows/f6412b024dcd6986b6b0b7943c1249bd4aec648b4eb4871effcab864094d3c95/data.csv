@@ -1,0 +1,3 @@
+subject_id,metric,specification,region,currency,unit,price_kind,market,contract,tax_basis,frequency,period_kind,assessment,period_start,period_end,value
+cpca-passenger-cn,vehicle-domestic-retail,CPCA-passenger-published-population,China-domestic-retail,not-applicable,10k-vehicles,not-applicable,not-applicable,not-applicable,not-applicable,monthly,period-flow,preliminary-scan,2026-08-01,2026-08-31,162.6
+cpca-nev-passenger-cn,vehicle-domestic-retail,CPCA-NEV-passenger-published-population,China-domestic-retail,not-applicable,10k-vehicles,not-applicable,not-applicable,not-applicable,not-applicable,monthly,period-flow,preliminary-scan,2026-08-01,2026-08-31,106.9

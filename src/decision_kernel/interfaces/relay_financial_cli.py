@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
+import time
 
 from decision_kernel.application.relay_financial_batch import capture_batch, save_capture
 from decision_kernel.application.versioned_store import VersionedStore
@@ -17,6 +18,7 @@ from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.infrastructure.relay_financial import capture_query
 from decision_kernel.infrastructure.relay_http import RelayHTTP
+from decision_kernel.infrastructure.relay_retry import RetryingRelay, RetryPolicy
 from decision_kernel.observations.relay_financial import SPECS, FinancialQuery, build_plan, inspect_capture
 
 MAX_LINE = 16 * 1024 * 1024  # Per record memory guard; files are streamed.
@@ -89,6 +91,9 @@ def main(argv=None, *, family="financial"):
     capture.add_argument("--output", type=Path, required=True)
     capture.add_argument("--page-size", type=int, default=100)
     capture.add_argument("--max-pages", type=int, default=100, help="per-query safety guard, adjustable; not a fee quota")
+    capture.add_argument("--max-attempts", type=int, default=4)
+    capture.add_argument("--max-wait-seconds", type=int, default=180)
+    capture.add_argument("--run-seconds", type=int, default=900)
     inspect = commands.add_parser("inspect", help="local captured-source summary, not a new source request")
     inspect.add_argument("--capture", type=Path, required=True)
     inspect.add_argument("--include-rows", action="store_true", help="include original values, units and date qualifications")
@@ -117,7 +122,9 @@ def main(argv=None, *, family="financial"):
             require(type(args.max_pages) is int and args.max_pages > 0, "FINANCIAL_PAGE_BOUND_INVALID")
             for query in queries:
                 query.parameters(page_size=args.page_size)
-            transport = RelayHTTP()
+            require(type(args.run_seconds) is int and 30 <= args.run_seconds <= 3600, "RELAY_RUN_BOUND_INVALID")
+            transport = RetryingRelay(RelayHTTP(), RetryPolicy(args.max_attempts, args.max_wait_seconds),
+                                      deadline=time.monotonic() + args.run_seconds)
             transport.validate_credential()
             failed = 0
             with _new_file(args.output) as out:

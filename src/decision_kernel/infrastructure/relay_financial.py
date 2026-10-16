@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from decision_kernel.domain.records import RecordError, digest, encoded, require
@@ -46,6 +47,8 @@ def capture_query(query: FinancialQuery, *, transport=None, page_size=100, max_p
                                       "transport": getattr(client, "last_response_meta", None)})
             if projection is not None:
                 capture["pages"][-1]["response_projection"] = projection
+            if hasattr(client, "last_attempts"):
+                capture["pages"][-1]["request_attempts"] = deepcopy(client.last_attempts)
             offset += page["row_count"]
             declared_rows = max(declared_rows, page["reported_count"] or 0)
             if page["row_count"] < page_size:
@@ -54,7 +57,11 @@ def capture_query(query: FinancialQuery, *, transport=None, page_size=100, max_p
                 return capture
         except RecordError as exc:
             capture["error"] = str(exc)
-            if failure_details:
+            if hasattr(client, "last_attempts"):
+                capture["request_attempts"] = deepcopy(client.last_attempts)
+                capture["pending_retry"] = deepcopy(client.pending_retry)
+                capture["next_parameters"] = query.parameters(offset=offset, page_size=page_size)
+            if failure_details or hasattr(client, "last_attempts"):
                 failure = getattr(client, "last_error_meta", None)
                 meta = getattr(client, "last_response_meta", None)
                 if failure is None and meta is not None:

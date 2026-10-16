@@ -5,6 +5,7 @@ No provider routing, retry, scheduling, cost quota, or untrusted URL selection.
 from __future__ import annotations
 
 from hashlib import sha256
+from datetime import datetime, timezone
 from http.client import HTTPException
 import json
 import os
@@ -14,7 +15,7 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from decision_kernel.domain.records import RecordError, require
-from decision_kernel.infrastructure.relay_failure import http_failure, transport_failure
+from decision_kernel.infrastructure.relay_failure import http_failure, transport_failure, retry_after
 
 ROOT = "https://pcd.mobcvb.cn/tushare/pro"
 CAPABILITIES = "https://pcd.mobcvb.cn/tushare/capabilities"
@@ -41,11 +42,12 @@ class RelayHTTP:
         self.last_response_meta = None
         self.last_response_bytes = None
         self.last_error_meta = None
+        self.last_retry_after = ("missing", None)
 
     def validate_credential(self):
         key = self._credential
         require(isinstance(key, str) and 8 <= len(key) <= 4096 and key.isascii()
-                and all(33 <= ord(c) <= 126 for c in key), "RELAY_CREDENTIAL_REQUIRED")
+                and all(33 <= ord(c) < 127 for c in key), "RELAY_CREDENTIAL_REQUIRED")
         return key
 
     def request(self, api: str, parameters: dict[str, str], *, max_bytes=MAX_BODY,
@@ -70,6 +72,13 @@ class RelayHTTP:
         exact = ROOT + "/" + api + "?" + urlencode(parameters)
         return self._get_json(exact, max_bytes=max_bytes, agent=agent)
 
+    def request_registered(self, registry, api, parameters):
+        """Explicit business use of a trusted catalogue; not arbitrary host or method routing."""
+        from decision_kernel.application.research_sources import parameters_for
+        checked, _ = parameters_for(registry, api, parameters)
+        return self._get_json(ROOT + "/" + api + "?" + urlencode(checked),
+                              max_bytes=MAX_BODY, agent="DecisionOS2-ResearchSources/0.1")
+
     def capabilities(self, api: str | None = None) -> dict:
         """Read service metadata only; never invoke an API named in the response."""
         require(api is None or isinstance(api, str) and
@@ -78,11 +87,12 @@ class RelayHTTP:
         return self._get_json(exact, max_bytes=MAX_BODY, agent="DecisionOS2-Capabilities/0.1")
 
     def _get_json(self, exact, *, max_bytes, agent):
-        # Only the two fixed-URL public methods above dispatch here.
+        # Only fixed-URL public methods above dispatch here.
         require(type(max_bytes) is int and 1 <= max_bytes <= MAX_BODY, "RELAY_RESPONSE_BOUND_INVALID")
         self.last_response_meta = None
         self.last_response_bytes = None
         self.last_error_meta = None
+        self.last_retry_after = ("missing", None)
         key = self.validate_credential()
         self.requests += 1
         request = Request(exact, method="GET", headers={"X-API-Key": key,
@@ -103,6 +113,7 @@ class RelayHTTP:
                 def safe_header(name):
                     value = resp.headers.get(name)
                     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) and key not in value else None
+                wait_metadata = retry_after(resp.headers, key, datetime.now(timezone.utc))
                 meta = {"http_status": 200, "x_request_id": safe_header("X-Request-ID"),
                         "x_cache": safe_header("X-Cache"), "wire_sha256": sha256(raw).hexdigest()}
         except HTTPError as exc:
@@ -139,4 +150,5 @@ class RelayHTTP:
                 pending.extend(value)
         self.last_response_meta = meta
         self.last_response_bytes = raw
+        self.last_retry_after = wait_metadata
         return result

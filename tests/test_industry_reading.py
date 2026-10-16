@@ -164,7 +164,7 @@ def test_revision_regression_overlap_and_cumulative_not_monthly_flow(store):
     assert monthly["status"] == "changed"  # August and September have different calendar lengths.
     out = change(store, row_changes={0: {"period_kind": "period-flow", "frequency": "irregular"},
                                     1: {"period_kind": "period-flow", "frequency": "irregular"}})
-    assert out["reason_code"] == "INDUSTRY_FLOW_WINDOWS_DIFFER"
+    assert out["reason_code"] == "INDUSTRY_PERIOD_WINDOWS_DIFFER"
 
 
 @pytest.mark.parametrize("mutation", ["quote", "identity", "period", "sellside", "locator", "channel", "missing"])
@@ -286,3 +286,19 @@ def test_remote_cli_forces_readonly_binding(store, tmp_path, capsys):
         assert industry_cli.main(["--binding", str(binding), "--ref", str(reference)]) == 0
     assert backend.call_args.args[0].write_enabled is False
     assert json.loads(capsys.readouterr().out)["writes"] == 0
+
+
+def test_observation_cannot_be_future_to_its_source_and_average_windows_must_match(store):
+    out = change(store, row_changes={1: {"period_start": "2026-10-02", "period_end": "2026-10-05"}})
+    assert out["reason_code"] == "INDUSTRY_POINT_UNAVAILABLE"
+    out = change(store, row_changes={1: {"period_start": "2026-09-15"}})
+    assert out["reason_code"] == "INDUSTRY_PERIOD_WINDOWS_DIFFER"
+
+
+def test_supported_decimal_extremes_keep_exact_delta(store):
+    from decimal import Decimal, localcontext
+    before, after = "9" * 63, "0." + "0" * 60 + "1"
+    out = change(store, row_changes={0: {"value": before}, 1: {"value": after}})
+    with localcontext() as context:
+        context.prec = 128
+        assert Decimal(out["delta"]) == Decimal(after) - Decimal(before)

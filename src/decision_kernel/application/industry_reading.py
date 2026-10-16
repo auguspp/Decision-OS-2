@@ -112,6 +112,8 @@ def _point(reference, subject, read, prepared, cutoff):
             "INDUSTRY_CONTRACT_REQUIRED")
     start, end = _day(row["period_start"]), _day(row["period_end"])
     require(start <= end <= cutoff.date(), "INDUSTRY_PERIOD_RANGE")
+    require(end <= min(_day(meta[field][:10]) for field in ("published_at", "acquired_at")),
+            "INDUSTRY_PERIOD_AFTER_SOURCE")
     if row["period_kind"] == "ytd-flow":
         require(start == date(end.year, 1, 1), "INDUSTRY_YTD_START")
     if row["value"] != "":
@@ -144,16 +146,16 @@ def _change(previous, current):
             return {**result, "reason_code": "INDUSTRY_CUMULATIVE_NOT_PERIOD_FLOW"}
         if new_period[0] <= old_period[1]:
             return {**result, "reason_code": "INDUSTRY_PERIODS_OVERLAP"}
-        if current["period_kind"] == "period-flow":
+        if current["period_kind"] == "period-flow" or current["assessment"] == "period-average":
             # Equal duration or whole calendar months are comparable flow windows.
             a, b, c, d = map(_day, (*old_period, *new_period))
             monthly = current["frequency"] == "monthly" and all(
                 x.day == 1 and y.day == monthrange(y.year, y.month)[1]
                 and (x.year, x.month) == (y.year, y.month) for x, y in ((a, b), (c, d)))
             if b - a != d - c and not monthly:
-                return {**result, "reason_code": "INDUSTRY_FLOW_WINDOWS_DIFFER"}
+                return {**result, "reason_code": "INDUSTRY_PERIOD_WINDOWS_DIFFER"}
     with localcontext() as context:
-        context.prec = 80
+        context.prec = 128
         before, after = _decimal(previous["value"]), _decimal(current["value"])
         delta = after - before
         percent = delta / abs(before) * 100 if before != 0 else None

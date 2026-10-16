@@ -53,7 +53,7 @@ subject_id,metric,specification,region,currency,unit,price_kind,market,contract,
 - `price_kind`：`quote/transaction/survey/not-applicable`，报价、成交、调查统计不互换。
 - `market`：`spot/futures/not-applicable`；期货须指定 `contract`，非期货写 `not-applicable`，换月不暗接连续价。
 - `period_kind`：`price-level/index-level/stock/period-flow/ytd-flow`。
-- 期间为 ISO 日期起止，起止有序且不晚于 cutoff；YTD 必须从当年 1 月 1 日开始。
+- 期间为 ISO 日期起止，起止有序且不晚于 cutoff 或资料发布/取得日期；YTD 必须从当年 1 月 1 日开始。
 - `value` 为最多 64 字符的有限十进制字符串，空单元格表示缺失；不把它填 0。
 
 来源的 `acquired_at/published_at` 必须存在且不晚于整理时间。
@@ -61,7 +61,7 @@ subject_id,metric,specification,region,currency,unit,price_kind,market,contract,
 
 按包给定顺序逐相邻观察比较，不跨缺失点补连。全部口径及来源 `source_id/origin` 相同才算同系列；
 来源替换须重新核基线。完全相同期间区分不变与修订；回退、重叠期间拒绝。
-不同期间的 YTD 不当月度流量；期间流量要求相同长度或完整自然月。
+不同期间的 YTD 不当月度流量；期间流量及期间均价要求相同长度或完整自然月。
 变化保留正负号，百分比以旧值绝对值为分母，零基数只返回绝对变化。
 读取成功不等于可比，须检查每个 `changes/latest_change.status` 和 `reason_code`。
 

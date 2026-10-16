@@ -29,6 +29,38 @@ python -m decision_kernel.interfaces.industry_cli --binding config/store-binding
 无结果表示此包未覆盖该联系；`scope` 和 `relation_outcomes` 始终保留整包分母。
 退出码 2 表示输入失败或部分恢复，成功分支仍在输出中。
 
+## 原生宿主的整包只读入口
+
+没有本地凭据时可使用现役 `research-runtime.yml` 的 `industry-read` 操作。
+先核当前 `main` 并填确切 `code_sha`；`submission_id/expected_head` 留空。
+`payload` 是下列 JSON，对应的 `reference` 必须替换成实际已保存阅读包的完整 SourceRef：
+
+```json
+{"reference": "替换为实际完整 SourceRef 对象", "view": "vehicle-flows", "company_id": "company-example", "public_sources_custody_confirmed": true}
+```
+
+`view` 必须显式选 `industry`、`operating-cycle` 或 `vehicle-flows`。
+`subject_id/company_id` 可都省略，但不可同时非空；经营周期不支持公司过滤，
+应改用原 `industry` 或 `vehicle-flows`，不能把宏观总量映射成个股暴露。
+完整原根、行/段引用、期间、限制、比较拒绝和整包分母均由原读取器返回，
+不将网址、临时 JSON 或前次 CI 文件当成已保管根，也不自动改用最新数据。
+
+公开来源表示确认与研究/反馈授权不同：调用者须核本包及实际依赖可在公开运行产物中保管。
+未确认、选择不合法、额外 URL/代码字段或非整包引用在 Store/网络和公开产物创建前拒绝。
+原 read 作业继续使用只读权限；原 write 条件、CAS、512 请求及结果大小上限均不变。
+只访问绑定资料库，不请求来源网页、Relay 或 AI。结果中的 `source_requests=0`
+是没有原始来源采集，不代表没有 GitHub 资料库 GET。
+
+检查 `report.json` 而不只看作业名称：完整可读为 `completed`；部分恢复保留
+`result` 内成功分支与缺失原因，报告 `industry-reading-partial` 且宿主退出码 2。
+无法打开根、完整性/权限/作用域退出检查失败不返回中间结果；超出原产物上限也不截断求绿。
+已可读但不可比（例如累计相减或初步批次混比）沿原比较 reason_code 展示，
+不把数据缺失与不适用的算术混成同一种失败。
+
+维护者同步维护 `interfaces/industry_commands.py` 和 `tests/test_industry_runtime.py`。
+退出此宿主接线时移除专属操作选项、分派/预检/部分状态及测试；原 CLI、三种读取器、
+历史 SourceRef 和共享权限/保管仍保留。线上读取、来源原件真实性、研究采用和人工接受分别验收。
+
 ## 阅读包
 
 阅读包以 `SourceInput(kind="content")` 的 JSON 正文保存：

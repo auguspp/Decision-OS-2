@@ -115,6 +115,29 @@ def _locator(value):
         raise RecordError("PARTICIPANT_LOCATOR_UNSAFE") from None
 
 
+
+def metadata_envelope(body):
+    """Project envelope metadata only; retain all control flags and the unmodified data table.
+
+    Unknown root values may contain text or secrets. Do not archive them, even if
+    the data rows are useful. Do not silently drop unknown data columns instead.
+    """
+    require(isinstance(body, dict), "PARTICIPANT_ENVELOPE_INVALID")
+    control = {"data", "code", "api_name", "count", "ok", "success", "error"}
+    result = {k: v for k, v in body.items() if k in control}
+    for key in ("request_id", "provider", "source"):
+        value = body.get(key)
+        if key in body and (value is None or isinstance(value, str) and len(value) <= 256):
+            result[key] = value
+    # Free-form success prose is not needed to interpret a structured response.
+    for key in ("msg", "message"):
+        if key in body and body[key] in (None, "", "ok", "OK", "success"):
+            result[key] = body[key]
+    return result, {"schema": "relay-metadata-envelope-projection-v1",
+                    "omitted_root_fields": len(body) - len(result),
+                    "original_body_retained": False}
+
+
 def normalize_page(query, body, *, captured_at, page_size=100, offset=0):
     require(isinstance(query, ParticipantQuery), "PARTICIPANT_QUERY_INVALID")
     query.parameters(offset=offset, page_size=page_size)
@@ -173,6 +196,15 @@ def normalize_page(query, body, *, captured_at, page_size=100, offset=0):
 def inspect_capture(capture):
     view = relay_financial.inspect_capture(capture, query_type=ParticipantQuery, schema=CAPTURE_SCHEMA,
                                           normalizer=normalize_page)
+    for original, page in zip(capture["pages"], view["pages"]):
+        projection = original.get("response_projection")
+        if projection is not None:
+            require(isinstance(projection, dict) and set(projection) ==
+                    {"schema", "omitted_root_fields", "original_body_retained"} and
+                    projection["schema"] == "relay-metadata-envelope-projection-v1" and
+                    type(projection["omitted_root_fields"]) is int and projection["omitted_root_fields"] >= 0 and
+                    projection["original_body_retained"] is False, "PARTICIPANT_PROJECTION_INVALID")
+            page["response_projection"] = dict(projection)
     view.update(source_interpretation={"report_rc": "SELL_SIDE_ESTIMATES_NOT_ISSUER_ACTUALS_OR_CONSENSUS",
         "research_report": "REPORT_METADATA_NOT_FETCHED_PDF", "stk_surv": "PARTICIPANT_ROWS_NOT_EVENT_COUNT_OR_HOLDINGS"}[view["query"]["api"]],
         pdf_read=False, event_count=None)

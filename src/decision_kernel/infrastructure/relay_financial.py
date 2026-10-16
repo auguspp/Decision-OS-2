@@ -10,7 +10,7 @@ from decision_kernel.observations.relay_financial import CAPTURE_SCHEMA, Financi
 
 
 def capture_query(query: FinancialQuery, *, transport=None, page_size=100, max_pages=100, clock=None,
-                  query_type=FinancialQuery, schema=CAPTURE_SCHEMA, normalizer=None, failure_details=False):
+                  query_type=FinancialQuery, schema=CAPTURE_SCHEMA, normalizer=None, failure_details=False, response_filter=None):
     """The max_pages guard is caller-controlled run safety, not a consumption quota.
 
     Offset compatibility is validated by the returned pages. Unsupported parameters,
@@ -26,12 +26,15 @@ def capture_query(query: FinancialQuery, *, transport=None, page_size=100, max_p
                "source_mode": "live-relay", "pages": [], "error": None}
     offset, seen, captured_bytes, declared_rows = 0, set(), 0, 0
     for _ in range(max_pages):
+        body, projection = None, None
         try:
             body = client.request(query.api, query.parameters(offset=offset, page_size=page_size))
             if isinstance(body, dict) and body.get("error") in ("rate_limited", "ip_rate_limited"):
                 raise RecordError("RELAY_RATE_LIMIT")
             if isinstance(body, dict) and body.get("error") in ("unauthorized", "forbidden"):
                 raise RecordError("RELAY_AUTH_OR_ENTITLEMENT")
+            if response_filter is not None:
+                body, projection = response_filter(body)
             captured_bytes += len(encoded(body))
             require(captured_bytes <= 8 * 1024 * 1024, "FINANCIAL_CAPTURE_MEMORY_LIMIT")
             stamp = now()
@@ -41,6 +44,8 @@ def capture_query(query: FinancialQuery, *, transport=None, page_size=100, max_p
             seen.add(fingerprint)
             capture["pages"].append({"offset": offset, "captured_at": stamp, "body": body,
                                       "transport": getattr(client, "last_response_meta", None)})
+            if projection is not None:
+                capture["pages"][-1]["response_projection"] = projection
             offset += page["row_count"]
             declared_rows = max(declared_rows, page["reported_count"] or 0)
             if page["row_count"] < page_size:
@@ -50,7 +55,18 @@ def capture_query(query: FinancialQuery, *, transport=None, page_size=100, max_p
         except RecordError as exc:
             capture["error"] = str(exc)
             if failure_details:
-                capture["failure"] = getattr(client, "last_error_meta", None)
+                failure = getattr(client, "last_error_meta", None)
+                meta = getattr(client, "last_response_meta", None)
+                if failure is None and meta is not None:
+                    data = body.get("data") if isinstance(body, dict) else None
+                    fields = data.get("fields") if isinstance(data, dict) else None
+                    rows = data.get("items") if isinstance(data, dict) else None
+                    failure = {"classification": "response-contract", "http_status": meta["http_status"],
+                               "transport": meta, "local_error": str(exc),
+                               "field_count": len(fields) if isinstance(fields, list) else None,
+                               "row_count": len(rows) if isinstance(rows, list) else None,
+                               "response_projection": projection}
+                capture["failure"] = failure
             return capture
     capture["error"] = "FINANCIAL_PAGE_BOUND_REACHED"
     return capture

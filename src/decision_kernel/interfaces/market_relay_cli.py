@@ -6,10 +6,7 @@ import json
 from pathlib import Path
 import sys
 
-from decision_kernel.application.market_relay_inputs import read_relay_stock_surface
-from decision_kernel.application.market_security_inputs import read_security_stock_surface
-from decision_kernel.application.market_group_inputs import (
-    GROUP_REQUIRED, read_ths_group_surface, read_three_market_surfaces)
+from decision_kernel.application.market_reading import read_market_payload
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.domain.records import RecordError
 from decision_kernel.interfaces.market_cli import MAX_INPUT_BYTES, _object, _constant
@@ -30,34 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(raw) > MAX_INPUT_BYTES:
             raise MarketInputError("INPUT_TOO_LARGE")
         payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_object, parse_constant=_constant)
-        if not isinstance(payload, dict):
-            raise MarketInputError("MARKET_RELAY_PAYLOAD_INVALID")
-        schema = payload.get("schema")
-        required = {"schema", "calendar_result", "stock_results", "exchange", "start", "end"}
-        optional = {"horizons"}
-        if schema == "relay-stock-reading-v1":
-            required |= {"declared_entities", "coverage"}
-            reader = read_relay_stock_surface
-        elif schema == "relay-security-stock-reading-v1":
-            required |= {"master_results", "factor_results"}
-            reader = read_security_stock_surface
-        elif schema == "relay-ths-group-reading-v1":
-            required = GROUP_REQUIRED | {"schema", "kind"}
-            optional |= {"benchmark"}
-            reader = read_ths_group_surface
-        elif schema == "relay-three-market-reading-v1":
-            required, optional = {"schema", "surfaces"}, set()
-            reader = read_three_market_surfaces
-        else:
-            raise MarketInputError("MARKET_RELAY_PAYLOAD_INVALID")
-        if not required <= payload.keys() or payload.keys() - required - optional:
-            raise MarketInputError("MARKET_RELAY_PAYLOAD_INVALID")
-        payload.pop("schema")
-        if "horizons" in payload:
-            if not isinstance(payload["horizons"], list):
-                raise MarketInputError("HORIZON_INVALID")
-            payload["horizons"] = tuple(payload["horizons"])
-        result = reader(**payload, registry=RelayRegistry(args.registry),
+        result = read_market_payload(payload, RelayRegistry(args.registry),
             offset=args.offset, limit=args.limit, entity_id=args.entity_id)
     except OSError:
         error = "INPUT_UNREADABLE"

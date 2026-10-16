@@ -7,9 +7,9 @@ on:
         type: string
         required: true
       selection:
-        description: 'sample checks all ten slots; catalogues checks only THS I/N and never derives samples'
+        description: 'sample: all ten slots; catalogues: only THS I/N; stock: only calendar/master/daily/factor'
         type: choice
-        options: [sample, catalogues]
+        options: [sample, catalogues, stock]
         default: sample
       exchange:
         description: 'One listing/calendar venue; THS groups remain A-share classifications'

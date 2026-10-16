@@ -1,0 +1,108 @@
+name: decision-os-news-rolling
+on:
+  workflow_dispatch:
+    inputs:
+      code_sha:
+        description: 'Exact inspected main code SHA with successful independent CI'
+        type: string
+        required: true
+      plan:
+        description: 'Public JSON: as_of, batch_references (exact SourceRef list), optional predecessor SourceRef'
+        type: string
+        required: true
+      save:
+        description: 'Preserve this derived 24-hour metadata through the existing source writer'
+        type: boolean
+        default: false
+        required: true
+      public_metadata_custody_confirmed:
+        description: 'This derived metadata may be public; not publisher full text or new collection'
+        type: boolean
+        default: false
+        required: true
+      submission_id:
+        description: 'Stable original intent for one save; empty for read-only build'
+        type: string
+        default: ''
+      expected_head:
+        description: 'Exact records SHA inspected before this save; empty for read-only build'
+        type: string
+        default: ''
+permissions: {}
+concurrency:
+  group: decision-os-news-rolling
+  cancel-in-progress: false
+jobs:
+  build:
+    if: >-
+      github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 && (!inputs.save || inputs.public_metadata_custody_confirmed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Verify exact main CI before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_CODE: ${{ inputs.code_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_CODE"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 > "$RUNNER_TEMP/news-roll-ci.json"
+          python - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP']+'/news-roll-ci.json') as f: runs=json.load(f)['workflow_runs']
+          assert any(r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push' and r['path']=='.github/workflows/ci.yml' and r['run_attempt']==1 and r['status']=='completed' and r['conclusion']=='success' for r in runs)
+          PY
+      - name: Build without write permission
+        if: '!inputs.save'
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_NEWS_MODE: read
+        run: python -m decision_kernel.interfaces.news_rolling_cli build --out "$RUNNER_TEMP/news-roll"
+      - name: Retain read-only result
+        if: always() && !inputs.save
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-news-roll-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/news-roll/
+          if-no-files-found: warn
+          retention-days: 30
+  save:
+    needs: build
+    if: inputs.save && inputs.public_metadata_custody_confirmed
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Build and save via existing conditional source writer
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_NEWS_MODE: write
+        run: python -m decision_kernel.interfaces.news_rolling_cli build --out "$RUNNER_TEMP/news-roll"
+      - name: Preserve original input and confirmed or unknown save result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-news-roll-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/news-roll/
+          if-no-files-found: warn
+          retention-days: 30

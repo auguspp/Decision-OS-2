@@ -1,6 +1,6 @@
 # NewsNow + Relay 新闻采集、保管与读取
 
-归属 [#46](https://github.com/auguspp/Decision-OS-2/issues/46)，父责任 #12。本入口交付有限新闻观察，RSS/18小时滚动与日常采用保留在[#48](https://github.com/auguspp/Decision-OS-2/issues/48)/#13；不把一个代码PR当成完整旧新闻站点。
+归属 [#46](https://github.com/auguspp/Decision-OS-2/issues/46)，父责任 #12。本入口交付有限新闻观察；[24小时滚动与精确前驱](news-rolling.md)由[#48](https://github.com/auguspp/Decision-OS-2/issues/48)承担，RSS及日常采用仍按#48/#13各自验收；不把一个代码PR当成完整旧新闻站点。
 
 ## 复用与边界
 
@@ -62,4 +62,4 @@ python -m decision_kernel.interfaces.news_cli export-locators \
 
 专属捕获回执/原生ZIP接收/安全呈现测试随本新闻能力维护，原SourceInput/条件提交/研究只读归原owner；不因本Issue关闭删除共享保护。实际来源/保管/独立读取、长期恢复、模型分析和用户接受分层验收，具体发生过什么看#46原生回执。
 
-RSS前驱/18小时滚动仍归#48；#13接新闻浏览、Attention、晨晚Brief及迟到采用；#7对线索查证、提出可反驳研究问题。没有自动启用旧十分钟cron、新GPT任务、通知、Sites或正式Decision。某个来源失败不应阻止已合格资料的保管和读取，也不能以有限新闻计数签完整覆盖。
+用户于2026-10-16明确采用[24小时滚动](news-rolling.md)，不沿用旧18小时参数；这不改变采集频率或自动补齐未采集时段。RSS前驱仍归#48；#13接新闻浏览、Attention、晨晚Brief及迟到采用；#7对线索查证、提出可反驳研究问题。没有自动启用旧十分钟cron、新GPT任务、通知、Sites或正式Decision。某个来源失败不应阻止已合格资料的保管和读取，也不能以有限新闻计数签完整覆盖。

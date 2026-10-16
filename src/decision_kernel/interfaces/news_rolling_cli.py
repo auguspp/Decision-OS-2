@@ -1,4 +1,4 @@
-"""Explicit 24-hour news build on the existing store, and offline filtered reading."""
+"""Explicit 24-hour news build/read on the existing store; never source collection."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,8 @@ from decision_kernel.domain.records import RecordError, SourceInput, encoded, id
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.interfaces.research_payload import json_object, pack_payload
 from decision_kernel.interfaces.research_runtime import run_command
-from decision_kernel.application.news_rolling import MAX_BYTES, read_rolling, rolling_news
+from decision_kernel.application.news_rolling import MAX_BYTES, read_rolling
+from decision_kernel.application.news_rolling_index import SCHEMA as INDEX_SCHEMA, open_index, read_index, rolling_index
 
 REPOSITORY = "auguspp/Decision-OS-2"
 WORKFLOW = REPOSITORY + "/.github/workflows/news-rolling.yml@refs/heads/main"
@@ -36,7 +37,10 @@ def build_on_host(output):
     inputs = event["inputs"]
     require(inputs["code_sha"] == os.environ.get("GITHUB_SHA"), "NEWS_ROLL_CODE_CHANGED")
     require(inputs.get("save") in ("true", "false"), "NEWS_ROLL_SAVE_REQUIRED")
+    operation = inputs.get("operation", "build")
+    require(operation in ("build", "read"), "NEWS_ROLL_OPERATION_REQUIRED")
     saving = inputs["save"] == "true"
+    require(not saving or operation == "build", "NEWS_ROLL_READ_CANNOT_SAVE")
     require(os.environ.get("DOS2_NEWS_MODE") == ("write" if saving else "read"),
             "NEWS_ROLL_JOB_PERMISSION_MISMATCH")
     if saving:
@@ -49,8 +53,12 @@ def build_on_host(output):
     text = inputs["plan"]
     require(isinstance(text, str) and len(text.encode("utf-8")) <= 60 * 1024, "NEWS_ROLL_PLAN_BOUND")
     plan = json_object(text.encode("utf-8"))
-    require(set(plan) <= {"as_of", "batch_references", "predecessor"}
-            and {"as_of", "batch_references"} <= set(plan), "NEWS_ROLL_PLAN_REQUIRED")
+    if operation == "build":
+        require(set(plan) <= {"as_of", "batch_references", "predecessor"}
+                and {"as_of", "batch_references"} <= set(plan), "NEWS_ROLL_PLAN_REQUIRED")
+    else:
+        require("reference" in plan and set(plan) <= {"reference", "source", "query", "limit", "cursor"},
+                "NEWS_ROLL_EXACT_INDEX_REQUIRED")
     binding = GitHubBinding.from_dict(_file(Path("config/store-binding.json"), 4096))
     require(binding.repository == REPOSITORY and binding.repository_id == 1420041744
             and binding.visibility == "public" and not binding.write_enabled, "NEWS_ROLL_BINDING_CHANGED")
@@ -58,10 +66,16 @@ def build_on_host(output):
     (output / "plan.json").write_bytes(encoded(plan))
     api = GitHubAPI.from_environment()
     reader = VersionedStore(GitHubStore(binding, api))
-    value = rolling_news(reader.read_source, plan["batch_references"], as_of=plan["as_of"],
-                         predecessor=plan.get("predecessor"))
+    if operation == "build":
+        value = rolling_index(reader.read_source, plan["batch_references"], as_of=plan["as_of"],
+                              predecessor=plan.get("predecessor"))
+        reading = read_index(reader.read_source, value)
+    else:
+        value = open_index(reader.read_source, plan["reference"])
+        reading = read_index(reader.read_source, value, **{k: v for k, v in plan.items() if k != "reference"})
+        reading["snapshot_reference"] = plan["reference"]
     (output / "view.json").write_bytes(encoded(value))
-    (output / "reading.json").write_bytes(encoded(read_rolling(value)))
+    (output / "reading.json").write_bytes(encoded(reading))
     if saving:
         source = SourceInput(source_id="news-roll-" + inputs["submission_id"], kind="content",
                              title="24小时新闻观察 / " + value["as_of"],
@@ -69,25 +83,30 @@ def build_on_host(output):
                              text=encoded(value).decode("utf-8"), custody="provided",
                              limitations=("DERIVED_NEWS_METADATA_NOT_ORIGINAL_ARTICLES",
                                           "OBSERVATION_TIME_NOT_PUBLICATION_TIME",
-                                          "BOUNDED_SELECTION_NOT_COMPLETE_NEWS_COVERAGE"))
+                                          "BOUNDED_SELECTION_NOT_COMPLETE_NEWS_COVERAGE",
+                                          "DERIVED_NEWS_INDEX_REQUIRES_RETAINED_SOURCE_VERSIONS"))
         command = {"operation": "put-source", "code_sha": inputs["code_sha"],
                    "submission_id": inputs["submission_id"], "expected_head": inputs.get("expected_head", ""),
                    "payload": pack_payload(encoded(asdict(source)))}
         # The existing writer retains its original input and handles CAS/unknown writes.
-        run_command(binding, api=api, inputs=command, code_sha=inputs["code_sha"],
-                    output=output / "result", run_id=os.environ["GITHUB_RUN_ID"], attempt="1")
-    print(json.dumps({"status": "built-observation-window", "saved_requested": saving,
-                      "window_hours": value["window_hours"], "rolling_sha256": value["rolling_sha256"],
-                      "coverage": value["coverage"], "losses": value["losses"]}, ensure_ascii=False))
+        report = run_command(binding, api=api, inputs=command, code_sha=inputs["code_sha"],
+                             output=output / "result", run_id=os.environ["GITHUB_RUN_ID"], attempt="1")
+        require(report["status"] == "completed" and report["write"] in ("published", "replayed"),
+                "NEWS_ROLL_SAVE_NOT_CONFIRMED")
+    print(json.dumps({"status": "read-exact-index" if operation == "read" else "built-observation-index",
+                      "saved_requested": saving, "window_hours": value["window_hours"],
+                      "index_sha256": value["index_sha256"], "logical_sha256": value["logical_sha256"],
+                      "entry_count": value["entry_count"], "coverage": value["coverage"],
+                      "losses": value["losses"]}, ensure_ascii=False))
     return 0
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m decision_kernel.interfaces.news_rolling_cli")
     sub = parser.add_subparsers(dest="command", required=True)
-    build = sub.add_parser("build", help="explicit native host only; no source collection")
+    build = sub.add_parser("build", help="explicit native build/read host only; no source collection")
     build.add_argument("--out", required=True, type=Path)
-    read = sub.add_parser("read", help="offline, immutable rolling view and all source health")
+    read = sub.add_parser("read", help="offline legacy inline view; compact indexes need exact source replay")
     read.add_argument("--window", required=True, type=Path)
     read.add_argument("--source")
     read.add_argument("--query", default="")
@@ -98,6 +117,7 @@ def main(argv=None):
         if args.command == "build":
             return build_on_host(args.out)
         value = _file(args.window, MAX_BYTES)
+        require(value.get("schema") != INDEX_SCHEMA, "NEWS_INDEX_REQUIRES_EXACT_SOURCE_READER")
         cursor = _file(args.cursor, 4096) if args.cursor else None
         print(json.dumps(read_rolling(value, source=args.source, query=args.query,
                                       limit=args.limit, cursor=cursor), ensure_ascii=False))

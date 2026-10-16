@@ -167,7 +167,7 @@ def _seal(value):
     return value
 
 
-def verify_rolling(value):
+def _verify_rolling(value, *, max_bytes):
     require(isinstance(value, dict) and value.get("schema") == SCHEMA
             and value.get("window_hours") == WINDOW_HOURS
             and value.get("meaning") == MEANING, "NEWS_ROLL_SCHEMA")
@@ -228,18 +228,19 @@ def verify_rolling(value):
         require(isinstance(loss, dict) and start <= clock(loss["at"]) <= end
                 and isinstance(loss.get("kind"), str) and re.fullmatch(r"[A-Z_]{1,64}", loss["kind"])
                 and type(loss.get("count")) is int and loss["count"] > 0, "NEWS_ROLL_LOSS_INVALID")
-    require(value["coverage"] == _coverage(value) and len(encoded(value)) <= MAX_BYTES,
+    require(value["coverage"] == _coverage(value) and len(encoded(value)) <= max_bytes,
             "NEWS_ROLL_COVERAGE_OR_SIZE")
     return value
 
 
-def rolling_news(reader, references, *, as_of, predecessor=None):
+def _assemble_news(reader, references, *, as_of, predecessor=None, _replay=False):
     """Read exact retained batches again. A bad predecessor limits, not erases, new news."""
     end = clock(as_of)
     require(end.year > 1, "NEWS_ROLL_CLOCK_RANGE")
     start = end - timedelta(hours=WINDOW_HOURS)
-    require(isinstance(references, (tuple, list)) and len(references) <= MAX_NEW_BATCHES,
-            "NEWS_ROLL_NEW_BATCH_BOUND")
+    require(isinstance(references, (tuple, list))
+            and len(references) <= (MAX_BATCHES if _replay else MAX_NEW_BATCHES)
+            and (not _replay or predecessor is None), "NEWS_ROLL_NEW_BATCH_BOUND")
     incoming = [reference(r) for r in references]
     prior_ref = reference(predecessor) if predecessor is not None else None
     refs, losses, previous = [], [], None
@@ -251,7 +252,12 @@ def rolling_news(reader, references, *, as_of, predecessor=None):
 
     if prior_ref is not None:
         try:
-            previous = verify_rolling(_load(reader, prior_ref))
+            saved = _load(reader, prior_ref)
+            if isinstance(saved, dict) and saved.get("schema") == "dos2-news-rolling-index-v1":
+                from decision_kernel.application.news_rolling_index import restore_index
+                previous = restore_index(reader, saved)
+            else:
+                previous = verify_rolling(saved)
             require(clock(previous["as_of"]) <= end, "NEWS_ROLL_PREDECESSOR_FROM_FUTURE")
             refs.extend(previous["batch_references"])
             losses.extend(deepcopy(x) for x in previous["losses"] if clock(x["at"]) >= start)
@@ -322,13 +328,24 @@ def rolling_news(reader, references, *, as_of, predecessor=None):
              "batch_references": [b[1] for b in batches], "rejected_references": rejected,
              "entries": ordered, "source_outcomes": outcomes, "losses": losses,
              "count_meaning": "DISTINCT_RETAINED_BATCHES_WITHIN_WINDOW_NOT_LIFETIME_OR_INDEPENDENT_EVENTS"}
+    return value
+
+
+def verify_rolling(value):
+    """Legacy materialized views retain their original 512KiB public contract."""
+    return _verify_rolling(value, max_bytes=MAX_BYTES)
+
+
+def rolling_news(reader, references, *, as_of, predecessor=None):
+    value = _assemble_news(reader, references, as_of=as_of, predecessor=predecessor)
+    losses = value["losses"]
     removed = 0
     while len(encoded(_seal(value))) > MAX_BYTES and value["entries"]:
         count = max(1, len(value["entries"]) // 10)
         removed += count
         del value["entries"][-count:]
     if removed:
-        loss("BYTE_LIMIT", removed)
+        losses.append({"kind": "BYTE_LIMIT", "at": value["as_of"], "count": removed})
         _seal(value)
         # Reserve the small loss receipt as well; never trim health to look green.
         while len(encoded(value)) > MAX_BYTES and value["entries"]:
@@ -336,9 +353,8 @@ def rolling_news(reader, references, *, as_of, predecessor=None):
     return verify_rolling(_seal(value))
 
 
-def read_rolling(value, *, source=None, query="", limit=40, cursor=None):
-    """Page titles while always returning whole-window source health and losses."""
-    verify_rolling(value)
+def _page_rolling(value, *, source=None, query="", limit=40, cursor=None):
+    """Caller verifies the logical view before this shared immutable pagination."""
     require(type(limit) is int and 1 <= limit <= 200 and isinstance(query, str) and len(query) <= 512
             and (source is None or (isinstance(source, str) and len(source) <= 100)), "NEWS_ROLL_READ_FILTER")
     selector = digest(encoded({"rolling_sha256": value["rolling_sha256"], "source": source, "query": query}))
@@ -360,3 +376,10 @@ def read_rolling(value, *, source=None, query="", limit=40, cursor=None):
             "coverage": deepcopy(value["coverage"]), "losses": deepcopy(value["losses"]),
             "predecessor": deepcopy(value["predecessor"]), "rejected_references": deepcopy(value["rejected_references"]),
             "meaning": MEANING, "complete_news_coverage": False}
+
+
+
+def read_rolling(value, *, source=None, query="", limit=40, cursor=None):
+    """Read the existing inline format; compact indexes need their source reader."""
+    verify_rolling(value)
+    return _page_rolling(value, source=source, query=query, limit=limit, cursor=cursor)

@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from decision_kernel.application.news_delivery import build_edition, open_edition, page_model, plan_input
+from decision_kernel.application.brief_delivery import build_edition, open_edition, page_model, plan_input
 from decision_kernel.application.news_rolling import clock
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.versioned_store import VersionedStore
@@ -17,6 +17,14 @@ from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding
 from decision_kernel.interfaces.news_page import render_page
 from decision_kernel.interfaces.research_payload import json_object, pack_payload
 from decision_kernel.interfaces.research_runtime import run_command
+
+
+def research_rights(plan, inputs):
+    if "research" in plan:
+        require(inputs.get("public_research_custody_confirmed") == "true",
+                "BRIEF_RESEARCH_PUBLICATION_NOT_CONFIRMED")
+        require(plan["research"]["agenda"] is None or inputs.get("public_feedback_custody_confirmed") == "true",
+                "NEWS_DESK_FEEDBACK_PUBLICATION_NOT_CONFIRMED")
 
 
 def run_desk(output, inputs):
@@ -43,6 +51,7 @@ def run_desk(output, inputs):
         # Workflow artifacts are public too; this check is required even when save=false.
         require(not plan["attention"] or inputs.get("public_feedback_custody_confirmed") == "true",
                 "NEWS_DESK_FEEDBACK_PUBLICATION_NOT_CONFIRMED")
+        research_rights(plan, inputs)
     else:
         require(set(plan) == {"reference"}, "NEWS_DESK_EXACT_ARTIFACT_REQUIRED")
     binding = GitHubBinding.from_dict(_file(Path("config/store-binding.json"), 4096))
@@ -65,6 +74,7 @@ def run_desk(output, inputs):
         else:
             doc, logical = open_edition(reads, artifacts, plan["reference"])
             saved_ref = plan["reference"]
+            research_rights(doc["plan"], inputs)
         store.backend.head()  # Revalidate mutable access before releasing source-derived results.
         (output / "edition.json").write_bytes(encoded(doc))
         (output / "news-brief.md").write_text(doc["brief_markdown"], encoding="utf-8")
@@ -76,7 +86,7 @@ def run_desk(output, inputs):
             artifact = ArtifactInput.from_bytes("news-edition-" + inputs["submission_id"], "news-edition.json",
                                                 "application/json", encoded(doc))
             payload = {"artifact": asdict(artifact), "rights_confirmed": True,
-                       "rights_basis": "Authorized retained public news metadata and original delivery; explicit feedback separately confirmed before export."}
+                       "rights_basis": "Authorized retained public news metadata and original delivery; research excerpts and feedback separately confirmed before export."}
             command = {"operation": "put-artifact", "code_sha": inputs["code_sha"],
                        "submission_id": inputs["submission_id"], "expected_head": inputs["expected_head"],
                        "payload": pack_payload(encoded(payload))}
@@ -93,6 +103,10 @@ def run_desk(output, inputs):
                       observed_versions=len(logical["entries"]), included=len(doc["included"]),
                       comparison=doc["comparison"], source_reads=reads.usage(),
                       storage_api_requests=getattr(api, "_requests", None))
+        if "research" in doc:
+            report.update(research_included=len(doc["research"]["included"]),
+                          research_omissions=doc["research"]["omissions"],
+                          research_coverage=doc["research"]["coverage"])
         return 0
     except (RecordError, OSError, KeyError, ValueError, TypeError):
         report["status"] = "failed-see-original-receipt"

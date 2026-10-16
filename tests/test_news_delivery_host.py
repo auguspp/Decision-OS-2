@@ -124,3 +124,6 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
     result = subprocess.run([str(python), '-I', '-c', script, str(store)], cwd=outside,
                             env=env, check=True, capture_output=True, text=True)
     assert json.loads(result.stdout) == {'status': 'installed-news-consumer-passed', 'entries': 1}
+
+    from test_brief_delivery_host import exercise_installed_research_brief
+    exercise_installed_research_brief(outside, python, env, store)

@@ -50,6 +50,15 @@ class NativeResearchReceipts:
         self.binding, self.api, self.archive_loader = binding, api, archive_loader
 
     def read(self, proof: dict) -> dict:
+        return self._read(proof, market=False)
+
+    def read_market(self, proof: dict) -> dict:
+        """Operational market receipts only; never admitted as research captures."""
+        return self._read(proof, market=True)
+
+    def _read(self, proof: dict, *, market: bool) -> dict:
+        workflows = ({".github/workflows/market-source-check.yml":
+            ("market", "dos2-market-check", {"result.json"})} if market else WORKFLOWS)
         raw = proof_bytes(proof)
         base = "/repos/" + self.binding.repository
         def get(path):
@@ -63,7 +72,7 @@ class NativeResearchReceipts:
         meta = get(f"/actions/artifacts/{aid}")
         require(isinstance(run, dict) and run.get("id") == run_id and run.get("run_attempt") == attempt
                 and run.get("status") == "completed" and run.get("event") == "workflow_dispatch"
-                and run.get("head_branch") == "main" and run.get("path") in WORKFLOWS
+                and run.get("head_branch") == "main" and run.get("path") in workflows
                 and isinstance(run.get("head_sha"), str) and SHA.fullmatch(run["head_sha"])
                 and isinstance(run.get("repository"), dict)
                 and run["repository"].get("id") == self.binding.repository_id,
@@ -71,7 +80,7 @@ class NativeResearchReceipts:
         source_time(run.get("run_started_at"))
         require(isinstance(run.get("run_started_at"), str) and "T" in run["run_started_at"],
                 "SOURCE_USE_RUN_TIME_REQUIRED")
-        family, prefix, allowed = WORKFLOWS[run["path"]]
+        family, prefix, allowed = workflows[run["path"]]
         require(isinstance(meta, dict) and meta.get("id") == aid and meta.get("name") == f"{prefix}-{run_id}-{attempt}"
                 and meta.get("expired") is False and type(meta.get("size_in_bytes")) is int
                 and 0 < meta["size_in_bytes"] <= MAX_ARCHIVE
@@ -97,6 +106,8 @@ class NativeResearchReceipts:
             require(run.get("conclusion") == "success", "SOURCE_USE_READ_RUN_NOT_SUCCESSFUL")
             require(set(by_name) == {"read", "write"} and by_name["write"].get("conclusion") == "skipped",
                     "SOURCE_USE_NOT_A_READ_RECEIPT")
+        elif family == "market":
+            require(set(by_name) == {"check"}, "SOURCE_USE_NOT_A_MARKET_RECEIPT")
         else:
             require(set(by_name) == {"source"}, "SOURCE_USE_NOT_A_SOURCE_RECEIPT")
         try:
@@ -116,7 +127,7 @@ class NativeResearchReceipts:
                                   if name.endswith(".jsonl") else _json(content))
         except (zipfile.BadZipFile, RuntimeError, OSError, NotImplementedError):
             raise RecordError("SOURCE_USE_ARCHIVE_INVALID") from None
-        require(({"inputs.json", "report.json"} if family == "pool" else
+        require(({"result.json"} if family == "market" else {"inputs.json", "report.json"} if family == "pool" else
                  {"request.json", "result.json", "source-plan.json", "plan.json"}) <= set(docs),
                 "SOURCE_USE_RECEIPT_FILES_MISSING")
         return {"family": family, "documents": docs, "jobs": by_name,
@@ -127,14 +138,16 @@ class NativeResearchReceipts:
                 "verification": "native-artifact-digest-and-exact-run-attempt"}
 
 
-def download_archive(repository: str, artifact_id: int) -> bytes:
+def download_archive(repository: str, artifact_id: int, *, token: str | None = None) -> bytes:
     """Same native gh artifact read used by CI; isolated dedicated read credential.
 
     Endpoint/ID come from the validated binding and metadata, not a payload URL.
     No shell, user gh config, engineering token fallback, retries or dispatch.
     """
     from decision_kernel.infrastructure.github_store import GitHubAPI
-    token = os.environ.get("DECISION_OS_STORE_TOKEN", "")
+    # Explicit callers may supply a short-lived actions:read job credential.
+    # The original default remains dedicated-store-only, never an implicit fallback.
+    token = os.environ.get("DECISION_OS_STORE_TOKEN", "") if token is None else token
     GitHubAPI(token)  # Apply the existing dedicated-credential validation.
     with TemporaryDirectory(prefix="dos2-gh-read-") as home, TemporaryFile() as output:
         env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": home,

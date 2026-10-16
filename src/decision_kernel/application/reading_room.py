@@ -26,7 +26,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -37,6 +37,9 @@ def plan_input(value):
               "reference": research_reference(value["reference"]) if value.get("reference") is not None else None}
     for name in ("agenda", "brief"):
         result[name] = asdict(artifact_reference(value[name])) if value.get(name) is not None else None
+    if value.get("materials") is not None:
+        from decision_kernel.application.reading_materials import material_plan
+        result["materials"] = material_plan(value["materials"])
     return result
 
 
@@ -110,9 +113,10 @@ class ReadingRoom:
                 "kind": payload["kind"], "body": body, "body_sha256": digest(body.encode("utf-8")),
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
-    def build(self, value, *, feedback_export=True):
+    def build(self, value, *, feedback_export=True, material_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
+        require(not plan.get("materials") or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         refs = [c["reference"] for c in catalogue["items"] if c["status"] == "readable"]
@@ -162,6 +166,18 @@ class ReadingRoom:
             r["status"] != "readable" for r in readings) or brief["status"] not in ("readable", "not-supplied")
         if agenda["status"] == "readable" and agenda["view"]["status"] == "partial":
             partial = True
+        if plan.get("materials"):
+            from decision_kernel.application.reading_materials import open_materials
+            try:
+                view = open_materials(self.store, plan["materials"])
+                result["materials"] = {"reference": plan["materials"]["reference"], "status": "readable", "view": view}
+                partial = partial or view["status"] == "partial"
+            except (RecordError, KeyError, TypeError) as error:
+                failure = ({"status": "not-included", "error": "ROOM_MATERIAL_DISPLAY_BOUND"}
+                           if isinstance(error, RecordError) and str(error) == "ROOM_MATERIAL_DISPLAY_BOUND"
+                           else _failure(error))
+                result["materials"] = {"reference": plan["materials"]["reference"], **failure}
+                partial = True
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

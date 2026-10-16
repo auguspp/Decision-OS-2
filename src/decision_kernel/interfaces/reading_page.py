@@ -42,6 +42,7 @@ function show(c){
  pane.append(el('span',label(r?r.status:c.status),'badge'),el('span',c.pinned?'显式指定版本，不判断是否为当前版':'固定目录快照中的版本','badge'));
  if(r)pane.append(el('p',`指定简报关系：${label(r.brief_relation.status)}`));
  const actions=el('div',undefined,'actions');
+ if(ref)actions.append(button('原附件、来源与前版',()=>{if(D.materials&&same(D.materials.reference,ref))location.hash='materials';else materialRequest(ref);}));
  if(ref)actions.append(button('导出确切研究读取请求',()=>request('research-read.json',r?r.open_request:{operation:c.open_operation||'resume',payload:{reference:ref}})));
  if(c.source_next_cursor)actions.append(button('导出后续来源页请求',()=>request('research-sources-next.json',{operation:'resume',payload:{cursor:c.source_next_cursor}})));
  if(r&&r.status==='readable'){
@@ -83,6 +84,11 @@ render();
 """
 
 
+from decision_kernel.interfaces.reading_materials_page import JS as MATERIALS_JS
+
+JS += MATERIALS_JS
+
+
 def render_page(model):
     require(isinstance(model, dict) and model.get("schema") == "reading-room-v1", "ROOM_PAGE_MODEL")
     require(len(encoded(model)) <= 6 * 1024 * 1024, "ROOM_PAGE_MODEL_BOUND")
@@ -97,12 +103,13 @@ def render_page(model):
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0 / READING ROOM</p><h1>研究、议程与简报</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
+<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#materials">原件与来源</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <div class="workspace" id="research"><aside class="panel"><h2>本页研究</h2><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>
 <p id="count" aria-live="polite"></p><div id="cases"></div><div class="actions"><button id="next">导出下一页请求</button><button id="refresh">导出刷新目录请求</button></div></aside>
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>
+<section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报与版本采用</h2><div id="brief-content"></div></section>
 <section class="panel" id="provenance"><h2>读取范围与接续</h2></section>

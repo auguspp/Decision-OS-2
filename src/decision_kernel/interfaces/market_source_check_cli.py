@@ -31,7 +31,7 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
             and env.get('GITHUB_RUN_ATTEMPT') == '1', 'MARKET_CHECK_NEW_EXPLICIT_RUN_REQUIRED')
     selection = data.get('selection', 'sample')
     require(isinstance(selection, str) and selection in SELECTIONS, 'MARKET_CHECK_SELECTION')
-    check_scope(data['exchange'], data['start'], data['end'], now)
+    check_scope(data['exchange'], data['start'], data['end'], now, selection)
     return {'exchange': data['exchange'], 'start': data['start'], 'end': data['end'],
             'access_confirmed': True, 'selection': selection}
 
@@ -63,7 +63,8 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
         progress({**latest, 'status': 'interrupted', 'reason_code': 'MARKET_CHECK_INTERRUPTED'})
         return 2
     progress(result)
-    return 0 if result['status'] in ('checked-sample', 'checked-catalogues', 'checked-stock-sample') else 2
+    return 0 if result['status'] in ('checked-sample', 'checked-catalogues', 'checked-stock-sample',
+                                       'checked-us-index-context') else 2
 
 
 def main(argv: list[str] | None = None) -> int:

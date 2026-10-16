@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+rss = ["feedparser==6.0.14", "feedparser-sgmllib==2.1.0"]
+
 [project.scripts]
 decision-os = "decision_kernel.interfaces.cli:main"
 

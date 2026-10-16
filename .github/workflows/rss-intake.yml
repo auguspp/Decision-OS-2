@@ -1,0 +1,106 @@
+name: decision-os-rss-intake
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Explicit fixed RSS capture/save or exact stored read
+        type: choice
+        options: [read, capture]
+        default: read
+        required: true
+      code_sha:
+        description: Exact inspected main code with independent CI
+        type: string
+        required: true
+      plan:
+        description: Public JSON; fixed feed/bootstrap/predecessor or exact read reference
+        type: string
+        required: true
+      submission_id:
+        description: Stable original intent, empty for reads
+        type: string
+        default: ''
+      expected_head:
+        description: Exact records head, empty for reads
+        type: string
+        default: ''
+      public_metadata_custody_confirmed:
+        description: May publish this limited RSS metadata, not publisher body
+        type: boolean
+        default: false
+      public_original_custody_confirmed:
+        description: Separate permission for this whole raw feed; requires rights_basis
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: decision-os-rss-intake
+  cancel-in-progress: false
+jobs:
+  read:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.operation == 'read'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: dev
+      - name: Open exact RSS capture and replay selected transition without source calls
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_RSS_MODE: read
+        run: python -m decision_kernel.interfaces.rss_cli run --out "$RUNNER_TEMP/rss-result"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: dos2-rss-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rss-result/
+          if-no-files-found: warn
+          retention-days: 30
+  capture:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.operation == 'capture' && inputs.public_metadata_custody_confirmed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: dev
+      - name: Verify inspected main and independent CI before any publisher call
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_CODE: ${{ inputs.code_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_CODE"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 > "$RUNNER_TEMP/rss-ci.json"
+          python - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP']+'/rss-ci.json') as f: runs=json.load(f)['workflow_runs']
+          assert any(r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push' and r['path']=='.github/workflows/ci.yml' and r['run_attempt']==1 and r['status']=='completed' and r['conclusion']=='success' for r in runs)
+          PY
+      - name: Restore predecessor then capture one fixed feed and save via existing source owner
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_RSS_MODE: capture
+        run: python -m decision_kernel.interfaces.rss_cli run --out "$RUNNER_TEMP/rss-result"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: dos2-rss-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rss-result/
+          if-no-files-found: warn
+          retention-days: 30

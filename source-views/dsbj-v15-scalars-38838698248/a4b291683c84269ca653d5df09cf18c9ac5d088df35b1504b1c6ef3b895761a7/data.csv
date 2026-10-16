@@ -1,0 +1,11 @@
+id,value,api,field,period,org_name,report_date
+q1_cfo,1126672373.29,cashflow,n_cashflow_act,20260331,,
+q1_capex,2159971473.19,cashflow,c_pay_acq_const_fiolta,20260331,,
+h1_rev,27797683972.88,income,revenue,20260630,,
+h1_parent,2956898811.04,income,n_income_attr_p,20260630,,
+price,124.2,daily_basic,close,20261015,,
+shares,183160.7532,daily_basic,total_share,20261015,,
+sh_rev26,6299100.0,report_rc,op_rt,2026Q4,上海证券,20260828
+sh_np26,723100.0,report_rc,np,2026Q4,上海证券,20260828
+sh_rev28,12714300.0,report_rc,op_rt,2028Q4,上海证券,20260828
+sh_np28,2395500.0,report_rc,np,2028Q4,上海证券,20260828

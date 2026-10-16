@@ -5,6 +5,7 @@ from dataclasses import asdict
 
 from decision_kernel.application.numerical_audit import START as NUMBERS_START, NumericalAudit
 from decision_kernel.application.research_reader import ResearchReader
+from decision_kernel.application.research_sources import source_use_guidance
 from decision_kernel.application.research_continuation import continuation_plan
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, RecordError, RevisionInput, encoded, identifier, require
@@ -54,6 +55,7 @@ class ResearchWorkflow:
         return {"schema": "research-preparation-v1", "request": asdict(request),
                 "method": research_method(request.kind), "previous_context": previous_context,
                 "continuation": continuation_plan(request, previous_context),
+                "source_use": source_use_guidance(request.kind),
                 "research_assessment": "not-performed", "execution_authority": "not-granted-by-preparation",
                 "persistence": "not-written"}
 

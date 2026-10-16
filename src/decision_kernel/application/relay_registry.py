@@ -13,6 +13,9 @@ from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.relay_http import READ_APIS
 
 MAX_FILE = 2 * 1024 * 1024
+PUBLIC_READ_GROUPS = frozenset({'financial', 'content-events', 'participants-capital', 'indices-sectors',
+    'funds-etfs', 'derivatives-commodities', 'fixed-income', 'macro-rates', 'international-fx',
+    'intraday-realtime', 'security-reference', 'market-observations'})
 ROW = re.compile(r'^\| `([a-z0-9_]+)` \| (GET|POST|DELETE) \| ([^|]+)\|')
 
 
@@ -132,6 +135,9 @@ class RelayRegistry:
                 if manual['manual_enabled'] is not None and service is not None
                 and type(service.get('enabled')) is bool else None),
             'shared_relay_client_admits_api': api in READ_APIS,
+            'registered_reader_candidate': (service is not None and group['id'] in PUBLIC_READ_GROUPS
+                and service.get('enabled') is True and service.get('methods') == ['GET'] and not api.startswith('p_')),
+            'registered_reader_qualification': 'requires-explicit-business-parameters-fields-and-host-permission-not-semantic-validation',
             'scoped_business_evidence': None if sample is None else {
                 'run_id': evidence['run_id'], 'scope': evidence['scope'], **sample,
                 'qualification': evidence['qualification']},

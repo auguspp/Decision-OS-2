@@ -119,7 +119,7 @@ def test_capture_requires_secret_and_preserves_source_failure(tmp_path,capsys,mo
     from decision_kernel.interfaces import relay_financial_cli as shared
     c=Client([RecordError('RELAY_HTTP_504')]);c.requests=1;c.validate_credential=lambda:None
     monkeypatch.setattr(shared,'RelayHTTP',lambda:c)
-    assert main(['capture','--plan',str(p),'--live','--output',str(out)])==2
+    assert main(['capture','--plan',str(p),'--live','--output',str(out),'--max-attempts','1'])==2
     item=json.loads(out.read_text());assert item['capture']['failure']['classification']=='temporary-gateway'
 
 
@@ -150,11 +150,11 @@ def test_runtime_rejects_mixed_or_unauthorized_scope_before_creation(values,tmp_
     assert not (tmp_path/'out').exists()
 
 
-def test_runtime_has_exact_ten_inputs_and_no_extra_secret_write_or_schedule():
+def test_runtime_inputs_match_host_and_no_extra_secret_write_or_schedule():
     text=(ROOTDIR/'.github/workflows/relay-source-runtime.yml').read_text()
     import re
     inputs=re.findall(r'^      ([a-z_]+):$',text,re.M)
-    assert len(inputs)==10 and set(inputs)==runtime.INPUTS
+    assert len(inputs)==11 and set(inputs)==runtime.INPUTS
     assert text.count('secrets.TUSHARE_PROXY_API_KEY')==1
     assert 'contents: write' not in text and 'schedule:' not in text
     assert 'DECISION_OS_STORE_TOKEN' not in text

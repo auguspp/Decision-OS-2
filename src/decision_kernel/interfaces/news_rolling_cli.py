@@ -13,11 +13,46 @@ from decision_kernel.domain.records import RecordError, SourceInput, encoded, id
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.interfaces.research_payload import json_object, pack_payload
 from decision_kernel.interfaces.research_runtime import run_command
-from decision_kernel.application.news_rolling import MAX_BYTES, read_rolling
+from decision_kernel.application.news_rolling import MAX_BYTES, _read_verified, read_rolling, reference
 from decision_kernel.application.news_rolling_index import SCHEMA as INDEX_SCHEMA, open_index, read_index, rolling_index
 
 REPOSITORY = "auguspp/Decision-OS-2"
 WORKFLOW = REPOSITORY + "/.github/workflows/news-rolling.yml@refs/heads/main"
+MAX_SOURCE_CACHE_BYTES = 8 * 1024 * 1024
+
+
+class _SourceReads:
+    """One host operation only: reuse exact verified bytes, never mutable heads.
+
+    Store validation owns admission. Consumers still verify manifests and rebuild
+    the logical index. Serialized copies prevent a caller from poisoning later
+    reads; failures are never memoized. An exhausted cache falls back to the same
+    bounded reader, not dropped sources or a fresh/reset API request budget.
+    """
+    def __init__(self, reader):
+        self._reader, self._cache = reader, {}
+        self.serialized_bytes = self.reads = self.hits = 0
+
+    def __call__(self, ref):
+        exact = reference(ref)
+        key = encoded(exact)
+        raw = self._cache.get(key)
+        if raw is None:
+            raw = encoded(_read_verified(self._reader, exact))
+            self.reads += 1
+            size = len(key) + len(raw)
+            if self.serialized_bytes + size <= MAX_SOURCE_CACHE_BYTES:
+                self._cache[key] = raw
+                self.serialized_bytes += size
+        else:
+            self.hits += 1
+        return json_object(raw)
+
+    def usage(self):
+        return {"verified_source_reads": self.reads, "reused_source_reads": self.hits,
+                "cached_references": len(self._cache), "serialized_bytes": self.serialized_bytes,
+                "byte_limit": MAX_SOURCE_CACHE_BYTES, "scope": "one-explicit-news-operation"}
+
 
 
 def _file(path, maximum):
@@ -66,14 +101,18 @@ def build_on_host(output):
     (output / "plan.json").write_bytes(encoded(plan))
     api = GitHubAPI.from_environment()
     reader = VersionedStore(GitHubStore(binding, api))
+    source_reads = _SourceReads(reader.read_source)
     if operation == "build":
-        value = rolling_index(reader.read_source, plan["batch_references"], as_of=plan["as_of"],
+        value = rolling_index(source_reads, plan["batch_references"], as_of=plan["as_of"],
                               predecessor=plan.get("predecessor"))
-        reading = read_index(reader.read_source, value)
+        reading = read_index(source_reads, value)
     else:
-        value = open_index(reader.read_source, plan["reference"])
-        reading = read_index(reader.read_source, value, **{k: v for k, v in plan.items() if k != "reference"})
+        value = open_index(source_reads, plan["reference"])
+        reading = read_index(source_reads, value, **{k: v for k, v in plan.items() if k != "reference"})
         reading["snapshot_reference"] = plan["reference"]
+    # Revalidate mutable visibility/ownership/binding after all cached replay and
+    # before exporting results. The original writer also rechecks permissions/CAS.
+    reader.backend.head()
     (output / "view.json").write_bytes(encoded(value))
     (output / "reading.json").write_bytes(encoded(reading))
     if saving:
@@ -93,6 +132,10 @@ def build_on_host(output):
                              output=output / "result", run_id=os.environ["GITHUB_RUN_ID"], attempt="1")
         require(report["status"] == "completed" and report["write"] in ("published", "replayed"),
                 "NEWS_ROLL_SAVE_NOT_CONFIRMED")
+    # Safe measured counters; no source text, credentials, or cached bytes.
+    usage = {**source_reads.usage(), "storage_api_requests": getattr(api, "_requests", None),
+             "binding_rechecked": True}
+    (output / "read-usage.json").write_bytes(encoded(usage))
     print(json.dumps({"status": "read-exact-index" if operation == "read" else "built-observation-index",
                       "saved_requested": saving, "window_hours": value["window_hours"],
                       "index_sha256": value["index_sha256"], "logical_sha256": value["logical_sha256"],

@@ -60,7 +60,7 @@ class SourceUseAudit:
 
     def audit(self, payload: dict) -> dict:
         require(isinstance(payload, dict) and set(payload) <= {
-            "request", "progress", "reference", "receipts", "exceptions", "reuse_run_ids"}, "SOURCE_USE_INPUT_INVALID")
+            "request", "progress", "reference", "receipts", "exceptions", "reuse_run_ids", "relay_recoveries"}, "SOURCE_USE_INPUT_INVALID")
         if "reference" in payload:
             require(not ({"request", "progress"} & set(payload)), "SOURCE_USE_ONE_RESEARCH_SELECTOR")
             ref = BlobRef(**payload["reference"])
@@ -111,8 +111,8 @@ class SourceUseAudit:
                 rejected.append({"index": len(observed) + len(rejected),
                                  "error": code if safe else "SOURCE_USE_RECEIPT_NOT_VERIFIED"})
         from decision_kernel.application.research_evidence import version_key
-        matched = {version_key(SourceRef.from_dict(m["reference"])) for p in pool_pages for m in p["matches"]}
-        pool_state = self._pool_state(pool_pages)
+        pool_state, pool_history, current_pool = self._pool_recovery(pool_pages)
+        matched = {version_key(SourceRef.from_dict(m["reference"])) for p in current_pool for m in p["matches"]}
         adopted = {i for item in (*progress.findings, *progress.challenges) for i in item.evidence}
         expected_versions = {digest(encoded(asdict(source))) for result in captures for source in self._exports(result)}
         sources = []
@@ -127,14 +127,18 @@ class SourceUseAudit:
             except RecordError:
                 row.update(status="unavailable", error="SOURCE_USE_SOURCE_UNAVAILABLE")
             sources.append(row)
-        relay_complete = bool(relay_results) and all(c["state"] == "complete" for c in relay_results)
-        relay_state = ("captured" if relay_complete else "capture-incomplete" if relay_results
-                       else "planned-not-captured" if plans else "not-executed")
+        from decision_kernel.application.research_source_recovery import relay_recovery
+        recovery = relay_recovery(relay_results, payload.get("relay_recoveries", []))
+        relay_state = recovery["state"]
         good = [s for s in sources if s["status"] == "stored-representation" and s["adopted_by_author"]]
         gaps = []
         if pool_state not in ("queried", "queried-empty"):
             gaps.append("POOL_USE_NOT_COMPLETE")
-        if relay_state != "captured":
+        if recovery["rejected_corrections"]:
+            gaps.append("RELAY_RECOVERY_NOT_VERIFIED")
+        if recovery["field_mapping_review_required"]:
+            gaps.append("RELAY_FIELD_CORRECTION_REQUIRES_REVIEW")
+        if relay_state not in ("captured", "captured-with-corrections"):
             gaps.append("RELAY_CAPTURE_OR_REUSE_NOT_DEMONSTRATED")
         if matched and not any(s["pool_match"] for s in good):
             gaps.append("POOL_MATCHES_NOT_ADOPTED")
@@ -152,7 +156,7 @@ class SourceUseAudit:
                 "reference": reference, "request_sha256": digest(scope(request)),
                 "progress_sha256": digest(encoded(asdict(progress))), "pool": pool_state, "relay": relay_state,
                 "receipts": observed, "rejected_receipts": rejected, "relay_results": relay_results,
-                "sources": sources, "gaps": gaps,
+                "sources": sources, "gaps": gaps, "relay_recovery": recovery, "pool_history":pool_history,
                 "exceptions": exceptions, "exception_acceptance": "not-performed",
                 "adoption": "author-evidence-indices-and-exact-stored-version-not-economic-approval",
                 "publication": "not-authorized-by-audit", "persistence": "not-written",
@@ -182,7 +186,7 @@ class SourceUseAudit:
                 and digest(encoded(asdict(ResearchRequest.from_dict(result["request"])))) == evidence["request_sha256"],
                 "SOURCE_USE_PLAN_IDENTITY")
         require(evidence["repository"] == ident["repository"], "SOURCE_USE_POOL_REPOSITORY")
-        return {**evidence, "input_cursor": original.get("evidence_cursor")}
+        return {**evidence, "input_cursor": original.get("evidence_cursor"), "receipt":ident}
 
     def _relay(self, verified, request, reuse):
         from decision_kernel.application.research_sources import inspect_result, validate_plan
@@ -196,7 +200,8 @@ class SourceUseAudit:
         require(encoded(checked) == encoded(docs["plan.json"]), "SOURCE_USE_RELAY_PLAN_CHANGED")
         if selected["operation"] == "plan":
             require(result["status"] == "planned-not-captured", "SOURCE_USE_RELAY_PLAN_STATUS")
-            return "relay-plan-only", [], []
+            return "relay-plan-only", [], [self._attempt(ident, selected, i, p, "planned-not-captured")
+                                            for i,p in enumerate(checked["requests"])]
         require(selected["operation"] == "capture" and selected["public_rights_confirmed"] is True
                 and result["status"] in ("capture-returned", "capture-incomplete"), "SOURCE_USE_RELAY_NOT_CAPTURED")
         step = [s for s in verified["jobs"]["source"].get("steps", [])
@@ -206,7 +211,7 @@ class SourceUseAudit:
         require(isinstance(rows, list) and len(rows) <= len(checked["requests"]), "SOURCE_USE_CAPTURE_SHAPE")
         usable, outcomes = [], []
         for i, planned in enumerate(checked["requests"]):
-            outcome = {"api": planned["api"], "query_key": planned["query_key"], "state": "not-returned"}
+            outcome = self._attempt(ident, selected, i, planned, "not-returned")
             if i < len(rows):
                 row = rows[i]
                 require(row["case_id"] == selected["source_plan"]["case_id"]
@@ -224,6 +229,13 @@ class SourceUseAudit:
                     and all(o["state"] == "complete" for o in outcomes), "SOURCE_USE_CAPTURE_STATUS_MISMATCH")
         return ("relay-reused-native-capture" if reuse else "relay-capture"), usable, outcomes
 
+    @staticmethod
+    def _attempt(identity, selected, index, planned, state):
+        return {"api": planned["api"], "query_key": planned["query_key"], "state": state,
+                "run_id":identity["run_id"], "run_attempt":identity["run_attempt"], "query_index":index,
+                "started_at":identity["started_at"], "case_id":selected["source_plan"]["case_id"],
+                "parameters":planned["parameters"], "stage":planned["stage"], "purpose":planned["purpose"]}
+
     def _registry(self):
         if self.registry is None:
             from decision_kernel.application.relay_registry import RelayRegistry
@@ -235,6 +247,42 @@ class SourceUseAudit:
             return []
         from decision_kernel.application.research_sources import source_inputs
         return source_inputs(result, self._registry())
+
+    @classmethod
+    def _pool_recovery(cls, pages):
+        """Keep history; evaluate the newest observed snapshot of each SAME plan.
+
+        Each selected snapshot must still have a complete fixed cursor chain. A
+        newer failed/unrooted scan cannot borrow completeness from an older one.
+        Same-cursor retry results use native run start order, not caller list order.
+        """
+        from datetime import datetime
+        def stamp(page):
+            receipt = page["receipt"]
+            return (datetime.fromisoformat(receipt["started_at"].replace("Z", "+00:00")),
+                    receipt["run_id"], receipt["run_attempt"])
+        groups = {}
+        for page in pages:
+            groups.setdefault((page["plan_sha256"],page["request_sha256"],page["snapshot"]), []).append(page)
+        selected, history = {}, []
+        for key, group in groups.items():
+            cursors = {}
+            for page in group:
+                cursor = encoded(page["input_cursor"])
+                if cursor not in cursors or stamp(page) > stamp(cursors[cursor]):
+                    cursors[cursor] = page
+            current = list(cursors.values())
+            # The latest root identifies a new observation. Unrooted newer groups
+            # stay unproven rather than borrowing earlier pages from another tree.
+            roots = [p for p in current if p["input_cursor"] is None]
+            epoch = max(map(stamp, roots or current))
+            if key[0] not in selected or epoch > selected[key[0]][0]:
+                selected[key[0]] = (epoch,current)
+            history.extend({"run_id":p["receipt"]["run_id"], "run_attempt":p["receipt"]["run_attempt"],
+                "snapshot":p["snapshot"], "plan_sha256":p["plan_sha256"], "status":p["status"],
+                "query_plan_complete":p["coverage"]["query_plan_complete"]} for p in group)
+        current = [p for _,group in selected.values() for p in group]
+        return cls._pool_state(current), history, current
 
     @staticmethod
     def _pool_state(pages):

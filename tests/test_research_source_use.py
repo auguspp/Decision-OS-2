@@ -62,7 +62,8 @@ class NativeAPI:
         prefix, workflow = ('dos2-research', 'research-runtime.yml') if family == 'pool' else ('dos2-relay-source', 'relay-source-runtime.yml')
         self.replies[f'/actions/runs/{ident}/attempts/1'] = {'id': ident, 'run_attempt': 1, 'status': 'completed',
             'event': 'workflow_dispatch', 'head_branch': 'main', 'head_sha': CODE,
-            'path': '.github/workflows/' + workflow, 'repository': {'id': 1234}, 'conclusion': conclusion}
+            'path': '.github/workflows/' + workflow, 'repository': {'id': 1234}, 'conclusion': conclusion,
+            'run_started_at': '2026-10-16T00:00:00Z'}
         self.replies[f'/actions/artifacts/{ident}'] = {'id': ident, 'name': f'{prefix}-{ident}-1',
             'expired': False, 'size_in_bytes': len(raw), 'digest': 'sha256:' + digest(raw),
             'workflow_run': {'id': ident, 'repository_id': 1234, 'head_repository_id': 1234, 'head_sha': CODE}}

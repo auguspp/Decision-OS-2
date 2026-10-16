@@ -48,6 +48,22 @@ decision-os store --binding config/store-binding.json audit-source-use --input a
 
 同一委托继续研究可以复用原运行，无须按研究阶段重复capture。跨案例复用capture须显式reuse_run_ids及exceptions.relay说明范围、日期与用途，仍须原生回执及准确来源版本相符；这只证明实际使用旧捕获，不能证明现在仍新鲜。当前核查适配Relay的research family；旧financial/participants或其他平台证据需人工核对，不能为了适配本核查重跑旧来源。
 
+## 历史失败与当前恢复
+
+`relay_results`始终保留全部历史尝试；`relay_recovery.current_queries`另给当前查询状态。相同case/API/规范参数的后一次真实成功可以恢复前次失败，不删旧错误。按GitHub原生run_started_at及同秒run/attempt定位次序，不按调用者排列顺序；后一次失败不能借更早成功签当前恢复。只有plan的查询也逐项保留，不会被另一项capture掩盖。
+
+参数改变时不按“同公司/同API”自动覆盖。可在同一audit输入增加`relay_recoveries`（最多64项），选择器中的query_index为原计划从0开始的序号：
+
+```json
+{"relay_recoveries":[{"from":{"run_id":123,"run_attempt":1,"query_index":0},"to":{"run_id":124,"run_attempt":1,"query_index":0},"reason":"基于实际字段文档的修正说明，仅示例","field_map":{"old_field":"correct_field"}}]}
+```
+
+两个选择器必须来自已认证回执，旧项未完成、新项complete且较晚；API、case及证券/期间/报表类型/offset等业务筛选必须相同。仅字段和page limit可以不同；同名字段的更大完整投影可覆盖旧需求。改名必须逐项显式field_map，映射目标必须在新请求字段中，无法覆盖的旧字段逐项列missing_fields并保持partial-recovery。不能删除未取得字段、把另一期或另一公司替代本期。
+
+字段改名只证明“修正后的捕获确实完成”，不认证改名的经济含义；返回complete-corrected-fields/captured-with-corrections以及RELAY_FIELD_CORRECTION_REQUIRES_REVIEW，仍不能自动通过。用户/研究者对不再需要的旧字段作范围取舍，也不能由自填原因自动代签。错误关联保留rejected_corrections并限制验收。仍失败的其他查询继续保持未完成，不因为现金流恢复就把公告等缺项消掉。
+
+信息池同样保留`pool_history`。相同计划/原委托的新观察选择最近原生起点的固定快照，必须有该快照自身完整首/中/尾游标链；旧失败不会永远锁住已完成的新扫描，新失败或只有尾页也不能借旧快照通过。相同快照同输入游标的后继真实结果可替代该位置的失败，但失败回执仍在历史中。不同计划不会因为更晚而被自动视为等价。来源采用仍核当前选定查询链和确切SourceRef，不认证经济判断或时效。
+
 ## 输出与不足的处置
 
 usage-demonstrated仅表示声明范围的池检索链、Relay捕获/复用及可读引用采用已有可核证据；不证明查询选得好、所有资料都读完、来源真实、完整Full质量、deliver全部附件或人工Decision。经济关系、时效/单位和每个结论仍需审阅。少量来源达标不能代表全公司证据充分；一份来源若支持多个问题不计为多份独立上游。

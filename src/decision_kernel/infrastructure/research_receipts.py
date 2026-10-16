@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory, TemporaryFile
 from io import BytesIO
 import zipfile
 
-from decision_kernel.domain.records import RecordError, SHA, digest, require
+from decision_kernel.domain.records import RecordError, SHA, digest, require, source_time
 from decision_kernel.infrastructure.github_store import GitHubBinding, _json
 
 MAX_ARCHIVE = 1024 * 1024
@@ -68,6 +68,9 @@ class NativeResearchReceipts:
                 and isinstance(run.get("repository"), dict)
                 and run["repository"].get("id") == self.binding.repository_id,
                 "SOURCE_USE_RUN_MISMATCH")
+        source_time(run.get("run_started_at"))
+        require(isinstance(run.get("run_started_at"), str) and "T" in run["run_started_at"],
+                "SOURCE_USE_RUN_TIME_REQUIRED")
         family, prefix, allowed = WORKFLOWS[run["path"]]
         require(isinstance(meta, dict) and meta.get("id") == aid and meta.get("name") == f"{prefix}-{run_id}-{attempt}"
                 and meta.get("expired") is False and type(meta.get("size_in_bytes")) is int
@@ -119,7 +122,8 @@ class NativeResearchReceipts:
         return {"family": family, "documents": docs, "jobs": by_name,
                 "identity": {"repository": self.binding.repository, "run_id": run_id,
                     "run_attempt": attempt, "artifact_id": aid, "artifact_sha256": digest(raw),
-                    "code_sha": run["head_sha"], "workflow": run["path"], "conclusion": run.get("conclusion")},
+                    "code_sha": run["head_sha"], "workflow": run["path"], "conclusion": run.get("conclusion"),
+                    "started_at":run["run_started_at"]},
                 "verification": "native-artifact-digest-and-exact-run-attempt"}
 
 

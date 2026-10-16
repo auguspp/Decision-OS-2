@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime, timezone
 import io
@@ -15,6 +16,8 @@ from decision_kernel.domain.records import (
 from decision_kernel.application.store_backend import StoreBackend
 
 MAX_QUERY_VERSIONS = 1024
+SOURCE_SCAN_CURSOR = "source-scan-cursor-v1"
+MAX_SCAN_VERSIONS = 32
 
 
 def _json(raw: bytes) -> dict:
@@ -234,12 +237,19 @@ class VersionedStore:
         return {"reference": asdict(ref), "record": record, "body": payload["body"]}
 
     def search(self, query: str, *, entity_id: str | None = None, limit: int = 20,
-               cursor: dict | None = None) -> dict:
+               cursor: dict | None = None, scan_limit: int | None = None) -> dict:
         checked_text(query, empty=True, limit=1024)
         require(type(limit) is int and 1 <= limit <= 100, "INVALID_PAGE_LIMIT")
         if entity_id is not None:
             identifier(entity_id)
         fingerprint = digest(encoded({"query": _fold(query), "entity_id": entity_id}))
+        if scan_limit is not None:
+            require(type(scan_limit) is int and 1 <= scan_limit <= MAX_SCAN_VERSIONS, "INVALID_SCAN_LIMIT")
+        scanning = isinstance(cursor, dict) and cursor.get("schema") == SOURCE_SCAN_CURSOR
+        if scanning or (scan_limit is not None and cursor is None):
+            return self._scan_sources(query, entity_id, limit, cursor, fingerprint,
+                                      scan_limit or MAX_SCAN_VERSIONS)
+        # Historical offset cursors retain their original all-match semantics.
         snapshot, offset = self.backend.head(), 0
         if cursor is not None:
             require(isinstance(cursor, dict) and set(cursor) == {"snapshot", "offset", "query_sha256"}
@@ -251,31 +261,74 @@ class VersionedStore:
         require(len(paths) <= MAX_QUERY_VERSIONS, "QUERY_VERSION_LIMIT_EXCEEDED")
         hits = []
         for path in sorted(paths):
-            manifest_ref = self.backend.reference(snapshot, path)
-            manifest = _json(self.backend.resolve(manifest_ref))
-            selection = Selection("locator" if manifest.get("input", {}).get("custody") == "external" else "all")
-            source_ref = SourceRef(manifest_ref, selection)
-            view = self.read_source(source_ref)
-            data = view["manifest"]["input"]
-            if entity_id and not any(e["entity_id"] == entity_id for e in data["entities"]):
-                continue
-            values = [data["source_id"], data["title"], data["origin"], *data["limitations"]]
-            values.extend(v for v in (data["report_period"], data["published_at"], data["acquired_at"]) if v)
-            for entity in data["entities"]:
-                values.extend([entity["entity_id"], entity["name"], *entity["aliases"]])
-                values.extend(v for _, v in entity["attributes"])
-            body = view["data"]
-            if isinstance(body, str):
-                values.append(body)
-            elif isinstance(body, list):
-                values.extend(value for row in body for value in row.values())
-            searchable = "\n".join(values)
-            if _fold(query) in _fold(searchable):
-                hits.append({"reference": asdict(source_ref), "source_id": data["source_id"],
-                             "title": data["title"], "kind": data["kind"], "entities": data["entities"],
-                             "custody": data["custody"], "limitations": data["limitations"]})
+            hit = self._source_match(query, entity_id, snapshot, path)
+            if hit is not None:
+                hits.append(hit)
         require(offset <= len(hits), "CURSOR_OUT_OF_BOUNDS")
         end = offset + limit
         return {"snapshot": snapshot, "version_scope": "all-stored-versions", "total": len(hits),
                 "items": hits[offset:end], "next_cursor": None if end >= len(hits) else
                 {"snapshot": snapshot, "offset": end, "query_sha256": fingerprint}}
+
+
+    def _source_match(self, query, entity_id, snapshot, path):
+        manifest_ref = self.backend.reference(snapshot, path)
+        manifest = _json(self.backend.resolve(manifest_ref))
+        selection = Selection("locator" if manifest.get("input", {}).get("custody") == "external" else "all")
+        source_ref = SourceRef(manifest_ref, selection)
+        view = self.read_source(source_ref)
+        data = view["manifest"]["input"]
+        if entity_id and not any(e["entity_id"] == entity_id for e in data["entities"]):
+            return None
+        values = [data["source_id"], data["title"], data["origin"], *data["limitations"]]
+        values.extend(v for v in (data["report_period"], data["published_at"], data["acquired_at"]) if v)
+        for entity in data["entities"]:
+            values.extend([entity["entity_id"], entity["name"], *entity["aliases"]])
+            values.extend(v for _, v in entity["attributes"])
+        body = view["data"]
+        if isinstance(body, str):
+            values.append(body)
+        elif isinstance(body, list):
+            values.extend(value for row in body for value in row.values())
+        searchable = "\n".join(values)
+        if _fold(query) in _fold(searchable):
+            return {"reference": asdict(source_ref), "source_id": data["source_id"],
+                         "title": data["title"], "kind": data["kind"], "entities": data["entities"],
+                         "custody": data["custody"], "limitations": data["limitations"]}
+        return None
+
+    def _scan_sources(self, query, entity_id, limit, cursor, fingerprint, scan_limit):
+        if cursor is None:
+            snapshot, offset = self.backend.head(), 0
+        else:
+            require(isinstance(cursor, dict) and set(cursor) == {
+                "schema", "snapshot", "scan_offset", "query_sha256"}
+                and cursor["schema"] == SOURCE_SCAN_CURSOR and cursor["query_sha256"] == fingerprint
+                and type(cursor["scan_offset"]) is int and cursor["scan_offset"] >= 0,
+                "INVALID_SCAN_CURSOR")
+            snapshot, offset = cursor["snapshot"], cursor["scan_offset"]
+        self.backend.check_commit(snapshot)
+        scope = getattr(self.backend, "source_read_scope", None)
+        # Local/snapshot backends retain the same exact read contract. Remote
+        # access is revalidated by the scope before any result escapes this method.
+        context = scope(snapshot) if scope is not None else nullcontext(self.backend)
+        with context as backend:
+            reader = VersionedStore(backend)
+            paths = sorted(p for p in backend.paths(snapshot, "source-views/") if p.endswith("/manifest.json"))
+            require(len(paths) <= MAX_QUERY_VERSIONS, "QUERY_VERSION_LIMIT_EXCEEDED")
+            require(offset <= len(paths), "SCAN_CURSOR_OUT_OF_BOUNDS")
+            hits, end = [], offset
+            for path in paths[offset:offset + scan_limit]:
+                hit = reader._source_match(query, entity_id, snapshot, path)
+                end += 1
+                if hit is not None:
+                    hits.append(hit)
+                if len(hits) >= limit:
+                    break
+            result = {"snapshot": snapshot, "version_scope": "all-stored-versions",
+                "total": len(hits), "total_scope": "all-matches-at-snapshot" if offset == 0 and end == len(paths) else "this-scan",
+                "items": hits, "scan": {"start": offset, "end": end, "total_versions": len(paths),
+                    "scanned_versions": end - offset, "complete": end == len(paths)},
+                "next_cursor": None if end == len(paths) else {"schema": SOURCE_SCAN_CURSOR,
+                    "snapshot": snapshot, "scan_offset": end, "query_sha256": fingerprint}}
+        return result

@@ -12,7 +12,7 @@
 {"request":{"case_id":"synthetic-evidence","kind":"full","mandate":"合成工程检查，不是投资任务","questions":[{"question_id":"cash","text":"现金与经营解释是否一致？"}]},"evidence_plan":{"schema":"research-evidence-plan-v1","case_id":"synthetic-evidence","as_of":"2026-10-16","queries":[{"query_id":"company","question_id":"cash","purpose":"寻找原委托公司的既有材料","query":"合成企业"},{"query_id":"input","question_id":"cash","purpose":"核投入品变化的候选解释","query":"铜"}]},"evidence_limit":4}
 ```
 
-沿现役`research-runtime.yml`的`operation=prepare`、当前已核`code_sha`与上述payload运行；不新增operation、Secret、权限或workflow。宿主只读job仍只有contents:read，无来源Secret。查看匹配run的原生report，不把dispatch接受当成功。CLI同一路径：
+沿现役`research-runtime.yml`的`operation=prepare`、当前已核`code_sha`与上述payload运行；不新增operation、Secret、权限或workflow。宿主只读job保留contents:read及来源回执核查所需actions:read，无来源Secret。查看匹配run的原生report，不把dispatch接受当成功。CLI同一路径：
 
 ```bash
 python -m decision_kernel store --path synthetic.git prepare-research \
@@ -37,7 +37,7 @@ python -m decision_kernel store --path synthetic.git prepare-research \
 
 正文视图沿既有1MiB阅读预算，超限保留精确`read_operation/read_payload`和错误，不截正文冒充全量。外部目录仍external-only，摘录仍excerpt，日期缺失保留未知。`as_of`只标示相对原声明日的期后信息：取得日不替披露日，不补时区、不把后取资料说成历史当时已知，也不以通用天数自动判财报过期。按公司/主题查得的新闻批次要经其现役新闻reader继续细读；此入口不修改采集器时钟或各业务格式。
 
-零命中、未开始查询、源读取失败、正文未包含分别呈现。现役search遇不可读/损坏的来源总体会失败关闭，本入口保留search-unavailable、total=null和原游标，不谎报零或全库健康；已有研究上下文与接口计划仍保留。需要修来源或扩大原生查询预算时由原owner处理，不换库、删坏源或循环重试求绿。
+零命中、未开始查询、源读取失败、正文未包含分别呈现。现役search遇不可读/损坏的来源总体会失败关闭，本入口保留search-unavailable、total=null和原游标，不谎报零或全库健康；已有研究上下文与接口计划仍保留。需要修来源时由原owner处理，不换库、删坏源、重置请求计数或循环重试求绿。
 
 ## 接口与池同时可用
 
@@ -48,3 +48,14 @@ python -m decision_kernel store --path synthetic.git prepare-research \
 ## 维护和验收
 
 专属应用模块/prepare接线、CLI参数及本文由#7维护。退出能力时同时退出这些接线和对应测试/冷安装调用；保留原Store/search/SourceRef、历史研究方法、来源采集器和通用Relay。没有新持久状态、定时、通知、交易或部署。真实Git合成资料验证查询→研究引用→独立恢复，包外沿同一次cold-wheel使用；线上只读池消费与完整研究的经济质量分开验收。
+
+
+## 有界扫描与读取预算
+
+研究prepare使用原search的有界扫描模式：每个材料页跨全部查询最多扫描32个来源版本，命中上限仍为evidence_limit（1–8）。不再先读完全库再截命中列表。原1024版本、512远端请求及正文预算不增加；本页没有命中但扫描未完时仍有next_cursor，不能称全库零命中。next_prepare_payload沿原入口接续，每次原生调用有独立回执，不是内部重置计数或自动重试。
+
+source-scan-cursor-v1保存固定snapshot、scan_offset和query摘要；scan记录本段start/end、scanned_versions、total_versions及是否扫到该查询尾部。query_pages.total若total_scope=this-scan只表示本段命中数，不是全库总数。原offset命中游标仍按历史完整匹配语义读取，旧回执不改写；新查询和新的查询起点用扫描游标。游标本身不证明先前段已读，完整性还要核实际分页回执。
+
+原GitHubStore新增source_read_scope仅服务一次固定commit的source-views扫描：进入和正常退出时都调用原check_commit，重新核仓库可见性、绑定及版本可达性；期间复用原_tree/_read的不可变字节校验，不能写、换commit或退出后再读。search等到退出核验成功才返回结果，不缓存可变权限，不新建API客户端或提高512限制；普通read、writer/CAS及新闻宿主不改变。这里是库内行为边界，不是对持有宽权限代码的强隔离。
+
+原有blob/tree有界缓存继续由同一owner负责，没有第二索引或持久缓存。冷读下一页仍重新验证权限和原版本，损坏/拒绝保持失败，不把尚未扫描的区域说成健康。本能力与专属scan/recovery回归随研究入口维护；退出不能删除原来源、旧游标或历史研究读取支持。

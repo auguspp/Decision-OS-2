@@ -1,6 +1,6 @@
 # 新闻：24小时滚动与精确前驱
 
-归属 #48；用户于2026-10-16明确选择 **24小时滚动**，替代原事项沿用的旧Kernel 18小时。此处改变观察时间窗，不改变采集频率，不启用定时任务。#46的来源资格/标题拒绝、#48 RSS、#13 Brief/Attention及#7实质Quick仍各自验收。
+归属 #48；用户于2026-10-16明确选择 **24小时滚动**，替代原事项沿用的旧Kernel 18小时。此处改变观察时间窗，不改变采集频率，不启用定时任务。#46的来源资格/标题拒绝、#48 RSS原件保管、#13 Brief/Attention及#7实质Quick仍各自验收。
 
 ## 时间与身份
 
@@ -12,7 +12,7 @@
 
 ## 单内容池与有界恢复
 
-`application/news_rolling.py`用调用方现有`VersionedStore.read_source`读取完整SourceRef，核原manifest和表示字节，然后复用`news_windows.verify_reading`。只读已保管元数据，不跟随文章URL，不连接NewsNow/Relay，不复制旧研究schema或运行状态。
+`application/news_rolling.py`用调用方现有`VersionedStore.read_source`读取完整SourceRef，核原manifest和表示字节，然后复用`news_windows.verify_reading`。只读已保管元数据，不跟随文章URL，不连接NewsNow/Relay/RSS源站，不复制旧研究schema或运行状态。
 
 续作显式提供已保存滚动视图的SourceRef，先核其24小时合同与摘要，再按其中保留的原批次SourceRef重新读取。不是从“最新绿色artifact”猜前驱，也不靠前驱里的标题替代原来源字节。未提供前驱标明`not-supplied`；不可读、损坏、未来前驱标明`unavailable-or-rejected`和`PREDECESSOR_GAP`，仍允许本次合格新批次被阅读。缺口在24小时内继续随下一前驱保留，不因恢复到一个可读索引便消失。
 
@@ -57,4 +57,22 @@ python -m decision_kernel.interfaces.news_rolling_cli read --window view.json --
 
 旧固定版`decision-kernel@cb3bbc87`的`src/decision_kernel/runtime/news_rolling.py`提供article/version、窗口观察、前驱/缺口/裁剪语义；该旧版硬编码18小时不是新产品裁决。新实现窄适配OS2已成立的SourceRef/新闻解析/条件写，没有复刻其current_state/原生旧队列。日期和有界去重用标准库，现有源解析与保管直接复用；无新增解析器、数据框架或依赖锁变更。
 
-本模块、CLI、专属手动workflow、tests/test_news_rolling.py及本文随新闻滚动能力维护/退役；共享新闻源校验与Store保护由原owner保留。测试保护24小时边界/时区、重复/版本、失败/断链、裁剪、筛选游标、真实本地GitStore与包外CLI；不以测试数代签业务价值。真实新采集、RSS、日常连续运行、24小时完整覆盖、#13人类使用及#7取证均不能由本组代码或一次保存预签。
+本模块、CLI、专属手动workflow、tests/test_news_rolling.py及本文随新闻滚动能力维护/退役；共享新闻源校验与Store保护由原owner保留。测试保护24小时边界/时区、重复/版本、失败/断链、裁剪、筛选游标、真实本地GitStore与包外CLI；不以测试数代签业务价值。真实新采集、RSS原XML生产保管、日常连续运行、24小时完整覆盖、#13人类使用及#7取证均不能由本组代码或一次保存预签。
+
+## RSS接入联合阅读
+
+同一`batch_references`现在可混合NewsNow/Relay阅读批次与已保管的原生RSS capture SourceRef。`read_news_batch(reader, ref)`先核manifest/表示字节；识别RSS后复用`rss_intake.open_capture`重建所选一步前驱，当前和前驱都核确切SourceRef。然后由纯`observations/rss_reading.py`投影到原news reading，不发HTTP、不另建内容池。坏RSS/前驱只形成相应`rejected_references`和批次损失，其他合格新闻仍可读。
+
+RSS保持`provider=rss`和`source_id=nbs-releases/nbs-interpretations`，不伪装成NewsNow。`article_id`沿NBS文档身份；`rss.version_id`保留原RSS版次（包含摘要哈希），联合`version_id`加feed命名空间，避免同文同时出现在两个feed时发生字段冲突。相同标题但摘要或日期声明修订仍是不同版本，不推定独立事件。原日期声明按RSS的严格规则展示，保留`instant=null`、`unresolved`及`publication_verified=false`，没有替其补时区。
+
+`observed_at`取本批真实`received_at`，而非RSS继承的`first_seen_at`或媒体发布日期。若只选择RSS后继一个批次，联合窗口计数就是1，即使RSS自身连续计数已是2；只有前批也被明确选入本24h窗口时才计2。请求前驱只用于验证当前批次，不自动把所有祖先加入窗口。一个500条RSS基线的加入不是500条今日新增、未读或自然新消息。
+
+全窗`source_outcomes[].outcome.rss`保留来源署名、原始capture摘要、原件状态、RSS前驱、基线/新增/不变/移出计数与其含义。原XML即便在源版本获准保管，也不转发到联合视图；`body_archived=false`始终指未归档链接文章正文。`not-retained-rights-unconfirmed`不会被入池或分页抹掉。普通news read/merge/export-locators仍保留完整输入来源结果；外部定位不是新SourceRef或原文认证。
+
+```sh
+python -m decision_kernel.interfaces.news_rolling_cli read --window view.json --source nbs-releases --limit 40
+```
+
+RSS大基线可能触发原512KiB视图预算。`selected_count`仅为保留行数，不是各源取得总数；看全窗来源计数和`losses`，并沿其原SourceRef用`rss_intake.open_capture/read_capture`读取完整已存批次。原版本不删除。本组不暗改容量或时间窗，不把裁剪后的分页称为全量联合阅读；无损大窗口/分页深读若另交，须同时更新保存和恢复消费者。
+
+现役手动宿主改用已有dev锁环境，以便源版本含获准XML时由原feedparser核重解析；不改依赖锁或读写权限。元数据-only capture及离线联合view读取不要求安装feedparser。源码自查、合成回归、真实保管/恢复、网页/Brief与人工采用分别验收。新增adapter、tests/test_rss_news_reading.py与对应消费者接线一起维护/退役；旧新闻/24h及RSS/Store保护保留。

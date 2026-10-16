@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/ci-python
         with:
-          profile: contracts
+          profile: dev
       - name: Verify exact main CI before building
         env:
           GH_TOKEN: ${{ github.token }}
@@ -92,7 +92,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/ci-python
         with:
-          profile: contracts
+          profile: dev
       - name: Build and save via existing conditional source writer
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}

@@ -27,10 +27,11 @@ def _route(payload):
         reader = read_relay_stock_surface
     elif schema == "relay-security-stock-reading-v1":
         required |= {"master_results", "factor_results"}
+        optional |= {"reference_policy"}
         reader = read_security_stock_surface
     elif schema == "relay-ths-group-reading-v1":
         required = GROUP_REQUIRED | {"schema", "kind"}
-        optional |= {"benchmark"}
+        optional |= {"benchmark", "reference_policy"}
         reader = read_ths_group_surface
     elif schema == US_INDEX_READING_SCHEMA:
         required = US_INDEX_REQUIRED | {"schema"}

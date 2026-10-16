@@ -297,7 +297,7 @@ class USIndexSourceCheckTests(unittest.TestCase):
 
     def test_original_workflow_and_permission_contract_remain(self):
         text = (ROOT_DIR/'.github/workflows/market-source-check.yml').read_text()
-        for expected in ('options: [sample, catalogues, stock, us-indices]', 'options: [SSE, SZSE, US]',
+        for expected in ('options: [sample, catalogues, stock, us-indices, availability, stock-availability]', 'options: [SSE, SZSE, US]',
                          'default: sample', 'default: SSE', 'contents: read',
                          'group: decision-os-relay-source', '/dos2-market-check/result.json'):
             self.assertIn(expected, text)

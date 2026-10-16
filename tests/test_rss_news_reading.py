@@ -138,7 +138,7 @@ def test_native_predecessor_reconstruction_is_required_and_legacy_news_survives(
     old, _ = old_news(store)
     result = build(store, [bad, old])
     assert len(result["entries"]) == 1 and result["entries"][0]["observation"]["provider"] == "newsnow"
-    assert result["rejected_references"] == [asdict(bad)]
+    assert result["rejected_references"] == json.loads(encoded([asdict(bad)]))
     assert result["losses"][0]["kind"] == "BATCH_UNAVAILABLE_OR_REJECTED"
 
 
@@ -152,7 +152,7 @@ def test_predecessor_manifest_mismatch_is_a_gap_not_trusted_metadata(store):
             result = deepcopy(result); result["manifest"]["stored_at"] = "tampered"
         return result
     output = roll.rolling_news(reader, [old, child], as_of=END)
-    assert len(output["entries"]) == 1 and output["rejected_references"] == [asdict(child)]
+    assert len(output["entries"]) == 1 and output["rejected_references"] == json.loads(encoded([asdict(child)]))
 
 
 @pytest.mark.parametrize("change", [{"full_text": "not permitted"}, {"event_verified": True},

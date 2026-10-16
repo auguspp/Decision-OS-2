@@ -1,0 +1,89 @@
+name: decision-os-market-custody
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [read, save]
+        default: read
+        required: true
+        description: 'Read an exact SourceRef or retain explicitly authorized market captures'
+      code_sha:
+        type: string
+        required: true
+        description: 'Exact current main commit; never a floating code identity'
+      payload:
+        type: string
+        required: true
+        description: 'Read: root SourceRef JSON. Save: existing market reading JSON, <=60000 UTF-8 bytes'
+      public_rights_confirmed:
+        type: boolean
+        default: false
+        description: 'Required for save: all supplied capture projections may be publicly retained'
+      offset:
+        type: string
+        default: '0'
+        description: 'Read page offset; save must use 0'
+      limit:
+        type: string
+        default: '50'
+        description: 'Read page size 1..100; save must use 50'
+      entity_id:
+        type: string
+        default: ''
+        description: 'Optional single-surface reading filter; not a save scope'
+permissions: {}
+concurrency:
+  group: dos2-store-runtime-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  read:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'read'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Independently restore exact market source references without Relay credentials
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.market_custody_cli runtime --out "$RUNNER_TEMP/dos2-market-custody"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: dos2-market-custody-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-market-custody/
+          if-no-files-found: error
+          retention-days: 7
+  save:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'save'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Retain through the existing CAS writer and independently restore exact references
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.market_custody_cli runtime --out "$RUNNER_TEMP/dos2-market-custody"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: dos2-market-custody-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-market-custody/
+          if-no-files-found: error
+          retention-days: 7

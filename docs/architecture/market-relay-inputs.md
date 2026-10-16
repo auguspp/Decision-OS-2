@@ -1,6 +1,6 @@
 # Relay market inputs and bounded stock reading
 
-## One existing capture contract, one market consumer
+## One existing capture contract, bounded market consumers
 
 `application/market_relay_inputs.py` consumes the full result emitted by
 `research_sources.capture_plan`: `case_id`, validated `use`, `status`, and
@@ -78,6 +78,79 @@ market CLI's duplicate-key/nonfinite guards and 2 MiB read bound. Exit 2 returns
 stable errors on stderr. Paging or filtering never changes the unpaged scope.
 The size limit bounds this local reading entrypoint, not future market coverage.
 
+## Source-declared security references and end-anchored adjustment
+
+`application/market_security_inputs.py` adds `qualified_security_master`,
+`qualified_adj_factors`, and `read_security_stock_surface`. They reuse the same
+market `_view`/row/date/lineage helpers and therefore the same #12 inspector;
+there is no second HTTP transport, registry, paginator or custody writer.
+
+The master takes `results` keyed by explicitly supplied `list_status`: `L`
+(listed), `D` (delisted), `P` (suspended listing), or `G` (not yet trading).
+Each result must be a complete zero-offset `stock_basic` exchange/status slice,
+with no extra code, name, market or historical-date filter. Required fields are
+`ts_code,symbol,name,exchange,curr_type,list_status,list_date,delist_date`.
+Returned symbol, suffix, exchange and status must agree; only SSE/SH and SZSE/SZ,
+CNY, bounded printable names and canonical dates are accepted. L/D/P need a
+listing date; D also needs a non-earlier delisting date. G can lack a listing
+date. Non-D rows cannot carry a delisting date. Duplicate securities, including
+across status slices, refuse the master rather than silently choosing one row.
+A malformed supplied slice refuses this shared scope; omitted status slices are
+not-supplied, not inferred empty. A complete empty slice is separately counted.
+
+Every returned master security becomes the reading denominator, including G,
+new listings, delisted securities and securities with no usable prices. There is
+no caller override to replace it with a winner list. Nevertheless, even four
+completed status slices do **not** certify all-market discovery, historical
+membership, survival-bias removal or an atomic snapshot: stock_basic is observed
+at its actual retrieval times, not at the reading cutoff. Each slice retains its
+own query, receipt, timestamps and version. Names and codes do not establish
+permanent security IDs or company/issuer equivalence. BSE and other markets remain
+unsupported, not folded into a Shanghai or Shenzhen scope.
+
+Daily price eligibility conservatively requires a reported listing date <= the
+price date and, when present, price date < delisting date; the delisting day is
+excluded because the reference is not proof of trading that day. G cannot supply
+usable historical prices. A violating series is rejected for that security;
+missing prelisting, delisted or halted-day prices are not manufactured. P is a
+source listing-status label, not a daily trading halt calendar. Historical use of
+retrieved dates remains reconstruction, not point-in-time knowledge certification.
+
+Factors require the exact single code, start/end and zero offset, with requested
+`ts_code,trade_date,adj_factor`. Dates must be unique in the qualified calendar;
+values reuse the bounded positive-finite Decimal policy. Equal or decreasing
+factors are allowed; no monotonicity, factor=1 default, or action-type inference
+is imposed. Factors can exist where prices do not. Such rows never fill a price.
+
+The reader emits companion `raw` and `qfq` surfaces using the existing observation
+and pagination core. Qfq uses `close[d] * factor[d] / factor[end]`, a private
+34-digit Decimal context, and the **explicit end date** only. It never chooses the
+latest received factor, a future factor, or a previous factor as the anchor. The
+source conventions may differ from market software; this is not independently
+certified investor total return. Missing the anchor disables only this security's
+adjusted output; the original prices stay readable. Other missing factors omit
+only the affected derived dates so only crossing windows fail. Derived numbers
+outside the existing numeric range refuse the adjusted series, not its raw peer.
+
+Both surfaces keep identical scope and page selection with separate observed and
+missing counts. Per-security reference, price/factor lineage and qualification
+states distinguish absent, rejected, empty, missing-anchor and factor-gap inputs.
+Global qualification counts survive pagination. Details list calendar sessions
+without factors (which can include prelisting dates), price dates lacking factors,
+factor dates lacking prices, and changes between *adjacent supplied calendar
+sessions*. Changes are not labelled dividends, splits or rights issues. Raw source,
+factor-adjusted source and reference versions remain separately traceable.
+
+Use the existing CLI above with `schema="relay-security-stock-reading-v1"` and
+`calendar_result`, `master_results`, `stock_results`, `factor_results`, `exchange`,
+`start`, `end`, plus optional `horizons`. `master_results` is keyed by status and
+the two series maps by security code. All values are retained full capture results.
+Price/factor codes not in the master are refused. Do not add `coverage`,
+`declared_entities`, or an adjustment label to this schema. Both conventions are
+returned explicitly; `coverage` stays `partial-universe`. Empty scope does not
+mean zero opportunities. The original `relay-stock-reading-v1` route remains
+unchanged. No new CLI executable, file layout or source storage format is added.
+
 ## Source retention and permissions
 
 The exact input results remain usable with existing
@@ -101,7 +174,10 @@ Source-field basis, checked 2026-10-16: the archived
 [Relay manual](../sources/vendor/tushare-relay-v0.5.61.md), existing
 [byte-bound service registry](../sources/relay-registry.md), official Tushare
 [trade_cal](https://tushare.pro/document/2?doc_id=26) and
-[daily](https://tushare.pro/document/2?doc_id=27) definitions. Official daily is
+[daily](https://tushare.pro/document/2?doc_id=27),
+[stock_basic](https://tushare.pro/document/2?doc_id=25),
+[adj_factor](https://tushare.pro/document/2?doc_id=28), and
+[end-anchored adjustment](https://tushare.pro/document/2?doc_id=146) definitions. Official daily is
 unadjusted and does not supply suspended-day rows. Service enabled flags and
 published definitions are not today's successful business request or permission
 to redistribute. No actual market endpoint was called to certify this group.
@@ -122,7 +198,20 @@ contacted. The synthetic calendar is intentionally not a real exchange calendar.
 
 Retire the adapter, module CLI, this document and exclusive tests together when
 this capability exits. Shared source, numeric, custody and CI protections remain.
-Actual market field/response qualification, security master/adjustment factors,
+`tests/test_market_security_inputs.py` owns reference/factor and paired reading
+protections: explicit status coverage, malformed/duplicate references, listing
+intervals, missing anchor/factors/prices, 5/20/60 session windows, separate versions,
+range/context guards and both exchanges. It uses the original market test opener
+with real Registry/RelayHTTP/Retry/capture_plan and a new-process existing CLI.
+An artificial 100-to-50 close with a 1-to-2 factor tests normalization, not a real
+corporate action. Both test modules share this synthetic capture fixture; preserve
+or move that fixture if only the raw reader retires. The entire reference/factor
+module and these exclusive protections leave together when that capability exits.
+Official SDK/pandas transport or forward-filling would change the existing Relay
+and gap policies; the narrow Decimal join is therefore local, not a new data platform.
+
+Production market field/response qualification and retained source-reference
+restoration, identified corporate-action events, issuer/permanent-ID mapping,
 industry/concept membership, SourceRef custody and research adoption still need
 bounded successor groups under #10. Global indices, rates, sovereign bonds, FX,
 commodities and crypto retain their separate unfulfilled obligations.

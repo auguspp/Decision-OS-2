@@ -12,7 +12,7 @@ GitHub token的contents权限覆盖仓库，并非records路径级服务端ACL�
 
 ## 两个有限操作
 
-`backup`：先读真实records head，以它作为`expected_head`手动运行。核可信仓库/marker与固定快照中的来源版本、研究修订、前驱、当前指针及保留来源引用，随后做原生完整Git bundle并在全新临时bare库离线恢复、再次核验相同引用。没有资料或研究时如实计0，不伪装成产品已用。
+`backup`：先由受信 GitHubStore 认证仓库/visibility/marker并读取真实 records head，以它作为`expected_head`手动运行；不写 records。**完整逐版本审计改在精确固定的本地Git镜像上运行**，随后做原生完整 Git bundle，在新临时 bare 库离线恢复，并逐引用比较两次结果。旧远端逐来源扫描在真实多修订研究时会命中单操作512次API安全边界；此修复保留该上限、不分批重置凭据/预算、不绕过身份/授权。若原分支后续移动，只能恢复原已验证快照；绝不把旧快照说成最新。不因没有资料虚报产品已用。
 
 `retain-guide`：只保管本文件在该次已审核代码SHA下的公开版本，source_id=`store-runtime-guide`，submission_id=`store-guide-<完整代码SHA>`。不接受任意来源URL、正文、路径或研究委托。首次写入用既有VersionedStore→GitHubStore→createCommitOnBranch/expectedHeadOid；任何应用层重新取head不得越过操作原expected head。返回确切SourceRef后，换只读绑定以同一意图恢复原回执，不允许重发，再完成备份/恢复。这个正常工程资料消费者不冒充投资研究、行情资料或定时Quick/交互Full通路。
 
@@ -20,7 +20,7 @@ GitHub token的contents权限覆盖仓库，并非records路径级服务端ACL�
 
 ## 备份、下载与独立恢复
 
-GitHub Actions产物`dos2-store-<run>-<attempt>`含原生records.bundle和report.json。报告记录原代码/数据SHA、来源/研究引用、在线与离线核验、bundle大小/摘要、实际结果；不含token或来源正文。bundle包含该refs/heads/records的完整可达历史，**包括初始化anchor之前可达的公开工程历史**，并非只有当前树。恢复读者仍拒绝读取anchor前业务对象；不导出Git配置、工作树、secret或宿主设置。
+GitHub Actions产物`dos2-store-<run>-<attempt>`含原生records.bundle和report.json。报告记录原代码/数据SHA、来源/研究引用、**认证的远端head与固定Git镜像审计（mirror_audit）/独立离线审计（restored_audit）**、bundle大小/摘要、实际结果；不含token或来源正文。2026-10-16以前的历史报告`online_audit`专指旧逐条远端审计，新的`mirror_audit`不得冒称实时远端逐条读取，仍可由原生Git包、确切快照、marker及独立fsck/逐引用验证证明。bundle包含该refs/heads/records的完整可达历史，**包括初始化anchor之前可达的公开工程历史**，并非只有当前树。恢复读者仍拒绝读取anchor前业务对象；不导出Git配置、工作树、secret或宿主设置。
 
 产物按已声明30天期限保留，原生过期不删除records；应在过期前将下载文件放入已有获准保管位置。它是一次有限恢复快照，不是永久异地/跨账号灾备，也没有声称RPO、RTO或生产SLA已满足。只支持当前公开GitHub分支的备份上传；私有/受限资料不能借此公开。
 

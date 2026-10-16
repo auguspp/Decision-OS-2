@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import sys
 
-from decision_kernel.application.store_audit import audit_store
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import (
     Conflict, MAX_BYTES, RecordError, SHA, SourceInput, UnknownWrite, digest, encoded, require,
@@ -90,12 +89,23 @@ def run_operation(binding: GitHubBinding, *, api: GitHubAPI, operation: str,
         else:
             require(before == expected, "PLANNED_HEAD_CHANGED")
             snapshot = expected
-        audit = audit_store(VersionedStore(backend), snapshot)
-        report.update(snapshot=snapshot, online_audit=audit, status="references-verified")
+        report.update(snapshot=snapshot, status="snapshot-identified")
         checkpoint()
+        # The authenticated remote adapter pins the exact head, and retain-guide
+        # also validates the actual conditional write and readonly replay. The
+        # complete historical reference audit MUST run on a native pinned Git
+        # mirror, not by walking every object over the 512-call API transport.
+        # export_public_snapshot/bundle_from_bare audits both the mirror and a
+        # freshly restored full bundle, and rejects any mismatch.
         bundle = output / "records.bundle"
-        restored = exporter(binding, snapshot, bundle)
-        require(restored == audit, "RESTORED_REFERENCES_MISMATCH")
+        mirror = exporter(binding, snapshot, bundle)
+        report.update(status="references-verified", mirror_audit=mirror,
+                      audit_basis="authenticated-head-pinned-git-mirror-and-offline-full-restore-v1")
+        checkpoint()
+        # A second independently initialized local restore checks the retained
+        # exact bytes again before this operator reports completion.
+        restored = verify_bundle(bundle, binding, snapshot)
+        require(restored == mirror, "RESTORED_REFERENCES_MISMATCH")
         report.update(status="completed", restored_audit=restored,
                       bundle={"name": bundle.name, "size": bundle.stat().st_size,
                               "sha256": digest(bundle.read_bytes()), "self_contained": True},

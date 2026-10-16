@@ -71,3 +71,15 @@ python -m decision_kernel.interfaces.news_rolling_cli read --window legacy-view.
 原RSS失败日志目前只在其30天采集产物中保留，联合阅读不能假造未保管的失败批次。本模块只继承实际可读源中已有的失败/缺口，不代签采集器持久失败索引。来源局部拒绝、研究质量、长期备份、网页/Brief、用户采用和Quick分别验收。
 
 旧Kernel固定版`cb3bbc87`提供版本/前驱/缺口思想，新仓只复用其成熟原则，未迁旧schema/current_state。当前聚合/紧凑表示/CLI/手动workflow、原news/RSS测试及`test_news_rolling_index.py`随现役能力共同维护。回退需同时恢复原宿主输出与消费者，并保留已保存紧凑版本的reader，不能删掉历史数据后声称安全退役；共享Store、RSS与新闻来源保护继续。没有定时、通知、Sites、自动研究或人工Decision授权。
+
+## 一次操作内的读取预算
+
+一次紧凑窗口构建会恢复前驱、聚合原批次、再核首页。相同完整SourceRef在这些步骤反复经过远端Store，实际13批次的运行曾在保存前耗尽原512次请求预算（#46运行38879559479）；重置计数器、换API实例或增加上限不是修复。
+
+新闻宿主现在用私有`_SourceReads`在**一次显式build/read操作**内复用已由原`VersionedStore`及既有`_read_verified`核准的完整表示。键包含整个SourceRef（仓库、commit、path、摘要和selection），值为规范JSON字节；每次返回新解码副本，不让调用方污染后续读取。失败/缺源/坏摘要不缓存，不跨运行或跨分页作业保存缓存。原聚合器、原件限制、版本计数和逻辑摘要校验不变，缓存不构成第二内容池或独立读回证据。
+
+缓存的键和值合计最多8MiB；放不下的新结果仍沿同一原reader返回，但不加入缓存，绝不因此裁掉来源或重启请求预算。所有操作仍由同一个`GitHubAPI`计数并受原512次限制约束。完成重建后、输出文件与保存前调用原backend.head重新检查可变的仓库身份、可见性、分支/绑定；原writer继续即时权限检查与CAS，不缓存head或写回执。
+
+成功操作的`read-usage.json`仅保存核准来源读取次数、复用次数、缓存引用数/序列化字节数、实测`storage_api_requests`和绑定重检标记，不含缓存正文、凭据或新闻内容。没有原生请求计数的合成宿主用null，不冒充实测。保存未知仍沿原输入/原submission只读对账；计数或有view文件不能替代published/replayed回执。
+
+`tests/test_news_read_budget.py`用原GitHubAPI的真实512限制、原GitHubStore和真实Git支持的合成HTTP响应覆盖预算耗尽与修复、完整引用、独立副本、缓存限额、权限/绑定变化、冷读损坏和丢回执对账。此宿主优化及专属测试随新闻入口维护/退出，共享Store与独立读取保护不删除。生产同输入保存/独立恢复仍以原生运行分别验收。

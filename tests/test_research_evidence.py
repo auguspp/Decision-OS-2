@@ -82,7 +82,9 @@ def test_advancing_store_does_not_change_evidence_pages(store):
         request(), p, cursor=first['next_cursor'], limit=1)
     assert second['snapshot'] == first['snapshot']
     assert [s['source_id'] for s in second['sources']] == ['c']
-    assert second['query_pages'][0]['total'] == 2 and second['next_cursor'] is None
+    assert second['query_pages'][0]['total'] == 1 and second['next_cursor'] is None
+    assert second['query_pages'][0]['total_scope'] == 'this-scan'
+    assert second['query_pages'][0]['scan']['start'] == 1
     assert ResearchEvidence(store).page(request(), p)['query_pages'][0]['total'] == 3
 
 

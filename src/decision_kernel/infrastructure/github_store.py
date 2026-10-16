@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 from http.client import HTTPException
@@ -292,6 +293,22 @@ class GitHubStore:
                     "PATH_OUTSIDE_STORE")
         return sorted(p for p in self._tree(commit) if p.startswith(prefix))
 
+    @contextmanager
+    def source_read_scope(self, snapshot: str):
+        """One bounded source scan; validate mutable access before AND after it.
+
+        Only the immutable source bytes/tree are reused. No global checked-head
+        flag, new API session, write access, or permission cache is introduced.
+        The caller must not publish results before this context exits normally.
+        """
+        self.check_commit(snapshot)
+        reader = _SourceReadScope(self, snapshot)
+        try:
+            yield reader
+            self.check_commit(snapshot)
+        finally:
+            reader.active = False
+
     def last_change(self, head: str, path: str) -> str:
         self.check_commit(head)
         self._path(path)
@@ -356,3 +373,35 @@ class GitHubStore:
             return commit
         except (RecordError, KeyError, TypeError, AttributeError) as exc:
             raise UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION") from None
+
+
+class _SourceReadScope:
+    """Private source-only reader; expires on exit and never changes the writer."""
+    def __init__(self, owner: GitHubStore, snapshot: str):
+        self.owner, self.snapshot, self.repository = owner, snapshot, owner.repository
+        self.active = True
+
+    def check_commit(self, commit: str) -> None:
+        require(self.active and commit == self.snapshot, "SOURCE_SCAN_SCOPE_CLOSED_OR_CHANGED")
+
+    def paths(self, commit: str, prefix: str = "") -> list[str]:
+        self.check_commit(commit)
+        require(prefix == "source-views/", "SOURCE_SCAN_PATH_OUTSIDE_SCOPE")
+        return sorted(p for p in self.owner._tree(commit) if p.startswith(prefix))
+
+    def read(self, commit: str, path: str) -> bytes:
+        self.check_commit(commit)
+        require(path.startswith("source-views/"), "SOURCE_SCAN_PATH_OUTSIDE_SCOPE")
+        return self.owner._read(commit, path)
+
+    def reference(self, commit: str, path: str) -> BlobRef:
+        return BlobRef(self.repository, commit, path, digest(self.read(commit, path)))
+
+    def resolve(self, ref: BlobRef) -> bytes:
+        require(isinstance(ref, BlobRef) and ref.repository == self.repository, "FOREIGN_REPOSITORY")
+        raw = self.read(ref.commit, ref.path)
+        require(digest(raw) == ref.sha256, "BLOB_DIGEST_MISMATCH")
+        return raw
+
+    def commit(self, files, *, expected):
+        raise RecordError("SOURCE_SCAN_READ_ONLY")

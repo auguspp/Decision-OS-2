@@ -67,11 +67,11 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     ref_file.write_text(json.dumps(reference), encoding="utf-8")
     assert command("read-source", "--ref", str(ref_file))["data"] == payload["text"]
     input_file.write_text(json.dumps({"case_id": "sample", "revision_id": "r1", "kind": "quick",
-                                     "body": "合成工程检查，不是投资研究。", "mandate": "synthetic:mandate",
+                                     "body": "合成工程检查，不是真实投资研究。", "mandate": "synthetic:mandate",
                                      "method": "synthetic:method", "sources": [reference]}, ensure_ascii=False), encoding="utf-8")
     revision = command("submit-revision", "--submission-id", "two", "--input", str(input_file))
     ref_file.write_text(json.dumps(revision), encoding="utf-8")
-    assert command("read-revision", "--ref", str(ref_file))["body"] == "合成工程检查，不是投资研究。"
+    assert command("read-revision", "--ref", str(ref_file))["body"] == "合成工程检查，不是真实投资研究。"
     assert command("current", "--case-id", "sample")["reference"] == revision
 
     # Separate installed CLI processes resume and revise the same saved research.
@@ -213,3 +213,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same installation: source-use acceptance cannot be inferred from a saved report.
     from test_research_source_use_integration import exercise_installed_source_use
     exercise_installed_source_use(command, outside, python, env, venv / "bin/decision-os", store)
+
+    # Same installation: resumable bounded source scan, not a full remote rescan.
+    from test_source_scan import exercise_installed_scan
+    exercise_installed_scan(command, outside)

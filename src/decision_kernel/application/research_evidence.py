@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import date
 
-from decision_kernel.application.versioned_store import MAX_QUERY_VERSIONS, _fold
+from decision_kernel.application.versioned_store import MAX_QUERY_VERSIONS, MAX_SCAN_VERSIONS, SOURCE_SCAN_CURSOR, _fold
 from decision_kernel.application.research_reader import MAX_SOURCE_PAGE_BYTES
 from decision_kernel.domain.records import (
     DIGEST, SHA, RecordError, SourceRef, checked_text, digest, encoded, identifier, require,
@@ -84,7 +84,7 @@ def version_key(ref: SourceRef) -> str:
 def _native_cursor(query: dict, snapshot: str) -> dict:
     # Adapt the existing VersionedStore.search cursor contract; search itself still
     # validates it and owns matching, version enumeration, and its original limits.
-    return {"snapshot": snapshot, "offset": 0, "query_sha256": digest(encoded({
+    return {"schema": SOURCE_SCAN_CURSOR, "snapshot": snapshot, "scan_offset": 0, "query_sha256": digest(encoded({
         "query": _fold(query["query"]), "entity_id": query["entity_id"]}))}
 
 
@@ -154,14 +154,15 @@ class ResearchEvidence:
         backend.check_commit(snapshot)
         sources, matches, outcomes, consumed, body_bytes, blocked = [], [], [], 0, 0, False
         on_page = {}
-        while query_index < len(plan["queries"]) and consumed < limit:
+        scanned = 0
+        while query_index < len(plan["queries"]) and consumed < limit and scanned < MAX_SCAN_VERSIONS:
             query = plan["queries"][query_index]
             start = native or _native_cursor(query, snapshot)
             outcome = {"query_id": query["query_id"], "question_id": query["question_id"],
                        "query": query["query"], "entity_id": query["entity_id"], "purpose": query["purpose"]}
             try:
                 found = self.store.search(query["query"], entity_id=query["entity_id"],
-                                          limit=limit-consumed, cursor=start)
+                                          limit=limit-consumed, cursor=start, scan_limit=MAX_SCAN_VERSIONS-scanned)
             except RecordError as error:
                 # Existing search fails closed on inaccessible/corrupt populations.
                 # Keep prior materials and the unchanged cursor, never call this zero matches.
@@ -174,7 +175,9 @@ class ResearchEvidence:
                 break
             require(found["snapshot"] == snapshot, "EVIDENCE_SEARCH_SNAPSHOT_CHANGED")
             outcome.update(status="searched", total=found["total"], returned=len(found["items"]),
-                           source_next_cursor=found["next_cursor"], error=None)
+                           source_next_cursor=found["next_cursor"], error=None,
+                           total_scope=found.get("total_scope", "all-matches-at-snapshot"), scan=found.get("scan"))
+            scanned += (found.get("scan") or {}).get("scanned_versions", MAX_SCAN_VERSIONS)
             outcomes.append(outcome)
             for hit in found["items"]:
                 ref = SourceRef.from_dict(hit["reference"])
@@ -224,6 +227,7 @@ class ResearchEvidence:
             "schema": CURSOR, "repository": backend.repository, "snapshot": snapshot,
             "plan_sha256": plan_hash, "request_sha256": request_hash, "linked_sha256": link_hash,
             "query_index": query_index, "source_cursor": native, "seen_versions": sorted(seen)}
+        backend.check_commit(snapshot)  # Do not export earlier cards after mutable access changed.
         return {
             "schema": "research-evidence-page-v1", "repository": backend.repository, "snapshot": snapshot,
             "plan": plan, "plan_sha256": plan_hash, "request_sha256": request_hash,
@@ -231,7 +235,8 @@ class ResearchEvidence:
                 row["status"] in ("unavailable", "not-included") for row in sources)
                 else "material-page" if matches else "no-matches-in-page",
             "sources": sources, "matches": matches, "query_pages": outcomes, "next_cursor": next_cursor,
-            "coverage": {"query_plan_complete": done, "unstarted_queries": [q["query_id"] for q in
+            "coverage": {"query_plan_complete": done, "scanned_versions_this_page": scanned,
+                         "scan_budget": MAX_SCAN_VERSIONS, "unstarted_queries": [q["query_id"] for q in
                          plan["queries"][query_index + (1 if native is not None or blocked else 0):]],
                          "returned_match_occurrences": consumed, "returned_unique_versions": len(sources),
                          "not_included_versions": sum(s["status"] == "not-included" for s in sources),

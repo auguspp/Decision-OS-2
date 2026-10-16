@@ -88,3 +88,27 @@ python -m decision_kernel.interfaces.rss_cli reconcile --binding config/store-bi
 专属测试执行真实feedparser、本地GitStore、原件往返/解压界限、元数据/原件前驱差别、请求前拒绝、同意图、改版/无时区/原件权限、来源失败、未知写保留输入、独立CLI及手动宿主约束。只替换HTTP和测试用云端入口，不伪装真实源或CI执行。
 
 代码CI、真实RSS元数据采集与读回、原件公开保管、日常页面/研究采用分别验收。只有标题等元数据的运行不能签原件生产恢复完成。若退役RSS，同步处理现役专属模块（含失败表示）、测试、workflow、可选依赖和rss锁接线；共享Store、新闻24h及CI保护保留，已存源版本不删除。
+
+## 已采集原意图的原生恢复（不重新抓源）
+
+并行 records 更新可能使已经取得完整RSS的保存因 `RSS_PLANNED_HEAD_CHANGED` 拒绝。
+大RSS的 source.json 即使压缩也可能超过研究宿主60KiB入口，不能为重存重新抓源、截断原件、
+提高输入限额或在工程main暂存媒体数据。原 `rss-intake.yml` 提供两个显式操作：
+
+- `recover`：只对原采集作业已终态、明确未写的上述冲突，从确切原生artifact恢复原 source.json。
+  使用原 submission_id、重新读取的 records expected_head 和有限元数据保管确认，仍经原RSS
+  `_PlannedStore / VersionedStore / GitHubStore` 条件写；同意图已存在时核原字节再重放，不发RSS请求。
+- `reconcile`：同一原artifact、原submission，只读job/只读Store检查原意图；expected_head空。
+  可用于丢失写入回执后的对账，缺失日志绝不创建新记录。未知写不能直接走recover来冒充已核未写。
+
+二者的 plan 仅含字符串 source_run、artifact_id、artifact_sha256，必须指向同仓、main手动、
+第1次且已终态的 rss-intake原采集运行；不是最新选择器。先读平台运行/产物元数据，复用新闻
+原生身份校验，再下载已选ZIP核摘要、固定五个成员、展开预算和原输入/报告/采集身份。
+只支持原有限元数据，不接受未经另核权利的原XML；原source、capture、reading逐字节核对，
+复用原RSS校验和成功前驱一步重建，不改原标题、版次、时间或计数。失败回执仍非成功快照。
+
+这两个操作不构造另一份来源或另一个writer。恢复保管失败回执后仍退出2，保管成功不更改
+采集状态；只读对账返回0仅表示原意图已找到且可核。原报告/失败不改绿，不通过重跑整个
+来源工作流恢复。ZIP有保留期，缺失或过期时明确拒绝；本能力不代替长期灾备。读取job为
+取得原生证据新增actions:read，仍无contents:write，凭据不传源站。专属恢复入口/测试/文档
+随RSS能力维护；共享新闻原生校验默认行为、既有来源保管和历史读取继续保留。

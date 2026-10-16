@@ -5,7 +5,7 @@ on:
       operation:
         description: Explicit fixed RSS capture/save or exact stored read
         type: choice
-        options: [read, capture]
+        options: [read, capture, recover, reconcile]
         default: read
         required: true
       code_sha:
@@ -38,10 +38,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   read:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.operation == 'read'
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (inputs.operation == 'read' || inputs.operation == 'reconcile')
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -51,10 +52,24 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: dev
+      - name: Fetch only the selected verified original RSS archive
+        if: inputs.operation == 'reconcile'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chosen="$(python -m decision_kernel.interfaces.rss_recovery select)"
+          read -r source_run artifact_id checksum <<< "$chosen"
+          root="$RUNNER_TEMP/rss-recovery"
+          mkdir "$root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run" > "$root/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$root/artifact.json"
+          python -m decision_kernel.interfaces.rss_recovery preflight --root "$root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$root/source.zip"
       - name: Open exact RSS capture and replay selected transition without source calls
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
-          DOS2_RSS_MODE: read
+          DOS2_RSS_MODE: ${{ inputs.operation }}
         run: python -m decision_kernel.interfaces.rss_cli run --out "$RUNNER_TEMP/rss-result"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
@@ -64,7 +79,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   capture:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.operation == 'capture' && inputs.public_metadata_custody_confirmed
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (inputs.operation == 'capture' || inputs.operation == 'recover') && inputs.public_metadata_custody_confirmed
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -92,10 +107,24 @@ jobs:
           with open(os.environ['RUNNER_TEMP']+'/rss-ci.json') as f: runs=json.load(f)['workflow_runs']
           assert any(r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push' and r['path']=='.github/workflows/ci.yml' and r['run_attempt']==1 and r['status']=='completed' and r['conclusion']=='success' for r in runs)
           PY
+      - name: Fetch only the selected verified original RSS archive
+        if: inputs.operation == 'recover'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chosen="$(python -m decision_kernel.interfaces.rss_recovery select)"
+          read -r source_run artifact_id checksum <<< "$chosen"
+          root="$RUNNER_TEMP/rss-recovery"
+          mkdir "$root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run" > "$root/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" > "$root/artifact.json"
+          python -m decision_kernel.interfaces.rss_recovery preflight --root "$root"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$root/source.zip"
       - name: Restore predecessor then capture one fixed feed and save via existing source owner
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
-          DOS2_RSS_MODE: capture
+          DOS2_RSS_MODE: ${{ inputs.operation }}
         run: python -m decision_kernel.interfaces.rss_cli run --out "$RUNNER_TEMP/rss-result"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()

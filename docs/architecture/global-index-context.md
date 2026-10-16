@@ -139,6 +139,77 @@ Output may contain the caller's approved source levels/lineage and must not be
 uploaded publicly without the required rights. No Actions source workflow,
 credential access, auto-custody, notification or deployment is added.
 
+## Ordinary market reading and exact retained recovery
+
+The US reader also uses the existing `read_market_payload` route. Its input
+schema is `relay-us-index-reading-v1`, with the same `calendar_result`,
+`index_results`, `declared_indices`, `start`, `end` and optional `horizons` fields.
+The required-field contract lives with `global_index_inputs`; the dispatcher and
+custody adapter share it. `global_index_cli` still accepts its original **bare**
+input without a schema and delegates to this route. Neither entry changes the
+original US calendar, supported codes, observations, units or source qualification.
+The ordinary input adds only the schema to that same approved local input:
+
+```console
+python -m decision_kernel.interfaces.market_relay_cli \
+  --input /approved/local/us-market-reading.json \
+  --registry /checkout/docs/sources/relay-registry.json \
+  --entity-id SPX --limit 1
+```
+
+For inputs with established public redistribution rights, use the existing
+[market custody](market-custody.md) save/read operations. There is no US-specific
+store, manifest format, journal or writer. The same `market-query-custody-v1`
+manifests reference the existing requested-column SourceInputs; the same
+`market-reading-custody-v1` root records the input recipe and exact query refs.
+The adapter admits the existing `us_tradecal` and `index_global` field contracts.
+Source pages stay in their source records, not duplicated in a new view archive.
+
+`retain_market_reading` keeps the original public-rights gate and complete-capture
+preflight before the first write. The boolean is a caller assertion, **not** a
+supplier licence. Original permission/binding checks, CAS, identical-intent
+reconciliation, page/query/reading bounds and fresh-reader verification apply.
+Unknown writes stop; reconcile the same input through the existing journal, not
+a new submission key. This change does not permit restricted inputs to enter
+public Actions artifacts or records. Read access is not redistribution permission.
+
+Once an authorized save returns its root reference, the ordinary reader can open
+it without the original capture files or a Relay key:
+
+```console
+python -m decision_kernel.interfaces.market_custody_cli read \
+  --binding /approved/local/readonly-binding.json \
+  --registry /checkout/docs/sources/relay-registry.json \
+  --input /approved/local/root-sourceref.json --entity-id SPX --limit 1
+```
+
+This uses the existing authorized store binding, not a new target. A restored
+view preserves the exact source versions, requested date window, unit, pagination
+and full declared-index denominator. Reading one index does not turn the scope
+into one. A lost index page produces `partial-restoration`, a named source error
+and that index's rejected input; available peers remain readable. A lost shared
+calendar leaves `view=null` with a reading error, never zero market change or
+zero missing observations. Registry drift is refused, not refreshed silently.
+No failed source is replaced by a network request or a newer version.
+
+The retained representation is a requested-column reading envelope, not original
+HTTP bytes or execution-attempt diagnostics. The existing host strips those
+unretained diagnostics before preparing public output. It continues to enforce
+its 60,000-byte runtime payload bound; custody keeps its existing 2 MiB input
+bound and query/page limits. Neither is raised to the standalone CLI's 8 MiB.
+A diagnostic `market-source-check-v1` receipt is not accepted as a reading input
+and cannot be converted into the missing source rows. No repeat of a successful
+source window, public write, scheduled task or Brief adoption is authorized here.
+
+`tests/test_us_index_custody.py` exercises the original source exporter/store,
+existing root/query schemas, multi-page exact restoration, missing/empty sources,
+local-Git and separate-process readers with capture files removed, ordinary and
+legacy CLI equivalence, runtime rights/redaction, same-intent/unknown-write
+reconciliation and scope/snapshot/page tampering. All fixtures and local stores
+are synthetic. Retiring this integration also removes its route, US slot/field
+adapters and dedicated tests; shared custody and domestic reading remain. Retiring
+the underlying US reader must additionally retire its consumers of these constants.
+
 ## Finite non-publishing source check
 
 When no suitable authorized capture can be reused, the existing

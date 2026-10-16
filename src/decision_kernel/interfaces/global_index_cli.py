@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 import sys
 
-from decision_kernel.application.global_index_inputs import read_us_index_context
+from decision_kernel.application.global_index_inputs import US_INDEX_READING_SCHEMA, US_INDEX_REQUIRED
+from decision_kernel.application.market_reading import read_market_payload
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.domain.records import require
 
 MAX_INPUT = 8 * 1024 * 1024
-REQUIRED = {"calendar_result", "index_results", "declared_indices", "start", "end"}
+REQUIRED = US_INDEX_REQUIRED
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,9 +32,8 @@ def main(argv: list[str] | None = None) -> int:
                 and data.keys() <= REQUIRED | {'horizons'}, 'GLOBAL_INDEX_INPUT')
         if 'horizons' in data:
             require(isinstance(data['horizons'], list), 'GLOBAL_INDEX_HORIZONS')
-            data['horizons'] = tuple(data['horizons'])
-        result = read_us_index_context(**data, registry=RelayRegistry(args.registry),
-                                       offset=args.offset, limit=args.limit, entity_id=args.entity)
+        result = read_market_payload({"schema": US_INDEX_READING_SCHEMA, **data}, RelayRegistry(args.registry),
+                                     offset=args.offset, limit=args.limit, entity_id=args.entity)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False, sort_keys=True))
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         # Never print raw capture values, credentials, file contents or a traceback.

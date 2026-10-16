@@ -13,7 +13,7 @@ on:
         type: string
         required: true
       plan:
-        description: 'Public JSON plan: build/read retain original fields; desk uses window/cutoff/kind/baseline/attention; read-desk uses artifact reference'
+        description: 'Public JSON plan: desk uses window/cutoff/kind/baseline/attention and optional exact research; read-desk uses artifact reference'
         type: string
         required: true
       save:
@@ -28,6 +28,11 @@ on:
         required: true
       public_feedback_custody_confirmed:
         description: 'Explicit selection notes may be public in both workflow output and records; never inferred from metadata rights'
+        type: boolean
+        default: false
+        required: false
+      public_research_custody_confirmed:
+        description: 'Exact original research excerpts and limitations may be public; separate from news metadata rights, including read-only outputs'
         type: boolean
         default: false
         required: false

@@ -217,3 +217,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same installation: resumable bounded source scan, not a full remote rescan.
     from test_source_scan import exercise_installed_scan
     exercise_installed_scan(command, outside)
+
+    # Same cold wheel: news -> explicit choice -> saved Brief -> independent read.
+    from test_news_delivery_host import exercise_installed_news
+    exercise_installed_news(outside, python, env, store)

@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Build a compact 24h snapshot, or read a page by exact saved SourceRef'
+        description: 'Build/read a 24h snapshot, generate a news desk, or reopen an exact saved edition'
         type: choice
-        options: [build, read]
+        options: [build, read, desk, read-desk]
         default: build
         required: false
       code_sha:
@@ -13,11 +13,11 @@ on:
         type: string
         required: true
       plan:
-        description: 'Public JSON: build uses as_of/batch_references/predecessor; read uses reference/source/query/limit/cursor'
+        description: 'Public JSON plan: build/read retain original fields; desk uses window/cutoff/kind/baseline/attention; read-desk uses artifact reference'
         type: string
         required: true
       save:
-        description: 'Preserve this derived 24-hour metadata through the existing source writer'
+        description: 'Preserve build metadata or a desk edition through the existing versioned writer'
         type: boolean
         default: false
         required: true
@@ -26,6 +26,11 @@ on:
         type: boolean
         default: false
         required: true
+      public_feedback_custody_confirmed:
+        description: 'Explicit selection notes may be public in both workflow output and records; never inferred from metadata rights'
+        type: boolean
+        default: false
+        required: false
       submission_id:
         description: 'Stable original intent for one save; empty for read-only build'
         type: string
@@ -86,7 +91,7 @@ jobs:
           retention-days: 30
   save:
     needs: build
-    if: inputs.save && inputs.public_metadata_custody_confirmed && inputs.operation != 'read'
+    if: inputs.save && inputs.public_metadata_custody_confirmed && inputs.operation != 'read' && inputs.operation != 'read-desk'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

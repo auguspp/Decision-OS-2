@@ -26,11 +26,14 @@ from decision_kernel.domain.records import (
     MAX_BYTES, RecordError, Selection, SourceInput, SourceRef, digest, encoded, require,
 )
 
+from decision_kernel.application.shibor_inputs import SHIBOR_FIELDS, SHIBOR_READING_SCHEMA, SHIBOR_REQUIRED
+
 QUERY_SCHEMA = "market-query-custody-v1"
 READING_SCHEMA = "market-reading-custody-v1"
 MAX_QUERIES = 32
 MAX_PAGES = 100
 MARKET_FIELDS = {
+    "shibor": SHIBOR_FIELDS,
     "us_tradecal": US_CALENDAR_FIELDS,
     "index_global": INDEX_FIELDS,
     "trade_cal": {"exchange", "cal_date", "is_open"},
@@ -54,13 +57,15 @@ def _map_results(payload, transform):
     output = deepcopy(payload)
     def one(value, kind, prefix):
         required = (STOCK_REQUIRED if kind == "stock" else GROUP_REQUIRED)
+        if kind == "shibor":
+            required = SHIBOR_REQUIRED
         if kind == "us-index":
             required = US_INDEX_REQUIRED
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
         require(isinstance(value, dict) and required <= value.keys() <= required | extras, "MARKET_CUSTODY_SURFACE")
-        for field in ("calendar_result", "catalog_result"):
+        for field in ("calendar_result", "catalog_result", "rate_result"):
             if field in value:
                 value[field] = transform(value[field], prefix + [field])
         for field in ("stock_results", "master_results", "factor_results", "member_results", "index_results"):
@@ -81,9 +86,10 @@ def _map_results(payload, transform):
     else:
         schema = output.pop("schema")
         kind = output.pop("kind") if schema == "relay-ths-group-reading-v1" else (
+            "shibor" if schema == SHIBOR_READING_SCHEMA else
             "us-index" if schema == US_INDEX_READING_SCHEMA else
             "raw" if schema == "relay-stock-reading-v1" else "stock")
-        require(kind in ("raw", "stock", "sector", "concept", "us-index"), "MARKET_CUSTODY_KIND")
+        require(kind in ("raw", "stock", "sector", "concept", "us-index", "shibor"), "MARKET_CUSTODY_KIND")
         one(output, kind, [])
         output["schema"] = schema
         if schema == "relay-ths-group-reading-v1":

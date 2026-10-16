@@ -28,6 +28,12 @@ COMMON_PARAMETERS = frozenset({'ts_code', 'ann_date', 'f_ann_date', 'end_date', 
 FORBIDDEN_PARAMS = {'url', 'host', 'endpoint', 'proxy', 'callback', 'redirect', 'method', '__probe'}
 
 
+def _field_name(api, value):
+    """Keep general names strict; only Shibor admits its seven documented tenor columns."""
+    return isinstance(value, str) and (NAME.fullmatch(value) is not None or
+        api == "shibor" and value in {"1w", "2w", "1m", "3m", "6m", "9m", "1y"})
+
+
 def source_use_guidance(kind):
     """Returned at initial prepare AND resume, independent of open findings/gaps."""
     return {'policy': 'sources-throughout-research-v1', 'kind': kind,
@@ -64,7 +70,7 @@ def parameters_for(registry, api, parameters):
         result[key] = str(value)
     fields = result.get('fields', '').split(',')
     require(1 <= len(fields) <= 128 and len(set(fields)) == len(fields)
-            and all(NAME.fullmatch(f) and not SENSITIVE.search(f) for f in fields),
+            and all(_field_name(api, f) and not SENSITIVE.search(f) for f in fields),
             'SOURCE_EXPLICIT_SAFE_FIELDS_REQUIRED')
     require(set(result) - {'fields', 'limit', 'offset'}, 'SOURCE_BUSINESS_SCOPE_REQUIRED')
     require(result.get('limit', '').isascii() and result['limit'].isdigit()
@@ -104,7 +110,7 @@ def _table(api, params, body):
     require(isinstance(data, dict), 'SOURCE_TABLE_INVALID')
     fields, rows = data.get('fields'), data.get('items')
     require(isinstance(fields, list) and len(fields) <= 512
-            and all(isinstance(f, str) and NAME.fullmatch(f) for f in fields) and len(set(fields)) == len(fields), 'SOURCE_FIELDS_INVALID')
+            and all(_field_name(api, f) for f in fields) and len(set(fields)) == len(fields), 'SOURCE_FIELDS_INVALID')
     require(isinstance(rows, list) and len(rows) <= int(params['limit']), 'SOURCE_ROWS_INVALID')
     requested = params['fields'].split(',')
     require(not rows or set(requested) <= set(fields), 'SOURCE_REQUESTED_FIELDS_MISSING')

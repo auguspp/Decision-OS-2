@@ -91,13 +91,14 @@ def _bytes_json(raw: bytes):
         raise RecordError("NEWS_JSON_INVALID") from None
 
 
-def _row(provider, source, identity, title, link, time_claim, observed_at, content_digest):
+def _row(provider, source, identity, title, link, time_claim, observed_at, content_digest,
+         *, other_time_claims=None):
     article = _sha({"provider": provider, "source": source, "identity": identity})
     return {"provider": provider, "source_id": source, "article_id": article,
             "version_id": _sha({"article": article, "title": title,
                                 "published": time_claim["raw"], "body": content_digest}),
             "title": title, "url": link, "published_claim": time_claim,
-            "observed_at": observed_at,
+            "other_time_claims": other_time_claims or {}, "observed_at": observed_at,
             "representation": "headline-and-locator-only",
             "publication_verified": False, "event_verified": False,
             "research_started": False, "body_archived": False}
@@ -144,7 +145,8 @@ def newsnow_window(raw: bytes, source: str, *, observed_at: str):
         rows.append(_row("newsnow", source,
                          {"item_id": key, "url": link}, _headline(item.get("title")),
                          link, date_claim["pubDate"], observed_at,
-                         _sha({"title": item["title"], "extra_date": date_claim["extra.date"]["raw"]})))
+                         _sha({"title": item["title"], "extra_date": date_claim["extra.date"]["raw"]}),
+                         other_time_claims={"extra.date": date_claim["extra.date"]}))
     return _window("newsnow", source, observed_at, raw, rows,
                    service_status=doc["status"], item_limit=30,
                    provider_timestamp_claim=_claim(doc.get("updatedTime")))
@@ -297,7 +299,8 @@ def source_locators(reading):
             require(row["provider"] == "relay", "NEWS_SOURCE_LINK_MISSING")
             origin = "https://pcd.mobcvb.cn/tushare/pro/" + row["source_id"].split(":")[1]
         limitations = ["NOT_A_VERIFIED_EVENT", "NO_PUBLISHER_PUBLICATION_TIME_VERIFICATION",
-                       "EXTERNAL_LOCATOR_ONLY_NO_NEWS_BODY"]
+                       "EXTERNAL_LOCATOR_ONLY_NO_NEWS_BODY",
+                       "ARTICLE_VERSION_SHA256_" + row["version_id"]]
         if row["url"] is None:
             limitations.append("NO_INDIVIDUAL_ARTICLE_URL_AGGREGATE_ENDPOINT_ONLY")
         result.append(SourceInput(source_id="news-" + row["article_id"][:40], kind="content",

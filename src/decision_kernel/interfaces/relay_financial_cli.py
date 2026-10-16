@@ -26,10 +26,10 @@ def _decode(raw):
     try:
         def unique(pairs):
             out = {}
-            for k, v in pairs:
-                if k in out:
+            for key, value in pairs:
+                if key in out:
                     raise ValueError("duplicate key")
-                out[k] = v
+                out[key] = value
             return out
         value = json.loads(raw, object_pairs_hook=unique,
                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
@@ -60,15 +60,28 @@ def _new_file(path):
         raise RecordError("FINANCIAL_OUTPUT_EXISTS_OR_UNWRITABLE") from None
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(prog="python -m decision_kernel.interfaces.relay_financial_cli")
+def main(argv=None, *, family="financial"):
+    require(family in ("financial", "participants"), "RELAY_CLI_FAMILY_INVALID")
+    participant = family == "participants"
+    query_cls, specs, planner, inspector = FinancialQuery, SPECS, build_plan, inspect_capture
+    capture_one, save_one, batch = capture_query, save_capture, capture_batch
+    if participant:
+        from decision_kernel.observations import relay_participants as own
+        from functools import partial
+        query_cls, specs, planner, inspector = own.ParticipantQuery, own.SPECS, own.build_plan, own.inspect_capture
+        capture_one = partial(capture_query, query_type=query_cls, schema=own.CAPTURE_SCHEMA,
+                              normalizer=own.normalize_page, failure_details=True)
+        save_one = partial(save_capture, inspector=inspector, source_builder=own.source_for_page)
+        batch = partial(capture_batch, query_type=query_cls, inspector=inspector)
+    parser = argparse.ArgumentParser(prog="python -m decision_kernel.interfaces.relay_" + ("participant" if participant else "financial") + "_cli")
     commands = parser.add_subparsers(dest="action", required=True)
     plan = commands.add_parser("plan", help="create explicit API/security/period queries; no network")
     plan.add_argument("--codes", nargs="+", required=True)
-    plan.add_argument("--periods", nargs="+", required=True)
-    plan.add_argument("--apis", nargs="+", choices=tuple(SPECS), default=list(SPECS))
-    plan.add_argument("--dimensions", nargs="+", choices=("P", "D", "I"), default=["P"])
-    plan.add_argument("--report-types", nargs="+")
+    plan.add_argument("--dates" if participant else "--periods", dest="periods", nargs="+", required=True)
+    plan.add_argument("--apis", nargs="+", choices=tuple(specs), default=list(specs))
+    if not participant:
+        plan.add_argument("--dimensions", nargs="+", choices=("P", "D", "I"), default=["P"])
+        plan.add_argument("--report-types", nargs="+")
     plan.add_argument("--output", type=Path, required=True)
     capture = commands.add_parser("capture", help="explicit finite plan; pages and failures retained")
     capture.add_argument("--plan", type=Path, required=True)
@@ -90,15 +103,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.action == "plan":
-            queries = build_plan(args.codes, args.periods, args.apis, dimensions=args.dimensions,
-                                 report_types=args.report_types or (None,))
+            queries = (planner(args.codes, args.periods, args.apis) if participant else
+                       planner(args.codes, args.periods, args.apis, dimensions=args.dimensions,
+                               report_types=args.report_types or (None,)))
             with _new_file(args.output) as out:
                 for query in queries:
                     out.write(encoded(asdict(query)).decode())
             print(json.dumps({"queries": len(queries), "network_requests": 0}))
             return 0
         if args.action == "capture":
-            queries = tuple(FinancialQuery.from_dict(q) for q in _lines(args.plan))
+            queries = tuple(query_cls.from_dict(q) for q in _lines(args.plan))
             require(queries and len({q.key for q in queries}) == len(queries), "FINANCIAL_PLAN_INVALID")
             require(type(args.max_pages) is int and args.max_pages > 0, "FINANCIAL_PAGE_BOUND_INVALID")
             for query in queries:
@@ -107,8 +121,8 @@ def main(argv=None):
             transport.validate_credential()
             failed = 0
             with _new_file(args.output) as out:
-                loader = lambda q: capture_query(q, transport=transport, page_size=args.page_size, max_pages=args.max_pages)
-                for item in capture_batch(queries, loader):
+                loader = lambda q: capture_one(q, transport=transport, page_size=args.page_size, max_pages=args.max_pages)
+                for item in batch(queries, loader):
                     out.write(encoded(item).decode()); out.flush()
                     failed += item["status"] != "captured"
             print(json.dumps({"queries": len(queries), "failed_or_not_attempted": failed, "http_attempts": transport.requests}))
@@ -120,7 +134,7 @@ def main(argv=None):
                 if item.get("capture") is None:
                     print(json.dumps({"status": "no-capture", "query": item.get("query")})); failed = True
                     continue
-                view = inspect_capture(item["capture"])
+                view = inspector(item["capture"])
                 print(json.dumps(view if args.include_rows else {k: v for k, v in view.items() if k != "pages"}, ensure_ascii=False))
                 failed |= not view["request_complete"]
             require(processed > 0, "FINANCIAL_EMPTY_CAPTURE_FILE")
@@ -145,7 +159,7 @@ def main(argv=None):
                     result = {"complete": False, "status": "no-capture", "query": item.get("query")}
                 else:
                     try:
-                        result = save_capture(item["capture"], factory, args.batch_id, public_rights_confirmed=True)
+                        result = save_one(item["capture"], factory, args.batch_id, public_rights_confirmed=True)
                     except RecordError as exc:
                         result = {"complete": False, "status": "rejected-before-save", "error": str(exc)}
                 try:

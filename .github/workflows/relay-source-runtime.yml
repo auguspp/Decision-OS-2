@@ -12,16 +12,25 @@ on:
         description: 'Exact inspected main SHA; reject a changed code version'
         type: string
         required: true
+      family:
+        description: 'Reviewed source family; no arbitrary interface dispatch'
+        type: choice
+        options: [financial, participants]
+        default: financial
       codes:
         description: 'Explicit securities separated by spaces or commas; no credentials'
         type: string
         required: true
       periods:
-        description: 'Explicit quarter-end YYYYMMDD periods separated by spaces or commas'
+        description: 'Financial only: quarter-end YYYYMMDD periods'
         type: string
-        required: true
+        required: false
+      dates:
+        description: 'Participants only: exact report or visit days YYYYMMDD, separated by spaces'
+        type: string
+        required: false
       apis:
-        description: 'Space-separated financial API names; empty selects the eight implemented APIs'
+        description: 'Space-separated names in chosen family; empty selects its 8 financial or 3 participant APIs'
         type: string
         default: ''
       page_size:

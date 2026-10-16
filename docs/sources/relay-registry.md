@@ -104,7 +104,9 @@ assert check['gateway_requirements_satisfied'] and not check['dispatch_performed
 `required`表示全部必填；`required_any`表示至少满足其中一组，每组的全部字段都必须提供。
 空列表不等于缺失字段；缺失/null不自行推导。检查只核网关声明的必要条件，不验证证券、日期、
 上游完整参数/字段或返回数据质量；通过不授予权限。`probe_example`只保留，不执行。
-客户端并未因为登记扩大白名单：已接入仍是8财务加disclosure_date；其余API需要各模块适配。
+客户端不因目录自动扩大白名单。目前明确适配12项：原8财务、disclosure_date，
+以及[券商预测/历史研报/机构调研](relay-participants.md)的report_rc、research_report、stk_surv。
+后三项的代码接纳不等于已有现场取数证据；其余API仍需各模块按具体字段适配。
 `p_list/p_get`属于私有组合内容、`p_save/p_delete`属于写删，参数检查拒绝当作普通GET准入。
 
 ## 未启用项与维护边界

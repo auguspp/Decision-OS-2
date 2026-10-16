@@ -5,7 +5,7 @@ on:
       operation:
         description: 'Explicit public research I/O; never execute AI or a source URL'
         type: choice
-        options: [freeze-valuation, reconcile-valuation, read-valuation, calculate-odds, save-odds, reconcile-odds, read-odds, prepare, resume, read-source, catalogue, audit-numbers, audit-source-use, put-source, checkpoint, reconcile-source, reconcile-checkpoint, deliver, reconcile-delivery, verify-delivery, open-delivery, put-artifact, reconcile-artifact, read-artifact]
+        options: [freeze-odds-assessment, reconcile-odds-assessment, read-odds-assessment, calculate-probability-odds, save-probability-odds, reconcile-probability-odds, read-probability-odds, freeze-valuation, reconcile-valuation, read-valuation, calculate-odds, save-odds, reconcile-odds, read-odds, prepare, resume, read-source, catalogue, audit-numbers, audit-source-use, put-source, checkpoint, reconcile-source, reconcile-checkpoint, deliver, reconcile-delivery, verify-delivery, open-delivery, put-artifact, reconcile-artifact, read-artifact]
         default: prepare
         required: true
       payload:
@@ -27,7 +27,7 @@ on:
 permissions: {}
 jobs:
   read:
-    if: github.ref == 'refs/heads/main' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint' && inputs.operation != 'deliver' && inputs.operation != 'put-artifact' && inputs.operation != 'freeze-valuation' && inputs.operation != 'save-odds'
+    if: github.ref == 'refs/heads/main' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint' && inputs.operation != 'deliver' && inputs.operation != 'put-artifact' && inputs.operation != 'freeze-valuation' && inputs.operation != 'save-odds' && inputs.operation != 'freeze-odds-assessment' && inputs.operation != 'save-probability-odds'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -55,7 +55,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   write:
-    if: github.ref == 'refs/heads/main' && (inputs.operation == 'put-source' || inputs.operation == 'checkpoint' || inputs.operation == 'deliver' || inputs.operation == 'put-artifact' || inputs.operation == 'freeze-valuation' || inputs.operation == 'save-odds')
+    if: github.ref == 'refs/heads/main' && (inputs.operation == 'put-source' || inputs.operation == 'checkpoint' || inputs.operation == 'deliver' || inputs.operation == 'put-artifact' || inputs.operation == 'freeze-valuation' || inputs.operation == 'save-odds' || inputs.operation == 'freeze-odds-assessment' || inputs.operation == 'save-probability-odds')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

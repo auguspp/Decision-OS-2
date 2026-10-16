@@ -77,3 +77,7 @@ decision-os store --binding readonly.json read-odds --ref saved-result-ref.json
 测试覆盖原两价格正例、无概率边界、当前价值非回报、股类币种/股本/时点/分红/来源定位、真Git保存读回、旧研究变化提示、同意图冲突/未知写只读对账、宿主权限和原同一次cold-wheel安装。自查不是独立批准；CI不是经济研究。没有为工程构造真实公司判断或补概率。
 
 退出本能力时同步处理独立domain/application/odds_commands、CLI/宿主路由和专属测试；原artifact/store及历史方法/引用继续可读，不清理用户资料。普通反向PR回退工程，数据副作用不随代码回退消失。
+
+## 后继概率与风险入口
+
+首组无概率接口保持原语义；确实形成显式概率、风险及政策依据的未来权益/现金规格，可按[概率Odds入口](probability-odds.md)继续冻结评估、采用留存收盘输入并保存加权结果。新入口不把原无概率档案自动升级，不给历史当前价值稿补概率，也不代签实盘行情、研究质量或Decision。

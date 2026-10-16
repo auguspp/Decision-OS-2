@@ -113,3 +113,7 @@ def exercise_installed_odds(command, outside, python, env, executable, store_pat
     failed = subprocess.run([str(executable), "store", "--path", str(store_path), "calculate-odds", "--input", str(path)],
                             cwd=outside, env=env, capture_output=True, text=True)
     assert failed.returncode == 2 and "CAPITAL_CHANGE_REQUIRES_NEW_SPEC" in failed.stderr
+
+    # Continue this same installed Odds consumer, not another wheel or store.
+    from test_probability_odds_runtime import exercise_installed_probability
+    exercise_installed_probability(command, outside, executable, env, store_path)

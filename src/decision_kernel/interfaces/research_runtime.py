@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import sys
 
-from decision_kernel.interfaces import odds_commands, agenda_commands
+from decision_kernel.interfaces import odds_commands, agenda_commands, reading_commands
 from decision_kernel.interfaces.research_use_commands import audit_source_use
 
 from decision_kernel.application.numerical_audit import NumericalAudit
@@ -33,7 +33,7 @@ from decision_kernel.interfaces.research_payload import (
 
 WRITE_OPERATIONS = {"put-source", "checkpoint", "deliver", "put-artifact"} | set(odds_commands.WRITE_COMMANDS)
 RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"} | set(odds_commands.RECONCILE_COMMANDS)
-READ_OPERATIONS = {"audit-source-use", "prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS) | set(agenda_commands.COMMANDS)
+READ_OPERATIONS = {"reading-room", "audit-source-use", "prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS) | set(agenda_commands.COMMANDS)
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -71,6 +71,8 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation == reading_commands.OPERATION:
+        return reading_commands.perform(store, payload)
     if operation in agenda_commands.COMMANDS:
         return agenda_commands.perform(store, operation, payload)
     if operation == "audit-source-use":
@@ -179,6 +181,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         require(isinstance(payload["rights_basis"], str) and bool(payload["rights_basis"].strip()),
                 "ARTIFACT_RIGHTS_NOT_CONFIRMED")
         ArtifactInput.from_dict(payload["artifact"])
+    reading_commands.preflight(command["operation"], command["payload"])
     agenda_commands.preflight(command["operation"], command["payload"])
     odds_commands.preflight(command["operation"], command["payload"])
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -208,6 +211,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         report["observed_head"] = backend.head()
         persist()
         result = _perform(VersionedStore(backend), command)
+        if operation == reading_commands.OPERATION:
+            reading_commands.write_page(output / "reading-room.html", result)
         if operation in ("deliver", "reconcile-delivery"):
             result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS:

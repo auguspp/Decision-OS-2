@@ -1,7 +1,7 @@
 """Research method/workpaper commands composed inside the existing store CLI."""
 from pathlib import Path
 
-from decision_kernel.interfaces import agenda_commands
+from decision_kernel.interfaces import agenda_commands, reading_commands
 
 from decision_kernel.interfaces.research_use_commands import audit_source_use
 from decision_kernel.application.numerical_audit import NumericalAudit
@@ -10,10 +10,11 @@ from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.domain.records import BlobRef
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 
-COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers", "audit-source-use") + agenda_commands.LOCAL_COMMANDS
+COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers", "audit-source-use") + agenda_commands.LOCAL_COMMANDS + (reading_commands.COMMAND,)
 
 
 def configure(actions) -> None:
+    reading_commands.configure(actions)
     agenda_commands.configure(actions)
     usage = actions.add_parser("audit-source-use", help="verify native pool/Relay receipts and exact research adoption; no writes")
     usage.add_argument("--input", type=Path, required=True, help="request/progress or saved reference, native receipt IDs and explicit exceptions")
@@ -41,6 +42,8 @@ def configure(actions) -> None:
 
 
 def execute(args, store, load) -> dict:
+    if args.store_command == reading_commands.COMMAND:
+        return reading_commands.execute(args, store, load)
     if args.store_command in agenda_commands.LOCAL_COMMANDS:
         return agenda_commands.execute(args, store, load)
     if args.store_command == "audit-source-use":

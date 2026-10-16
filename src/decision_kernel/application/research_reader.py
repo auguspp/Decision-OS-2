@@ -84,6 +84,8 @@ class ResearchReader:
         at_end = next_offset == len(sources)
         return {
             "schema": "research-context-v1", "research": research,
+            "source_use_acceptance": {"status": "not-demonstrated", "operation": "audit-source-use",
+                                      "reference": asdict(reference)},
             "source_page": {"total": len(sources), "offset": offset,
                             "returned": len(items), "remaining": len(sources) - next_offset,
                             "end_of_list": at_end, "coverage": "this-page-only", "items": items},

@@ -1,16 +1,19 @@
 """Research method/workpaper commands composed inside the existing store CLI."""
 from pathlib import Path
 
+from decision_kernel.interfaces.research_use_commands import audit_source_use
 from decision_kernel.application.numerical_audit import NumericalAudit
 from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.domain.records import BlobRef
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 
-COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers")
+COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers", "audit-source-use")
 
 
 def configure(actions) -> None:
+    usage = actions.add_parser("audit-source-use", help="verify native pool/Relay receipts and exact research adoption; no writes")
+    usage.add_argument("--input", type=Path, required=True, help="request/progress or saved reference, native receipt IDs and explicit exceptions")
     audit = actions.add_parser("audit-numbers", help="recompute declared source-bound numbers; read only, not economic approval")
     select_numbers = audit.add_mutually_exclusive_group(required=True)
     select_numbers.add_argument("--input", type=Path, help="research-numbers-v1 JSON")
@@ -35,6 +38,8 @@ def configure(actions) -> None:
 
 
 def execute(args, store, load) -> dict:
+    if args.store_command == "audit-source-use":
+        return audit_source_use(store, load(args.input))
     if args.store_command == "audit-numbers":
         audit = NumericalAudit(store)
         return audit.saved(BlobRef(**load(args.ref))) if args.ref else audit.audit(load(args.input))

@@ -2,12 +2,18 @@ name: decision-os-news-rolling
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'Build a compact 24h snapshot, or read a page by exact saved SourceRef'
+        type: choice
+        options: [build, read]
+        default: build
+        required: false
       code_sha:
         description: 'Exact inspected main code SHA with successful independent CI'
         type: string
         required: true
       plan:
-        description: 'Public JSON: as_of, batch_references (exact SourceRef list), optional predecessor SourceRef'
+        description: 'Public JSON: build uses as_of/batch_references/predecessor; read uses reference/source/query/limit/cursor'
         type: string
         required: true
       save:
@@ -80,7 +86,7 @@ jobs:
           retention-days: 30
   save:
     needs: build
-    if: inputs.save && inputs.public_metadata_custody_confirmed
+    if: inputs.save && inputs.public_metadata_custody_confirmed && inputs.operation != 'read'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -220,13 +220,41 @@ def combine(windows):
         counts.append({"source": p["source_id"], "status": p["status"],
                        "observations": len(p["observations"])})
         rows.extend(p["observations"])
-    # Same article versions from separate windows are one observed version,
-    # but identical titles on different articles are only repetition candidates.
-    distinct = {row["version_id"]: row for row in rows}
+    return _reading(rows, counts)
+
+
+def _reading(rows, counts):
+    distinct = {}
+    for row in rows:
+        require(isinstance(row, dict), "NEWS_ROW_INVALID")
+        version, article, title = row.get("version_id"), row.get("article_id"), row.get("title")
+        require(isinstance(version, str) and bool(re.fullmatch(r"[0-9a-f]{64}", version))
+                and isinstance(article, str) and bool(re.fullmatch(r"[0-9a-f]{64}", article)),
+                "NEWS_ROW_IDENTITY_INVALID")
+        _headline(title)
+        _seen_at(row.get("observed_at"))
+        require(row.get("provider") in ("relay", "newsnow")
+                and row.get("representation") == "headline-and-locator-only"
+                and row.get("event_verified") is False
+                and row.get("publication_verified") is False
+                and row.get("body_archived") is False
+                and isinstance(row.get("source_id"), str), "NEWS_ROW_AUTHORITY_INVALID")
+        if row["provider"] == "newsnow":
+            require(row["source_id"] in NEWSNOW_SOURCES, "NEWS_ROW_SOURCE_INVALID")
+            _link(row.get("url"), NEWSNOW_DOMAINS[row["source_id"]])
+        else:
+            source = row["source_id"].split(":")
+            require(len(source) == 3 and source[0] == "relay"
+                    and source[1] in RELAY_APIS and source[2], "NEWS_ROW_SOURCE_INVALID")
+            if row.get("url") is not None:
+                _link(row["url"])
+        require(version not in distinct or distinct[version] == row,
+                "NEWS_VERSION_COLLISION")
+        distinct[version] = row
     grouped = {}
     for row in distinct.values():
         grouped.setdefault(" ".join(row["title"].split()), []).append(row)
-    return {"schema": "dos2-news-reading-v1", "observations": list(distinct.values()),
+    view = {"schema": "dos2-news-reading-v1", "observations": list(distinct.values()),
             "source_outcomes": counts,
             "headline_repetition_candidates": [
                 {"title": key, "versions": sorted({r["version_id"] for r in group}),
@@ -235,11 +263,33 @@ def combine(windows):
                 for key, group in grouped.items() if len({r["article_id"] for r in group}) > 1],
             "complete_news_coverage": False,
             "meaning": "SOURCE_WINDOWS_ONLY_NO_AUTOMATIC_QUICK_OR_FACT_ACCEPTANCE"}
+    view["reading_sha256"] = _sha(view)
+    require(len(encoded(view)) <= 5 * 1024 * 1024, "NEWS_READING_BOUND")
+    return view
+
+
+def verify_reading(value):
+    require(isinstance(value, dict) and "reading_sha256" in value
+            and isinstance(value.get("observations"), list)
+            and isinstance(value.get("source_outcomes"), list), "NEWS_READING_INVALID")
+    expect = _reading(value["observations"], value["source_outcomes"])
+    require(value == expect, "NEWS_READING_INTEGRITY")
+    return value
+
+
+def merge_readings(readings):
+    require(isinstance(readings, (list, tuple)) and 1 <= len(readings) <= 12,
+            "NEWS_READING_INPUT_BOUND")
+    items, outcomes = [], []
+    for reading in readings:
+        original = verify_reading(reading)
+        items.extend(original["observations"])
+        outcomes.extend(original["source_outcomes"])
+    return _reading(items, outcomes)
 
 
 def source_locators(reading):
-    require(isinstance(reading, dict) and reading.get("schema") == "dos2-news-reading-v1",
-            "NEWS_READING_INVALID")
+    verify_reading(reading)
     result = []
     for row in reading["observations"]:
         origin = row["url"]

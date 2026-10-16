@@ -73,6 +73,9 @@ def build_on_host(output):
     require(inputs["code_sha"] == os.environ.get("GITHUB_SHA"), "NEWS_ROLL_CODE_CHANGED")
     require(inputs.get("save") in ("true", "false"), "NEWS_ROLL_SAVE_REQUIRED")
     operation = inputs.get("operation", "build")
+    if operation in ("desk", "read-desk"):
+        from decision_kernel.interfaces.news_delivery_cli import run_desk
+        return run_desk(output, inputs)
     require(operation in ("build", "read"), "NEWS_ROLL_OPERATION_REQUIRED")
     saving = inputs["save"] == "true"
     require(not saving or operation == "build", "NEWS_ROLL_READ_CANNOT_SAVE")

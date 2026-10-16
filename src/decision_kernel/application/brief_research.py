@@ -181,13 +181,12 @@ def validate(section, plan, cutoff, store):
     for row in section["rows"]:
         if row["version_id"] not in adopted:
             continue
-        research = store.read_revision(BlobRef(**row["item"]["reference"]))
-        require(excerpt(research, row["item"]) == row["excerpt"], "BRIEF_RESEARCH_ORIGINAL_MISMATCH")
-        payload, context = research["record"]["input"], row["context"]
-        require(all(context[k] == payload[k] for k in ("case_id", "revision_id", "kind", "mandate"))
-                and context["recorded_unresolved"] == payload["unresolved"]
-                and context["stored_at"] == research["record"]["stored_at"]
-                and clock(context["stored_at"]) <= clock(cutoff), "BRIEF_RESEARCH_ORIGINAL_MISMATCH")
+        # Rebuild the adopted context, not merely its quote/mandate. Otherwise a
+        # resealed artifact could forge original challenges, source status or
+        # agenda choices in the actual prior body. Nonadopted historical failures
+        # remain historical observations; recovery may make them usable next time.
+        current = read_rows(store, {**plan, "items": [row["item"]]}, cutoff)[0]
+        require(current == row, "BRIEF_RESEARCH_ORIGINAL_MISMATCH")
 
 
 def brief_text(section):

@@ -112,7 +112,7 @@ versioned_store._now=lambda:'2026-10-16T10:00:00Z'
 store=VersionedStore(GitStore(Path(sys.argv[1])))
 def save(name,value):
  return store.put_source(name,SourceInput(name,'content','Synthetic','synthetic:brief',text=encoded(value).decode()))
-raw=encoded({'status':'success','id':'cls','items':[{'id':'b','title':'Synthetic observation'}]})
+raw=encoded({'status':'success','id':'cls','items':[{'id':'b','title':'Synthetic observation','url':'https://www.cls.cn/detail/456'}]})
 batch=save('mixed-batch',combine([newsnow_window(raw,'cls',observed_at='2026-10-16T10:00:00Z')]))
 window=save('mixed-window',rolling_index(store.read_source,[batch],as_of='2026-10-16T12:00:00Z'))
 r=store.submit_revision('mixed-research',RevisionInput('mixed-research','r1','full','Original finding.\nMaterial unresolved question.\n','Synthetic mandate','synthetic',unresolved=('No independent evidence.',)))
@@ -133,5 +133,6 @@ assert next_doc['research']['research_executed'] is False
 print(json.dumps({'status':'installed-mixed-brief-passed'}))
 '''
     result = subprocess.run([str(python), '-I', '-c', script, str(store)], cwd=outside,
-                            env=env, check=True, capture_output=True, text=True)
+                            env=env, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr  # Preserve synthetic child diagnostics.
     assert json.loads(result.stdout) == {'status':'installed-mixed-brief-passed'}

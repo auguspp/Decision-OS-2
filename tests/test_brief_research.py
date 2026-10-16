@@ -175,6 +175,23 @@ def test_tampered_excerpt_cannot_be_used_as_an_actual_baseline(store, monkeypatc
         build(store, {**p, 'baseline':asdict(prior)})
 
 
+@pytest.mark.parametrize('field', ['continuation', 'source_statuses', 'agenda'])
+def test_resealed_baseline_cannot_forge_adopted_context(store, monkeypatch, field):
+    p = mixed_plan(index_ref(store), [revision(store, monkeypatch)])
+    doc, _ = build(store, p)
+    context = doc['research']['rows'][0]['context']
+    if field == 'continuation':
+        context[field] = {'unresolved_challenges': [], 'claimed_quality': 'passed'}
+    elif field == 'source_statuses':
+        context[field] = [{'status': 'claimed-all-verified'}]
+    else:
+        context[field][0]['selection'] = {'action': 'focus', 'reason': 'forged user choice'}
+    doc['brief_markdown'] = brief.brief_text(doc); news._seal(doc)
+    prior = retain(store, doc)
+    with pytest.raises(RecordError, match='ORIGINAL_MISMATCH'):
+        build(store, {**p, 'baseline':asdict(prior)})
+
+
 @pytest.mark.parametrize('changes', [{'start':0}, {'end':81}, {'start':True}, {'end':'2'}, {'extra':'ignored'}])
 def test_bad_original_line_selection_rejected(changes):
     ref = {'repository':'synthetic', 'commit':'a'*40, 'path':'research/cases/x/revisions/r1/record.json', 'sha256':'b'*64}

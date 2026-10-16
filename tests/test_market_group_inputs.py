@@ -97,7 +97,7 @@ class GroupQualificationTests(unittest.TestCase):
 
     def test_catalogue_wrong_type_exchange_names_dates_and_counts(self):
         for i, val in ((0, '801001.SI'), (0, ''), (1, '\n'), (1, None), (1, 'a'*257),
-                       (2, True), (2, -1), (2, 'NaN'), (2, '1.2'), (2, 2.0), (3, 'HK'),
+                       (2, True), (2, -1), (2, 'NaN'), (2, '1.2'), (2, 2.5), (3, 'HK'),
                        (4, '20260230'), (5, 'N')):
             row = catalog_row(); row[i] = val
             with self.subTest(i=i, val=val), self.assertRaises(MarketRelayError):
@@ -107,9 +107,61 @@ class GroupQualificationTests(unittest.TestCase):
                 qualified_ths_catalog(catalogue(), registry=REGISTRY, kind=kind)
 
     def test_count_unknown_zero_and_string_are_distinct(self):
-        for count, expected in ((None, None), ('', None), (0, 0), ('3', 3)):
+        for count, expected in ((None, None), ('', None), (0, 0), ('3', 3), (0.0, 0), (3.0, 3)):
             out = qualified_ths_catalog(catalogue([catalog_row(count=count)]), registry=REGISTRY, kind='sector')
             self.assertEqual(out['groups'][SECTOR]['reported_member_count'], expected)
+
+    def test_integral_float_counts_preserve_value_and_original_capture(self):
+        for count in (0.0, -0.0, 1.0, 999999999.0):
+            with self.subTest(count=count):
+                result = catalogue([catalog_row(count=count)])
+                before = encoded(result)
+                out = qualified_ths_catalog(result, registry=REGISTRY, kind='sector')
+                self.assertIs(type(out['groups'][SECTOR]['reported_member_count']), int)
+                self.assertEqual(out['groups'][SECTOR]['reported_member_count'], int(count))
+                self.assertEqual(encoded(result), before)
+                self.assertIs(type(result['capture']['pages'][0]['table']['items'][0][2]), float)
+
+    def test_fractional_and_out_of_range_numbers_are_not_rounded(self):
+        from decision_kernel.domain.records import RecordError
+        for count in (0.5, 2.0000000001, -1.0, 1000000000.0, 1e100,
+                      float('nan'), float('inf'), float('-inf'), True, False, '1.0'):
+            with self.subTest(count=count), self.assertRaises((MarketRelayError, RecordError)):
+                qualified_ths_catalog(catalogue([catalog_row(count=count)]), registry=REGISTRY, kind='sector')
+
+    def test_count_representation_is_retained_in_source_version(self):
+        integer = qualified_ths_catalog(catalogue([catalog_row(count=1)]), registry=REGISTRY, kind='sector')
+        numeric = qualified_ths_catalog(catalogue([catalog_row(count=1.0)]), registry=REGISTRY, kind='sector')
+        self.assertEqual(integer['groups'], numeric['groups'])
+        self.assertNotEqual(integer['lineage'], numeric['lineage'])
+        self.assertNotEqual(integer['version'], numeric['version'])
+
+    def test_nullable_numeric_counts_keep_full_scope_and_member_comparison(self):
+        rows = [catalog_row(count=1.0), catalog_row('881002.TI', count=None), catalog_row('881003.TI', count=0.0)]
+        args = group_input()
+        args['catalog_result'] = catalogue(rows)
+        before = encoded(args)
+        first = read_ths_group_surface(**args, registry=REGISTRY, kind='sector', limit=1)
+        second = read_ths_group_surface(**args, registry=REGISTRY, kind='sector', offset=1, limit=1)
+        self.assertEqual(first['scope_count'], second['scope_count'])
+        self.assertEqual(first['scope_count'], 3)
+        self.assertEqual(first['observed_count'], 1)
+        self.assertEqual(first['entries'][0]['qualification']['members']['catalogue_count_comparison'], 'matches')
+        self.assertIsNone(second['entries'][0]['classification']['reported_member_count'])
+        args['member_results']['881002.TI'] = members('881002.TI')
+        second = read_ths_group_surface(**args, registry=REGISTRY, kind='sector', offset=1, limit=1)
+        self.assertEqual(second['entries'][0]['qualification']['members']['catalogue_count_comparison'], 'unknown')
+        args['member_results'].pop('881002.TI')
+        self.assertEqual(encoded(args), before)
+
+    def test_fractional_count_rejection_still_isolates_other_surfaces(self):
+        sector, concept = group_input(), group_input('concept')
+        sector['catalog_result'] = catalogue([catalog_row(count=1.5)])
+        concept['catalog_result'] = catalogue([catalog_row(CONCEPT, 'concept', count=1.0)], kind='concept')
+        out = read_three_market_surfaces(surfaces={'sector': sector, 'concept': concept, 'stock': stock_input()}, registry=REGISTRY)
+        self.assertEqual(out['surfaces']['sector']['reason_code'], 'MARKET_RELAY_GROUP_COUNT')
+        self.assertEqual(out['surfaces']['concept']['view']['observed_count'], 1)
+        self.assertEqual(out['surfaces']['stock']['view']['raw']['observed_count'], 1)
 
     def test_duplicate_catalogue_and_incomplete_pages_refused(self):
         for result in (catalogue([catalog_row()] * 2),
@@ -163,7 +215,7 @@ class GroupQualificationTests(unittest.TestCase):
             qualified_ths_members(result, registry=REGISTRY, ts_code=SECTOR)
 
     def test_member_empty_distinct_from_absent(self):
-        out = qualified_ths_members(members(rows=[], empty_fields=True), registry=REGISTRY, ts_code=SECTOR)
+        out = qualified_ths_members(members(rows=[] , empty_fields=True), registry=REGISTRY, ts_code=SECTOR)
         self.assertEqual(out['members'], {})
         self.assertEqual(out['row_count'], 0)
         with self.assertRaises(MarketRelayError):

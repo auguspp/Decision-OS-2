@@ -53,14 +53,27 @@ class MarketDiagnosticTests(unittest.TestCase):
         self.assertEqual(out['selection'], 'catalogues')
 
     def test_count_error_is_diagnosable_without_coercion(self):
-        out = self.run_check(CatalogueOpener({'count': 1.0}))
+        out = self.run_check(CatalogueOpener({'count': 1.5}))
         self.assertEqual(out['status'], 'completed-with-gaps')
         for item in out['queries'].values():
             self.assertEqual(item['reason_code'], 'MARKET_RELAY_GROUP_COUNT')
             self.assertEqual(item['status'], 'rejected')
             self.assertEqual(item['catalogue_shape']['field_types']['count']['number'], 1)
-            self.assertEqual(item['catalogue_shape']['integral_numeric_counts'], 1)
-            self.assertEqual(item['catalogue_shape']['fractional_numeric_counts'], 0)
+            self.assertEqual(item['catalogue_shape']['integral_numeric_counts'], 0)
+            self.assertEqual(item['catalogue_shape']['fractional_numeric_counts'], 1)
+
+    def test_integral_numeric_count_is_accepted_without_rewriting_diagnostics(self):
+        for selection, expected in (('catalogues', 'checked-catalogues'), ('sample', 'checked-sample')):
+            with self.subTest(selection=selection):
+                out = self.run_check(CatalogueOpener({'count': 1.0}), selection=selection)
+                self.assertEqual(out['status'], expected)
+                for slot in ('sector_catalog', 'concept_catalog'):
+                    item = out['queries'][slot]
+                    self.assertEqual(item['status'], 'checked')
+                    self.assertIsNone(item['reason_code'])
+                    self.assertEqual(item['catalogue_shape']['field_types']['count']['number'], 1)
+                    self.assertEqual(item['catalogue_shape']['integral_numeric_counts'], 1)
+                self.assertNotIn(SECRET_TEXT, json.dumps(self.receipts))
 
     def test_name_error_and_traits_are_diagnosable_without_trimming(self):
         out = self.run_check(CatalogueOpener({'name': '\t' + SECRET_TEXT + ' '}))

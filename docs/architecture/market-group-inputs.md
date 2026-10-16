@@ -34,7 +34,12 @@ catalogue rows. The ordinary shared inspector verifies pagination and transport.
 Each source code must be six digits plus `.TI`, unique in its slice, with the
 matching exchange/type. Names are bounded printable strings; duplicate names are
 allowed and never merged. A reported member count may be a nonnegative integer
-or digit string; null/empty is **unknown**, not zero. A supplied list date must be
+or digit string, or an exactly integral finite JSON floating number in the same
+0..999999999 range; null/empty is **unknown**, not zero. No fractions are rounded,
+negative/nonfinite/boolean/over-range counts remain invalid, and decimal strings
+are not newly admitted. Normalized counts are Python integers; original captures
+and their lineage remain unchanged, so equivalent values with different source
+representations retain different source versions. A supplied list date must be
 canonical compact YYYYMMDD. The date is retained as reference metadata, not a
 claim that any backfilled index history existed or was knowable at launch.
 
@@ -45,6 +50,28 @@ and calendar version remain separate. This does not merge THS with SW, DC, TDX
 or another classification, and does not infer type from the index name/prefix.
 Regional, thematic and other THS types are outside this group. The catalogue is
 observed at its capture clocks, not an atomic historical/full-market universe.
+
+## Count representation compatibility
+
+The non-publishing diagnostic run `38864296571/1` on 2026-10-16 localized both
+THS directory rejections to `MARKET_RELAY_GROUP_COUNT`: all non-null counts were
+integral floating-number representations. This is evidence of that representation
+mismatch, not evidence that every other row qualification passes. The official
+`ths_index` field remains an integer member count. Only exact, finite, nonnegative
+integer values within the previous nine-digit bound are accepted; e.g. synthetic
+`1.0` normalizes to `1`, but `1.5` is rejected. No blanket float-to-int coercion,
+source-row filtering, missing-to-zero fill or changes to shared JSON parsing occur.
+
+The original capture bytes are not rewritten. Version and transport lineage are
+computed over the original inspected representation, not a fabricated int-only
+capture. Existing member comparison keeps null counts unknown, and every valid
+catalogue row remains in the same denominator. Synthetic integration tests cover
+mixed integer-number/null/zero counts, paging, literal member comparison and
+independent-surface failure. The earlier integer-float rejection case now tests
+an illegal fractional value, with separate exact-integer acceptance and boundary
+counterexamples. Actual post-fix source qualification must still be measured;
+this change does not establish public redistribution rights, historical membership,
+full-market discovery or retained SourceRefs.
 
 ## Undated reported members are not historical constituents
 

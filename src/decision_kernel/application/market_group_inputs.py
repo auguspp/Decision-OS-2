@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import re
+import math
 
 from decision_kernel.application.market_radar import membership_overlap, read_market_surface
 from decision_kernel.application.market_relay_inputs import (
@@ -49,6 +50,12 @@ def qualified_ths_catalog(result: dict, *, registry: RelayRegistry, kind: str) -
         count = row["count"]
         if count in (None, ""):
             count = None
+        elif type(count) is float:
+            # Relay may serialize integer counts as JSON numbers with a decimal
+            # point. Accept the same bounded integer VALUE, never round a fraction.
+            _require(math.isfinite(count) and count.is_integer() and 0 <= count <= 999999999,
+                     "GROUP_COUNT")
+            count = int(count)
         else:
             _require(type(count) in (int, str) and bool(re.fullmatch(r"[0-9]{1,9}", str(count))), "GROUP_COUNT")
             count = int(count)

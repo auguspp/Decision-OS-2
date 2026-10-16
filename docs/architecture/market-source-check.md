@@ -124,7 +124,11 @@ boolean/integer/number/string/other), plus padded/nonprintable-name counts and
 integral/fractional floating-number counts. They expose neither source values nor
 row positions or IDs. These structural counters do not coerce values, select
 valid rows, change catalogue admission or establish usable classification counts.
-No source-supplied field name becomes a diagnostic key.
+No source-supplied field name becomes a diagnostic key. The catalogue qualifier
+now accepts bounded exact-integer floating representations (see
+[the count contract](market-group-inputs.md#count-representation-compatibility));
+the diagnostics still report their original `number` type, not a rewritten
+`integer` type. Fractional counts retain the specific rejection code.
 
 `last_attempt_failure` uses the existing transport's recorded failure classification,
 HTTP status and reviewed business-error enum, projected to explicit finite code

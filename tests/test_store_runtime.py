@@ -31,8 +31,10 @@ def test_published_real_git_backed_transaction_readonly_replay_and_restored_back
     report = execute(public_api, tmp_path / "first", expected=before)
     assert report["status"] == "completed" and report["write"] == "published"
     assert report["idempotent_readonly_replay"] is True and public_api.writes == 1
-    assert report["online_audit"] == report["restored_audit"]
-    assert report["online_audit"]["source_versions"] == 1
+    assert report["mirror_audit"] == report["restored_audit"]
+    assert report["mirror_audit"]["source_versions"] == 1
+    assert "online_audit" not in report
+    assert report["audit_basis"] == "authenticated-head-pinned-git-mirror-and-offline-full-restore-v1"
     assert report["research_executed"] is False
     second = execute(public_api, tmp_path / "second", expected=before)
     assert second["status"] == "completed" and second["write"] == "replayed"
@@ -132,3 +134,51 @@ def test_workflow_only_manual_and_split_least_privilege_job_tokens():
                 assert '"$DOS2_EXPECTED_HEAD"' in step["run"]
     for uses in re.findall(r"uses: ([^\n]+)", text):
         assert uses.startswith("./") or re.fullmatch(r"[A-Za-z0-9_./-]+@[a-f0-9]{40}", uses)
+
+
+def test_many_real_versions_backup_avoids_remote_per_record_audit(public_api, tmp_path, monkeypatch):
+    """Synthetic GitHub fake with a strict API call cap, genuine Git bundle and refs."""
+    from decision_kernel.application.versioned_store import VersionedStore
+    from decision_kernel.domain.records import SourceInput
+    from decision_kernel.infrastructure.github_store import GitHubStore
+
+    store = VersionedStore(GitHubStore(public_api.binding, public_api))
+    for n in range(10):
+        store.put_source(f"bulk-input-{n}", SourceInput(
+            f"bulk-source-{n}", "content", f"Synthetic source {n}",
+            "synthetic:bulk", f"Synthetic verified data row {n}\n"))
+    calls = 0
+    previous_writes = public_api.writes
+    original = public_api.request
+
+    def limited(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 28:
+            raise StoreUnavailable("REMOTE_REQUEST_LIMIT")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(public_api, "request", limited)
+    report = execute(public_api, tmp_path / "many", operation="backup")
+    assert report["status"] == "completed" and report["write"] == "not-requested"
+    assert report["mirror_audit"] == report["restored_audit"]
+    assert report["mirror_audit"]["source_versions"] == 10
+    assert calls <= 28 and public_api.writes == previous_writes
+
+
+def test_bundle_corruption_after_export_cannot_be_reported_as_backup(public_api, tmp_path):
+    before = public_api.git.head()
+    binding = replace(public_api.binding, write_enabled=False)
+
+    def damaged_export(binding, snapshot, output):
+        mirror = bundle_from_bare(public_api.git.root, binding, snapshot, output)
+        output.write_bytes(output.read_bytes()[:90])
+        return mirror
+
+    with pytest.raises(RecordError):
+        run_operation(binding, api=public_api, operation="backup", expected=before,
+                      code_sha=SHA, guide=GUIDE, output=tmp_path / "damaged",
+                      exporter=damaged_export)
+    report = json.loads((tmp_path / "damaged/report.json").read_text())
+    assert report["status"] == "failed" and "restored_audit" not in report
+    assert report["snapshot"] == before and report["write"] == "not-requested"

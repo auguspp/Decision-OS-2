@@ -110,7 +110,12 @@ class GitSnapshot(GitStore):
 
 def bundle_from_bare(root: Path, binding: GitHubBinding, snapshot: str, output: Path) -> dict:
     """Output is new; snapshot is retained by a local-only ref, never pushed."""
-    GitSnapshot(root, replace(binding, write_enabled=False), snapshot)
+    # Audit the complete, SHA-pinned native Git mirror rather than exhausting a
+    # bounded remote REST session one historic source/revision at a time.
+    from decision_kernel.application.store_audit import audit_store
+    from decision_kernel.application.versioned_store import VersionedStore
+    mirror = GitSnapshot(root, replace(binding, write_enabled=False), snapshot)
+    mirror_audit = audit_store(VersionedStore(mirror), snapshot)
     if output.exists():
         raise Conflict("BUNDLE_ALREADY_EXISTS")
     ref = "refs/heads/" + binding.branch
@@ -119,8 +124,11 @@ def bundle_from_bare(root: Path, binding: GitHubBinding, snapshot: str, output: 
     git("--git-dir=" + str(root), "fsck", "--full", "--strict", "--no-reflogs")
     git("--git-dir=" + str(root), "bundle", "create", str(output), ref)
     require(0 < output.stat().st_size <= MAX_BUNDLE_BYTES, "BUNDLE_SIZE_LIMIT")
-    # Empty destination verification proves that this is not a thin/incremental backup.
-    return verify_bundle(output, binding, snapshot)
+    # Empty destination verification proves that this is not a thin/incremental
+    # backup. Compare two independently instantiated local readers and all refs.
+    restored_audit = verify_bundle(output, binding, snapshot)
+    require(restored_audit == mirror_audit, "RESTORED_REFERENCES_MISMATCH")
+    return mirror_audit
 
 
 def verify_bundle(bundle: Path, binding: GitHubBinding, snapshot: str) -> dict:

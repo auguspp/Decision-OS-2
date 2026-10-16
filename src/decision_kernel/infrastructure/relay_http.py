@@ -21,6 +21,8 @@ CAPABILITIES = "https://pcd.mobcvb.cn/tushare/capabilities"
 SECRET_ENV = "TUSHARE_PROXY_API_KEY"
 FINANCIAL_APIS = frozenset({"income", "balancesheet", "cashflow", "fina_indicator",
                             "forecast", "express", "fina_audit", "fina_mainbz"})
+PARTICIPANT_APIS = frozenset({"report_rc", "research_report", "stk_surv"})
+READ_APIS = FINANCIAL_APIS | PARTICIPANT_APIS | {"disclosure_date"}
 MAX_BODY = 4 * 1024 * 1024  # Response safety, not a purchased-use allowance.
 
 
@@ -48,13 +50,18 @@ class RelayHTTP:
 
     def request(self, api: str, parameters: dict[str, str], *, max_bytes=MAX_BODY,
                 agent="DecisionOS2-RelayFinancial/0.1") -> dict:
-        require(isinstance(api, str) and api in FINANCIAL_APIS | {"disclosure_date"}, "RELAY_API_NOT_ALLOWED")
+        require(isinstance(api, str) and api in READ_APIS, "RELAY_API_NOT_ALLOWED")
         required = {"ts_code", "fields", "limit", "end_date" if api == "disclosure_date" else "period"}
         optional = set() if api == "disclosure_date" else {"offset"}
         if api in {"income", "balancesheet", "cashflow"}:
             optional.add("report_type")
         if api == "fina_mainbz":
             optional.add("type")
+        if api in PARTICIPANT_APIS:
+            from decision_kernel.observations.relay_participants import validate_request
+            validate_request(api, parameters)
+            required = {"ts_code", "fields", "limit", "report_date" if api == "report_rc" else "trade_date"}
+            optional = {"offset"}
         require(isinstance(parameters, dict) and required <= parameters.keys() <= required | optional,
                 "RELAY_PARAMETERS_NOT_ALLOWED")
         require(all(isinstance(k, str) and isinstance(v, str) and 0 < len(v) <= 8192

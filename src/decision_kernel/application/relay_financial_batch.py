@@ -9,10 +9,11 @@ from decision_kernel.observations.relay_financial import FinancialQuery, inspect
 STOP_SOURCE_ERRORS = {"RELAY_CREDENTIAL_REQUIRED", "RELAY_HTTP_401", "RELAY_HTTP_403", "RELAY_HTTP_429", "RELAY_SECRET_REFLECTED", "RELAY_RATE_LIMIT", "RELAY_AUTH_OR_ENTITLEMENT"}
 
 
-def capture_batch(queries, loader):
+def capture_batch(queries, loader, *, query_type=FinancialQuery, inspector=None):
     """Independent API errors are visible; shared authentication/rate refusal stops traffic."""
+    inspector = inspect_capture if inspector is None else inspector
     queries = tuple(queries)
-    require(bool(queries) and all(isinstance(q, FinancialQuery) for q in queries), "FINANCIAL_PLAN_INVALID")
+    require(bool(queries) and all(isinstance(q, query_type) for q in queries), "FINANCIAL_PLAN_INVALID")
     require(len({q.key for q in queries}) == len(queries), "FINANCIAL_DUPLICATE_QUERY")
     stopped = None
     for query in queries:
@@ -21,7 +22,7 @@ def capture_batch(queries, loader):
             continue
         capture = loader(query)
         require(isinstance(capture, dict) and capture.get("query") == asdict(query), "FINANCIAL_CAPTURE_SCOPE_MISMATCH")
-        view = inspect_capture(capture)
+        view = inspector(capture)
         error = capture.get("error")
         if error in STOP_SOURCE_ERRORS:
             stopped = error
@@ -29,18 +30,20 @@ def capture_batch(queries, loader):
                "query": asdict(query), "error": error, "capture": capture}
 
 
-def save_capture(capture, store_factory, batch_id, *, public_rights_confirmed=False):
+def save_capture(capture, store_factory, batch_id, *, public_rights_confirmed=False, inspector=None, source_builder=None):
     """Each page is an existing atomic SourceInput submission, not a batch transaction.
 
     A new scoped remote API client per page avoids inheriting another page's runtime
     request counter. Server limits still apply. Saved receipts survive later failures.
     """
+    inspector = inspect_capture if inspector is None else inspector
+    source_builder = source_for_page if source_builder is None else source_builder
     identifier(batch_id)
     require(len(batch_id) <= 48, "FINANCIAL_BATCH_ID_TOO_LONG")
     require(public_rights_confirmed is True, "FINANCIAL_PUBLIC_RIGHTS_REQUIRED")
-    view = inspect_capture(capture)
+    view = inspector(capture)
     require(view["request_complete"], "FINANCIAL_INCOMPLETE_CAPTURE_CANNOT_SAVE")
-    sources = [source_for_page(capture, view, n) for n in range(len(view["pages"]))]
+    sources = [source_builder(capture, view, n) for n in range(len(view["pages"]))]
     saved = []
     for page, source in zip(view["pages"], sources):
         submission = batch_id + "-" + view["query_key"][:24] + "-" + str(page["offset"])

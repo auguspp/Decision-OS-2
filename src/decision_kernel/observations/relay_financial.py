@@ -186,11 +186,12 @@ def normalize_page(query: FinancialQuery, body: object, *, captured_at: str, pag
                               if k in body and (body[k] is None or isinstance(body[k], str) and len(body[k]) <= 256)}}
 
 
-def inspect_capture(capture):
-    require(isinstance(capture, dict) and capture.get("schema") == CAPTURE_SCHEMA, "FINANCIAL_CAPTURE_INVALID")
+def inspect_capture(capture, *, query_type=FinancialQuery, schema=CAPTURE_SCHEMA, normalizer=None):
+    normalizer = normalize_page if normalizer is None else normalizer
+    require(isinstance(capture, dict) and capture.get("schema") == schema, "FINANCIAL_CAPTURE_INVALID")
     require(capture.get("error") is None or isinstance(capture["error"], str)
             and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", capture["error"]), "FINANCIAL_CAPTURE_ERROR_INVALID")
-    query = FinancialQuery.from_dict(capture.get("query"))
+    query = query_type.from_dict(capture.get("query"))
     size = capture.get("page_size")
     query.parameters(page_size=size)
     require(capture.get("source_mode") in ("live-relay", "offline-unverified"), "FINANCIAL_SOURCE_MODE_INVALID")
@@ -200,7 +201,7 @@ def inspect_capture(capture):
     for index, page in enumerate(pages):
         require(isinstance(page, dict) and page.get("offset") == offset and type(page.get("offset")) is int,
                 "FINANCIAL_PAGE_SEQUENCE_INVALID")
-        parsed = normalize_page(query, page.get("body"), captured_at=page.get("captured_at"), page_size=size, offset=offset)
+        parsed = normalizer(query, page.get("body"), captured_at=page.get("captured_at"), page_size=size, offset=offset)
         if normalized:
             require(_clock(parsed["captured_at"]) >= _clock(normalized[-1]["captured_at"]), "FINANCIAL_CAPTURE_TIME_ORDER")
         fingerprint = digest(encoded(page["body"]["data"]))

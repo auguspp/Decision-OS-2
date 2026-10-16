@@ -1,56 +1,65 @@
-# NewsNow + Relay 新闻有限恢复与消费
+# NewsNow + Relay 新闻采集、保管与读取
 
-归属 [#46](https://github.com/auguspp/Decision-OS-2/issues/46)，父责任 #12。新 OS2 的新闻能力不能只留在实施基线的一行，但本批也不等于已恢复旧版完整新闻站点。
+归属 [#46](https://github.com/auguspp/Decision-OS-2/issues/46)，父责任 #12。本入口交付有限新闻观察，RSS/18小时滚动与日常采用保留在[#48](https://github.com/auguspp/Decision-OS-2/issues/48)/#13；不把一个代码PR当成完整旧新闻站点。
 
-## 真实复用定位
+## 复用与边界
 
-旧固定版 [decision-kernel@cb3bbc87](https://github.com/auguspp/decision-kernel/tree/cb3bbc87eeeeadb6bf24d7adc8cc214cd80ab9b8)：
-- 原 `runtime/news_daily.py`／`radar-newsnow-daily.yml` 的NewsNow七个来源、固定镜像、每源最多30条及明确失败已验，是当前适配起点；
-- `external_radar_observations.news` 的来源文章、版本、URL域名与发布时间仅为声明的界限由新纯转换保留；
-- `runtime/news_rolling.py`、NBS RSS（feedparser 6.0.14）、News Workbench是**具名后继**，不把旧状态/schema、长时调度、Site发布直接搬回来。
+旧Kernel固定 `cb3bbc87eeeeadb6bf24d7adc8cc214cd80ab9b8` 的 `news_daily` / `external_radar_observations.news` 提供七路NewsNow、固定镜像、有限窗口、来源文章/版本/时间声称语义。原 `news_rolling`、NBS RSS/feedparser和News Workbench按具名后继提炼，不搬旧业务状态或自动启用十分钟调度。
 
-本仓本组代码：`observations/news_windows.py`纯解析／阅读，
-`infrastructure/news_capture.py`有限NewsNow及Relay请求，
-`interfaces/news_cli.py`显式CLI，`news-intake.yml`手动来源工作流。
-原版固定镜像SHA256保留；未独立证明镜像源码与标签等价。
-研究/保管继续复用#6的`VersionedStore/SourceInput`，不建第二内容池。
+本仓复用 `observations.news_windows` 的读取身份、`infrastructure.news_capture` 的窄采集，原 `RelayHTTP` 固定域/凭据与拒绝，原 `VersionedStore` / `SourceInput` / `research_runtime.run_command` 的来源提交、条件写和只读对账。`news_custody`只是原生新闻产物到既有来源提交的适配，不是另一个数据仓、写入协议或模型平台。
 
-## 新闻源及实际资格
+## 来源资格
 
-- NewsNow七路：cls、wallstreetcn、fastbull、jin10、mktnews、gelonghui、thepaper。仅访问固定本地端点，每路最多1MiB、最多30条；读取公开 HTTPS 文章链接但不跟随。
-- 2026-10-16 06:51:29 +08:00实际 Relay `/tushare/capabilities` 快照中，`news`、`major_news`、`cctv_news` 为 enabled；这三项已有官方可核输出字段，当前按精确来源和24小时以内窗口／CCTV日历日期提供有限适配。参考 Tushare官方新闻接口文档143／195／154，但**官方接口说明与 Relay 真实数据成功是两种证据**。
-- `express_news`标 enabled，但本轮还缺已核输出字段，**不开放请求**；`news_cctv`及新闻Baidu外部接口标disabled，不能当作上线来源或绕权限。
-- Relay传输复用#12现有`RelayHTTP._get_json`固定HTTPS、独立 `TUSHARE_PROXY_API_KEY`、响应上限、secret不回显与原生拒绝；仅本模块白名单能进入这一窄调用。#12在途通用来源接线与本组无文件重叠，未来共享HTTP重构由真实owner维护适配消费。
+NewsNow仍是 cls、wallstreetcn、fastbull、jin10、mktnews、gelonghui、thepaper，固定本地端点与原镜像digest，每源1MiB/30条的既有上限；只记录安全HTTPS原文链接，不跟随。固定镜像源码等价性未独立证明。
 
-## 手动采集和读取
+2026-10-16 06:51:29 +08:00的真实Relay目录中，`news`、`major_news`、`cctv_news`标启用并有已核字段合同；目录声明不等于每个实时请求、字段或原件保管已通过。`express_news`字段未核，`news_cctv`及当时disabled的Baidu新闻不经本入口调用。允许来源、日期与24小时以内窗口由现役新闻参数合同限制。
 
-在已安装OS2且获准来源调用的运行环境：
+## 明确采集，失败只影响对应来源
 
 ```sh
 python -m decision_kernel.interfaces.news_cli capture-newsnow --output news-window.json
+# 只复核原失败来源；不能因为一个来源失败就重抓成功兄弟
+python -m decision_kernel.interfaces.news_cli capture-newsnow \
+  --sources wallstreetcn thepaper --output news-failed-source-check.json
 python -m decision_kernel.interfaces.news_cli capture-relay --api news \
   --source cls --start '2026-10-15 09:00:00' --end '2026-10-15 10:00:00' \
   --output relay-news-window.json
-python -m decision_kernel.interfaces.news_cli capture-relay \
-  --api cctv_news --date 20261015 --output cctv-window.json
 python -m decision_kernel.interfaces.news_cli merge \
   --windows news-window.json relay-news-window.json --output combined-news.json
-python -m decision_kernel.interfaces.news_cli read \
-  --window combined-news.json --limit 40
+python -m decision_kernel.interfaces.news_cli read --window combined-news.json --limit 40
 python -m decision_kernel.interfaces.news_cli export-locators \
   --window news-window.json --output news-locators.json
 ```
 
-可以用离线 `merge` 将NewsNow和Relay两份确切观察结果合在同一可验证的阅读视图，保留各自来源/版本、跨源同标题仅显示重复候选；生成的 `reading_sha256` 与来源原始response digest分开，修改后读取/导出会拒绝，合并不触发网络或存储写入。
+`news-intake.yml`仍仅workflow_dispatch；`newsnow_sources`可指定原七源的非空子集，默认全部七源。需当时main代码/独立CI及明确有限公开元数据保留许可。成功五路与失败两路可以并存；退出2和原失败运行不改绿。再次有限请求是新的观察时点，不是补写旧时点或完整原子快照。
 
-本期只生成有限新闻观察：保留标题、链接／来源、获取时钟、发布时间原字段声称、文章/版本身份和原HTTP SHA256；**不在结果里保留供应商全文或聚合HTTP原字节**。相同标题仅为重复曝光候选，新闻没有自动升级成独立证据、经济事件、公司利好或Quick。来源失败与缺口不能报“无新闻”；初次捕获不能证明完整滚动历史。主请求的wire哈希也不意味着可从hash恢复原文字节。
+新结果 `source_outcomes[].capture` 保留每源请求/接收（或失败结束）时刻、请求筛选、HTTP成功时的字节摘要与大小、安全错误码和结构计数。不存任意上游错误文本；不放宽标题/来源域/字段检查以求成功。`observed_at`现在来自实际响应之后；旧#47产物的该字段是调用开始时刻，历史字节不改写，也不伪装成精确收到时间。旧结果缺少这些回执不猜测补齐。跨源同标题只代表重复曝光候选，不代表独立经济事件、事实认证或投资观点。
 
-`export-locators` 仅生成适配现有SourceInput的 `custody=external`、`text=None` 候选，不自动写公开 `records`。无文章URL的Relay项，origin仅是**聚合API**，不是原文链接；`acquired_at` 为本次实取时钟，未核时区的提供方时间不填进已确认`published_at`。普通来源持久化须有实际公开/保管权利，并用#6真实SourceRef写入、读回。新闻许可不因为其可以公开GET而自动成立。
+公开观察只包含有限标题/URL/时间声称和派生身份，不包含供应商全文或原HTTP正文；原始响应hash不是可恢复原件。`export-locators`仍仅生成外部定位候选，无文章URL的Relay项只指聚合接口，不谎称逐篇原文。
 
-## 手动工作流及安全边界
+`read`、`merge`的标准输出及`export-locators`的文件和标准输出都保留 `reading_sha256`、完整 `source_outcomes` 与 `complete_news_coverage`。`source_outcomes_scope=whole-input-reading`明确它们属于整份已验证输入：`--source`与`--limit`只筛选可见条目，不筛掉失败来源或改写批次健康。全失败零条和零命中过滤仍带原失败清单；读取/导出成功不等于来源成功。合并摘要的身份属于输出的完整合并视图。定位项仍是原SourceInput，不把健康字段塞进每篇来源。原输入摘要不符仍拒绝，不为展示而修补历史数据。
 
-`.github/workflows/news-intake.yml`只有`workflow_dispatch`，运行者显式选择NewsNow或Relay、确认公开仓7天元数据保留，并给出当时确切main SHA。执行前要求主线最新HEAD及同代码独立成功CI；NewsNow容器不接任何密钥，Relay Key仅在来源采集步骤注入。所有 job 只读GitHub工程，成功/局部失败真实标示，产物只保存有限新闻观察七天，不是原件档案。没有自动10分钟cron、Site发布、GPT任务、通知或正式投资动作。
+## 已取得窗口进入同一个内容池
 
-## 尚需具名交付
+手动 `news-custody.yml` 接收以下明确输入：
 
-旧NBS RSS/feedparser定点来源与前驱真实恢复、NewsNow 18小时滚动版本/缺口、日报/晚报消费是接续工作，不重新复制旧技术验收，也不将旧source状态/持仓/Research历史带入新仓。由#12维护采集/保管责任，#13实现新闻搜索/过滤/分页、Attention与Brief，#7负责经过查证的新闻线索→可反驳主动Quick问题。Relay`express_news`等只有实际字段/权限/原件规则合格后才能增加。启用定时、邮件/ChatGPT提醒或常驻Sites需要另核实际用户授权与生产状态。
+| 字段 | 含义 |
+|---|---|
+| code_sha | 本次已审main代码；运行时必须一致且其独立main CI已通过 |
+| source_run / artifact_id / artifact_sha256 | 同仓既有news-intake运行及唯一确切ZIP，不选最新/搜到绿色即用 |
+| expected_head | 写前实际records SHA，原提交/CAS仲裁 |
+| public_metadata_custody_confirmed | 本次有限元数据可持久公开的确认，不扩展到新闻全文 |
+
+宿主先核仓库及head_repository、workflow/main/attempt1、终态success或保留部分观察的failure，再核原生artifact所属run/head/名称、过期、大小与SHA。下载唯一已选ZIP后，只允许一个`news-window.json`、有限展开、CRC/reading摘要及原观察合同。没有完整身份或可读数据不调用写入。不能因为原运行失败就丢掉已取得的合格观察，也不能把原失败改成成功。
+
+提交使用原 `SourceInput(kind=content, custody=provided)`，text保持原生成的新闻元数据JSON，source_id与submission_id都是 `news-window-<source_run>`。它是**已保管的观察表示，不是已保管的媒体原文**；外部发布时间/经济事实仍未验证。原run/artifact/hash/代码身份和旧时钟限制进入limitations，不新增schema或另一真源。整个窗口超出原source/传输预算时明确拒绝，不截断。
+
+`news_custody`调用既有 `run_command(operation=put-source)`；原expected_head/幂等/CAS/未知效果和输入回执继续有效。分支已前进导致冲突时先核原提交，不换键重写；超时/丢回执用原 `reconcile-source`，不得rerun写作业求绿。`news-custody`作业有内容写权限但不称服务端分支隔离；它不访问新闻URL、不使用Relay Secret，实际写路径仍由原存储合同限制。
+
+成功后，以返回完整SourceRef通过**另一次只读 `research-runtime.yml/read-source`**打开，比较`result.data`与最初窗口字节/摘要，连失败列表一起保留。原记录通过现有Git bundle恢复路径保管，不新增备份存储。产物里的`reading.md`列出全批新闻、原文定位和来源缺口供人直接阅读；该表不是自动Quick、人工选择或Brief采用证明。
+
+## 维护与未完成范围
+
+专属捕获回执/原生ZIP接收/安全呈现测试随本新闻能力维护，原SourceInput/条件提交/研究只读归原owner；不因本Issue关闭删除共享保护。实际来源/保管/独立读取、长期恢复、模型分析和用户接受分层验收，具体发生过什么看#46原生回执。
+
+RSS前驱/18小时滚动仍归#48；#13接新闻浏览、Attention、晨晚Brief及迟到采用；#7对线索查证、提出可反驳研究问题。没有自动启用旧十分钟cron、新GPT任务、通知、Sites或正式Decision。某个来源失败不应阻止已合格资料的保管和读取，也不能以有限新闻计数签完整覆盖。

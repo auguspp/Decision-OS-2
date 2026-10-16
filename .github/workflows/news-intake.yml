@@ -16,6 +16,10 @@ on:
         type: boolean
         default: false
         required: true
+      newsnow_sources:
+        description: 'Explicit NewsNow source subset; old successful sources need not be fetched again'
+        type: string
+        default: 'cls wallstreetcn fastbull jin10 mktnews gelonghui thepaper'
       api:
         description: 'Relay only: reviewed news API'
         type: choice
@@ -101,7 +105,12 @@ jobs:
           test "$ready" = 1
       - name: NewsNow finite seven-source capture
         if: inputs.family == 'newsnow'
-        run: python -m decision_kernel.interfaces.news_cli capture-newsnow --output "$RUNNER_TEMP/news-window.json"
+        env:
+          NEWSNOW_SELECTED: ${{ inputs.newsnow_sources }}
+        run: |
+          set -euo pipefail
+          read -r -a source_args <<< "$NEWSNOW_SELECTED"
+          python -m decision_kernel.interfaces.news_cli capture-newsnow --sources "${source_args[@]}" --output "$RUNNER_TEMP/news-window.json"
       - name: Relay fixed-host reviewed news capture
         if: inputs.family == 'relay'
         env:

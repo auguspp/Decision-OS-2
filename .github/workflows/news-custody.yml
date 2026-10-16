@@ -1,0 +1,99 @@
+name: decision-os-news-custody
+on:
+  workflow_dispatch:
+    inputs:
+      code_sha:
+        type: string
+        required: true
+        description: 'Exact inspected main code SHA'
+      source_run:
+        type: string
+        required: true
+        description: 'Completed same-repository news-intake run, not a latest selector'
+      artifact_id:
+        type: string
+        required: true
+        description: 'Exact native news artifact ID'
+      artifact_sha256:
+        type: string
+        required: true
+        description: 'Native ZIP SHA256 without prefix'
+      expected_head:
+        type: string
+        required: true
+        description: 'Records head inspected before this one source write'
+      public_metadata_custody_confirmed:
+        type: boolean
+        default: false
+        required: true
+        description: 'Authorize permanent public custody of this finite news metadata, not publisher full text'
+permissions: {}
+concurrency:
+  group: decision-os-news-custody
+  cancel-in-progress: false
+jobs:
+  custody:
+    if: >-
+      github.repository == 'auguspp/Decision-OS-2' &&
+      github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
+      inputs.public_metadata_custody_confirmed
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+      actions: read
+    env:
+      EXPECTED_CODE: ${{ inputs.code_sha }}
+      NEWS_SOURCE_RUN: ${{ inputs.source_run }}
+      NEWS_ARTIFACT_ID: ${{ inputs.artifact_id }}
+      NEWS_ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
+      EXPECTED_RECORDS_HEAD: ${{ inputs.expected_head }}
+      NEWS_METADATA_RIGHTS_CONFIRMED: ${{ inputs.public_metadata_custody_confirmed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Check code and fetch only selected native metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, re
+          for key in ('NEWS_SOURCE_RUN', 'NEWS_ARTIFACT_ID'):
+              assert re.fullmatch(r'[1-9][0-9]{0,19}', os.environ[key])
+          for key, n in (('EXPECTED_CODE',40),('EXPECTED_RECORDS_HEAD',40),('NEWS_ARTIFACT_SHA256',64)):
+              assert re.fullmatch('[0-9a-f]{%d}' % n, os.environ[key])
+          assert os.environ['GITHUB_SHA'] == os.environ['EXPECTED_CODE']
+          PY
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
+          mkdir "$RUNNER_TEMP/news-custody"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 > "$RUNNER_TEMP/news-custody/ci.json"
+          python - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP']+'/news-custody/ci.json') as f: runs=json.load(f)['workflow_runs']
+          assert any(r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push' and r['path']=='.github/workflows/ci.yml' and r['run_attempt']==1 and r['status']=='completed' and r['conclusion']=='success' for r in runs)
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NEWS_SOURCE_RUN" > "$RUNNER_TEMP/news-custody/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$NEWS_ARTIFACT_ID" > "$RUNNER_TEMP/news-custody/artifact.json"
+          python -m decision_kernel.interfaces.news_custody preflight --root "$RUNNER_TEMP/news-custody"
+      - name: Download that verified archive only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$NEWS_ARTIFACT_ID/zip" > "$RUNNER_TEMP/news-custody/source.zip"
+      - name: Preserve exact metadata via existing SourceInput and conditional write
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.news_custody publish --root "$RUNNER_TEMP/news-custody"
+      - name: Retain original request, partial write receipts and readable metadata
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-news-custody-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/news-custody/
+          if-no-files-found: warn
+          retention-days: 30

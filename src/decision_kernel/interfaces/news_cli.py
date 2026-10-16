@@ -5,7 +5,6 @@ No implicit RSS refresh, model execution, research save, or GitHub data write.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -13,7 +12,7 @@ import sys
 
 from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.news_capture import capture_newsnow, capture_relay_news
-from decision_kernel.observations.news_windows import source_locators, verify_reading, merge_readings
+from decision_kernel.observations.news_windows import NEWSNOW_SOURCES, source_locators, verify_reading, merge_readings
 
 MAX_INPUT = 5 * 1024 * 1024
 
@@ -46,12 +45,22 @@ def _write(path: Path, value):
         raise RecordError("NEWS_OUTPUT_EXISTS_OR_UNWRITABLE") from None
 
 
+def _reading_context(reading):
+    """Retain the verified whole-input health even when no rows are selected."""
+    return {"reading_sha256": reading["reading_sha256"],
+            "source_outcomes": reading["source_outcomes"],
+            "source_outcomes_scope": "whole-input-reading",
+            "complete_news_coverage": reading["complete_news_coverage"]}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m decision_kernel.interfaces.news_cli")
     sub = parser.add_subparsers(dest="action", required=True)
     for name in ("capture-newsnow", "capture-relay"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--output", type=Path, required=True)
+    sub.choices["capture-newsnow"].add_argument("--sources", nargs="+", choices=NEWSNOW_SOURCES,
+                                              default=list(NEWSNOW_SOURCES))
     relay = sub.choices["capture-relay"]
     relay.add_argument("--api", choices=("news", "major_news", "cctv_news"), required=True)
     relay.add_argument("--source", default=None)
@@ -71,13 +80,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.action in ("capture-newsnow", "capture-relay"):
-            when = datetime.now(timezone.utc).isoformat()
+            require(not args.output.exists(), "NEWS_OUTPUT_EXISTS_OR_UNWRITABLE")
             if args.action == "capture-newsnow":
-                result = capture_newsnow(observed_at=when)
+                result = capture_newsnow(sources=args.sources)
             else:
                 result = capture_relay_news(args.api, source=args.source,
-                                            start=args.start, end=args.end,
-                                            date=args.date, observed_at=when)
+                                            start=args.start, end=args.end, date=args.date)
             _write(args.output, result)
             print(json.dumps({"status": "captured" if all(x["status"] == "captured"
                     for x in result["source_outcomes"]) else "partial",
@@ -90,7 +98,7 @@ def main(argv=None):
             _write(args.output, result)
             print(json.dumps({"status": "merged", "source_windows": len(args.windows),
                               "observations": len(result["observations"]),
-                              "complete_news_coverage": False}))
+                              **_reading_context(result)}))
             return 0
         reading = _read(args.window)
         if args.action == "read":
@@ -101,12 +109,14 @@ def main(argv=None):
             print(json.dumps({"status": "observation-only", "rows": rows[:args.limit],
                               "visible": min(len(rows), args.limit),
                               "selected_count": len(rows),
-                              "complete_news_coverage": False}, ensure_ascii=False))
+                              **_reading_context(reading)}, ensure_ascii=False))
             return 0
         inputs = [asdict(x) for x in source_locators(reading)]
         _write(args.output, {"schema": "dos2-news-locators-v1", "items": inputs,
-                             "write_performed": False, "rights_verified": False})
-        print(json.dumps({"source_locator_candidates": len(inputs), "write_performed": False}))
+                             "write_performed": False, "rights_verified": False,
+                             **_reading_context(reading)})
+        print(json.dumps({"source_locator_candidates": len(inputs), "write_performed": False,
+                          **_reading_context(reading)}))
         return 0
     except RecordError as exc:
         print(json.dumps({"status": "failed", "error_code": str(exc)}, ensure_ascii=False),

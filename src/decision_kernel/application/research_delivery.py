@@ -12,6 +12,7 @@ import base64
 from decision_kernel.application.numerical_audit import NumericalAudit, START as NUMBERS_START
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.research_reader import ResearchReader
+from decision_kernel.application.research_source_use import acceptance_pending
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.domain.records import (
     BlobRef, MAX_BYTES, MissingObject, RecordError, SourceInput, SourceRef, checked_text, digest,
@@ -166,7 +167,10 @@ class ResearchDelivery:
         completed = self._completed(payload, submission_id, intent_ref, intent_sha)
         if completed is not None:
             return completed
-        sources = list(payload["progress"].get("sources", []))
+        # Use the same SourceRef identity as preflight and the final workpaper.
+        # Normalize only this derived list: original payload/intent bytes stay intact.
+        sources = [json.loads(encoded(asdict(SourceRef.from_dict(raw))))
+                   for raw in payload["progress"].get("sources", [])]
         saved_items = []
         for item in items:
             row = {k: item[k] for k in ("id", "role", "status", "required", "reason")}
@@ -239,12 +243,15 @@ class ResearchDelivery:
                     numerical = {"status": audited["status"], "saved_render": audited.get("saved_render")}
                 except RecordError:
                     numerical = {"status": "blocked", "error": "NUMERICAL_ASSESSMENT_UNAVAILABLE"}
-            return {"reference": asdict(ref), "declared_stop": work[1].stop if work else None,
+            result = {"reference": asdict(ref), "declared_stop": work[1].stop if work else None,
                     "research_assessment": "not-performed", "human_acceptance": "not-confirmed",
                     "execution_authority": "not-granted-by-save", "numerical_audit": numerical,
                     "delivery_input_sha256": intent_sha, "intent_reference": asdict(intent_ref),
                     "delivery_manifest_sha256": digest(encoded(manifest)),
                     "readback": "requires-fresh-reader", "multi_commit": True}
+            if saved["record"]["input"]["kind"] == "full":
+                result["source_use_acceptance"] = acceptance_pending(asdict(ref))
+            return result
         except (KeyError, TypeError, ValueError, UnicodeError, RecursionError) as exc:
             if isinstance(exc, RecordError):
                 raise

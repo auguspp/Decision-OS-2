@@ -26,6 +26,8 @@
 
 后继交付保留前版清单中各 ID，或逐项说明缺失/排除，不静默删除。已经保管的文件用 `artifact_ref` 复用；同一源引用在 progress.sources 与清单中重复出现只保留一次。来源顺序为原 progress.sources，随后按清单顺序加入未重复的 SourceRef；findings/challenges 的 evidence 下标绑定这一顺序。不会重新编号既有引用。
 
+来源身份沿现有 `SourceRef` 规则比较：省略默认 `selection`、空选择对象和完整的 `all` 选择表示同一引用；不同选区仍是不同引用。交付只规范化内部合并列表，原输入与整体意图摘要不改变。此前因同一引用的简写/完整写法混用而停在部分阶段的交付，可以在只读对账后用原 payload、原提交号和重新核过的 head 恢复，不需要重存来源或更换意图。
+
 `body_mode=snapshot` 表示作者提供的当前完整叙事；`delta` 必须有确切 predecessor，并保留它为阅读基稿。选择不认证作者确实给全内容。清单附录和原结构化底稿共同保存在同一 research.md，记录本次输入摘要、原意图引用、基稿引用、文件摘要/大小/原名及来源引用。RevisionInput、旧方法和历史正文不改写。
 
 ## 原字节附件，不拿转换件替原件
@@ -76,6 +78,8 @@ decision-os store --binding readonly-binding.json read-artifact --ref artifact-r
 未知写后用原 payload/method_sha256/submission_id 调 `reconcile-delivery`，只读重建已有阶段；某阶段不存在就以 SUBMISSION_NOT_FOUND_NO_WRITE 结束，绝不顺手补写。核对现状后，在原授权下以当前明确读取的 expected_head 和**完全相同** payload/submission_id 显式恢复 deliver。修改正文或清单须新修订/新意图，引用已保管对象，不覆盖原意图。失败前已发布阶段见 published_stages；不声称全部回滚。
 
 成功 checkpoint 的 reference 不因随后核验失败而消失。返回保存回执、独立 delivery_verification 和独立 numerical_audit。`verified-declared-inventory` 仅表示声明的适用项均有可读版本；missing/rights-excluded/unsupported 为 partial，读取损坏/权限失败为 failed，没有清单为 not-declared。CLI/宿主对非完整清单非零退出但保留 JSON 与已保存回执；不存在“绿色表示整篇Full已完成”。对账仅重建已存结果，不重建文件内容。
+
+Full 首次交付、成功重放和 `reconcile-delivery` 都返回绑定原确切研究版本的 `source_use_acceptance` 待核入口。即使 current 已前进，旧意图回执仍指向原版本；保存与读回不会把来源使用状态升级为通过。Quick 不增加 Full 专属要求。
 
 可选 numerical_workpaper 复用 research-numbers-v1 的 inputs/calculations/template，不在其中再传 sources；取得实际引用后自动接同一 sources 列表，生成原数值附录并由 checkpoint 返回检查结果。数值 blocked 不抹去归档事实，也不提升为经济正确。未声明数值仍显示 not-declared。
 

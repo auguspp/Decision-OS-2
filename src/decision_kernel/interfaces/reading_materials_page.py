@@ -39,7 +39,7 @@ function renderMaterials(){
   pane.append(button('下载已核验原附件',()=>{
    if(!/^[a-f0-9]{64}$/.test(m.sha256))return;
    const raw=atob(a.data_base64),bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));
-   const ext={'text/html':'.html','application/pdf':'.pdf','text/plain':'.txt','text/markdown':'.md','application/json':'.json','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'.xlsx'}[m.media_type]||'.bin';
+   const ext={'text/html':'.html','application/pdf':'.pdf','text/plain':'.txt','text/markdown':'.md','application/json':'.json','application/zip':'.zip','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'.xlsx'}[m.media_type]||'.bin';
    save('artifact-'+m.sha256.slice(0,16)+ext,bytes,'application/octet-stream');
   }));
  }else pane.append(el('p',`原附件下载：${label(a.status)}${a.error?' · '+a.error:''}。不会自动选另一文件替代。`));

@@ -12,7 +12,7 @@ from decision_kernel.domain.records import (
 ARTIFACT_SCHEMA = "research-artifact-v1"
 MAX_ARTIFACT_BYTES = 1024 * 1024
 MEDIA_TYPES = frozenset({"text/html", "text/plain", "text/markdown", "text/csv",
-    "application/json", "application/pdf", "application/octet-stream",
+    "application/json", "application/pdf", "application/octet-stream", "application/zip",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})
 ARTIFACT_PATH = re.compile(
     r"research/artifacts/[a-z0-9][a-z0-9_-]{0,95}/[a-f0-9]{64}/manifest\.json\Z")

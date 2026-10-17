@@ -212,6 +212,9 @@ class ReadingRoom:
                 industry = {"reference": plan["industry"]["reference"], "plan": plan["industry"],
                             "open_request": {"operation": "industry-read", "payload": deepcopy(plan["industry"])},
                             **_failure(error)}
+            from decision_kernel.application.industry_adoption import brief_adoption
+            industry["brief_adoption"] = brief_adoption(industry, brief)
+            partial = partial or industry["brief_adoption"]["status"] in ("unknown", "not-included")
             result["industry"] = industry
             partial = partial or industry["status"] != "readable" or industry.get("view", {}).get("status") == "partial"
         if plan.get("market"):

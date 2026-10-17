@@ -20,7 +20,7 @@ GitHub token的contents权限覆盖仓库，并非records路径级服务端ACL�
 
 ## 备份、下载与独立恢复
 
-GitHub Actions产物`dos2-store-<run>-<attempt>`含原生records.bundle和report.json。报告记录原代码/数据SHA、来源/研究引用、**认证的远端head与固定Git镜像审计（mirror_audit）/独立离线审计（restored_audit）**、bundle大小/摘要、实际结果；不含token或来源正文。2026-10-16以前的历史报告`online_audit`专指旧逐条远端审计，新的`mirror_audit`不得冒称实时远端逐条读取，仍可由原生Git包、确切快照、marker及独立fsck/逐引用验证证明。bundle包含该refs/heads/records的完整可达历史，**包括初始化anchor之前可达的公开工程历史**，并非只有当前树。恢复读者仍拒绝读取anchor前业务对象；不导出Git配置、工作树、secret或宿主设置。
+GitHub Actions产物`dos2-store-<run>-<attempt>`保留原生records.bundle和report.json；现役手动operate另附确切已提交阅读代码/配置reader-source.tar，离线恢复到原阅读室见[恢复包](recovery-kit.md)。旧备份仍沿原verify-bundle读取，不要求历史产物补造源码。报告记录原代码/数据SHA、来源/研究引用、**认证的远端head与固定Git镜像审计（mirror_audit）/独立离线审计（restored_audit）**、bundle大小/摘要、实际结果；不含token或来源正文。2026-10-16以前的历史报告`online_audit`专指旧逐条远端审计，新的`mirror_audit`不得冒称实时远端逐条读取，仍可由原生Git包、确切快照、marker及独立fsck/逐引用验证证明。bundle包含该refs/heads/records的完整可达历史，**包括初始化anchor之前可达的公开工程历史**，并非只有当前树。恢复读者仍拒绝读取anchor前业务对象；不导出Git配置、工作树、secret或宿主设置。
 
 产物按已声明30天期限保留，原生过期不删除records；应在过期前将下载文件放入已有获准保管位置。它是一次有限恢复快照，不是永久异地/跨账号灾备，也没有声称RPO、RTO或生产SLA已满足。只支持当前公开GitHub分支的备份上传；私有/受限资料不能借此公开。
 

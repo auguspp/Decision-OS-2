@@ -1,0 +1,88 @@
+[
+  {
+    "id": "W4",
+    "title": "江苏索普：7-1发行人及保荐机构关于审核问询函的回复",
+    "url": "https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12621231&stockid=600746",
+    "document_month": "2026-09",
+    "publication_date_verified": null,
+    "period": "2026-06-30",
+    "locator": "7-1-97；其他货币资金表及资金使用受限备注",
+    "read_status": "indexed-issuer-original-table-and-note",
+    "original_pdf_obtained": false,
+    "upstream_family": "issuer-inquiry-september-2026",
+    "adopted": "逐银行的其他货币资金及明确受限组成，用于与原元值现金口径差额核对；声明仍需银行原始凭证和完整附注确认。",
+    "retrieval_window_singapore": "2026-10-16 late evening / 2026-10-17 shortly after midnight"
+  },
+  {
+    "id": "W5",
+    "title": "江苏索普：向特定对象发行股票申请文件审核问询函回复",
+    "url": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12613202&stockid=600746",
+    "document_month": "2026-09",
+    "publication_date_verified": "2026-09-21",
+    "period": "2026Q1 versus 2025Q1",
+    "locator": "7-1-77至7-1-78：醋酸与醋酸乙酯分别量价、单位成本、毛利；未经审计",
+    "read_status": "indexed-issuer-original-table-and-note",
+    "original_pdf_obtained": false,
+    "upstream_family": "issuer-inquiry-september-2026",
+    "adopted": "分产品理解收益，不以混合产品均价代纯醋酸价；已刊行金额和数量有舍入，不据此做无来源精确销量。",
+    "retrieval_window_singapore": "2026-10-16 late evening / 2026-10-17 shortly after midnight"
+  },
+  {
+    "id": "W5A",
+    "title": "立信会计师事务所：江苏索普审核问询函回复",
+    "url": "https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12613200&stockid=600746",
+    "document_month": "2026-09",
+    "publication_date_verified": null,
+    "period": "2026-06-30 and prior year ends",
+    "locator": "7-2-13附近：应收票据及应收款项融资余额表、半年比率年化脚注",
+    "read_status": "indexed-accountant-original-table-and-note",
+    "original_pdf_obtained": false,
+    "upstream_family": "same-issuer-financial-data-not-independent-upstream",
+    "adopted": "核9.49%的分母，避免将年化与原半年度口径混比或把比率下降当回款。",
+    "retrieval_window_singapore": "2026-10-16 late evening / 2026-10-17 shortly after midnight"
+  },
+  {
+    "id": "W6",
+    "title": "江苏索普2026年第二季度主要经营数据公告，临2026-033",
+    "url": "https://stock.stockstar.com/notice/SN2026082600001049.shtml",
+    "corroborating_urls": [
+      "https://financialfilings.com/filings/jiangsu-sopo-chemical-coltd/earnings-release/2026/57501119/",
+      "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12534239&stockid=600746"
+    ],
+    "publication_date_verified": "2026-08-26",
+    "period": "2026-04-01/2026-06-30",
+    "locator": "一：4—6月产量/销量/不含税收入，表后自用注；二：不含税价格区间",
+    "read_status": "indexed-issuer-original-table-crosschecked-across-reproductions",
+    "original_pdf_obtained": false,
+    "upstream_family": "single-issuer-operating-announcement-not-three-sources",
+    "adopted": "本轮已经看见完整相关数量行和表头；重现的三站文本仍同源，不声称下载并截图核过PDF。",
+    "retrieval_window_singapore": "2026-10-16 late evening / 2026-10-17 shortly after midnight"
+  },
+  {
+    "id": "W7",
+    "title": "江苏索普：2026年9月审核问询函回复",
+    "url": "https://cfi.net.cn/p20260921001115.html",
+    "document_month": "2026-09",
+    "publication_date_verified": "2026-09-21",
+    "period": "As at reply issuance",
+    "locator": "募投项目建设进展：一期设备安装、DMC土建、年底机械竣工计划",
+    "read_status": "indexed-issuer-original-text",
+    "original_pdf_obtained": false,
+    "upstream_family": "issuer-inquiry-september-2026",
+    "adopted": "区分项目、时点与未来计划。机械竣工不等于达产、产生现金；本轮未核完整当前剩余支付与融资桥。",
+    "retrieval_window_singapore": "2026-10-16 late evening / 2026-10-17 shortly after midnight"
+  },
+  {
+    "id": "W8",
+    "title": "江苏证监局警示函决定〔2026〕63号",
+    "url": "https://www.csrc.gov.cn/jiangsu/c103893/c7640294/content.shtml",
+    "publication_date_verified": "2026-06-17",
+    "period": "2022—2024 historic statements; correction announced 2026-04-18",
+    "locator": "决定正文第一、二段及署名日期",
+    "read_status": "official-regulator-full-webpage-read",
+    "original_pdf_obtained": false,
+    "upstream_family": "csrc-official-independent-regulatory-source",
+    "adopted": "历史报表已经追溯调整，跨期必须核统一版次。该文没有证明2025/26现行数据错误，不把警示函叫刑事认定或新增财务造假结论。",
+    "retrieval_window_singapore": "2026-10-16 late evening / 2026-10-17 shortly after midnight"
+  }
+]

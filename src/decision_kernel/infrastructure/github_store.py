@@ -22,6 +22,7 @@ API_ROOT = "https://api.github.com"
 MAX_RESPONSE = 8 * 1024 * 1024
 MAX_TREE_ENTRIES = 8192
 MAX_REQUESTS = 512
+MAX_ANCESTOR_PROOFS = 128
 COMMIT_MUTATION = """mutation StoreCommit($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
 }"""
@@ -155,6 +156,7 @@ class GitHubStore:
         self._trees: dict[str, dict] = {}
         self._blobs: dict[str, bytes] = {}
         self._blob_bytes = 0
+        self._ancestor_proofs: set[tuple[str, str]] = set()
         self._branch_node: str | None = None
         self.head()  # Read/validate an existing binding; never initialize a remote target.
 
@@ -175,12 +177,20 @@ class GitHubStore:
         _sha(base); _sha(head)
         if base == head:
             return
+        proof = (base, head)
+        if proof in self._ancestor_proofs:
+            return
         value = self._get(f"compare/{base}...{head}?per_page=1")
         require(isinstance(value, dict) and value.get("status") == "ahead"
                 and value.get("behind_by") == 0
                 and isinstance(value.get("merge_base_commit"), dict)
                 and value.get("merge_base_commit", {}).get("sha") == base,
                 "COMMIT_OUTSIDE_BINDING")
+        # A successful relation between exact Git commits is immutable. Callers
+        # still fetch the live repository/ref before checking branch reachability;
+        # a changed head requires a different proof. Errors are never cached.
+        if len(self._ancestor_proofs) < MAX_ANCESTOR_PROOFS:
+            self._ancestor_proofs.add(proof)
 
     def _commit(self, commit: str) -> dict:
         value = self._get("git/commits/" + _sha(commit))
@@ -228,7 +238,7 @@ class GitHubStore:
                     and type(row.get("size")) is int and 0 <= row["size"] <= 2 * MAX_BYTES,
                     "REGULAR_REMOTE_BLOB_REQUIRED")
             entries[path] = row
-        # Exact immutable object data only; privacy, branch head and reachability are never cached.
+        # Exact immutable object data only; mutable repository/ref checks remain live.
         if len(self._trees) < 32:
             self._trees[commit] = entries
         return entries

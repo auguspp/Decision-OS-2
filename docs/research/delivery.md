@@ -79,6 +79,10 @@ decision-os store --binding readonly-binding.json read-artifact --ref artifact-r
 
 成功 checkpoint 的 reference 不因随后核验失败而消失。返回保存回执、独立 delivery_verification 和独立 numerical_audit。`verified-declared-inventory` 仅表示声明的适用项均有可读版本；missing/rights-excluded/unsupported 为 partial，读取损坏/权限失败为 failed，没有清单为 not-declared。CLI/宿主对非完整清单非零退出但保留 JSON 与已保存回执；不存在“绿色表示整篇Full已完成”。对账仅重建已存结果，不重建文件内容。
 
+保存和随后fresh-reader在同一宿主调用内共用512次API预算；新reader的对象及祖先证明缓存独立，不继承writer缓存，也不重置请求数。GitHubStore有界复用已验证的确切提交祖先关系，减少同一清单的重复compare，每次仍读取实际仓库权限和当前分支。32项清单上限不保证任意来源数、前驱深度或容量组合都能在预算内完成。
+
+若已取得明确的published修订回执、只是随后读回耗尽预算，可在原授权下用该确切reference单独调用只读`verify-delivery`；不为补核验重交deliver。核对原输入、发布阶段和实际记录后再决定是否还需写入。独立核验全部retained项成功且errors为空时，声明的missing/rights-excluded/unsupported仍使结果保持partial及非零退出，不能据工作流失败误称原件未保管，也不能为追求绿灯重跑或抹去缺口。
+
 Full 首次交付、成功重放和 `reconcile-delivery` 都返回绑定原确切研究版本的 `source_use_acceptance` 待核入口。即使 current 已前进，旧意图回执仍指向原版本；保存与读回不会把来源使用状态升级为通过。Quick 不增加 Full 专属要求。
 
 可选 numerical_workpaper 复用 research-numbers-v1 的 inputs/calculations/template，不在其中再传 sources；取得实际引用后自动接同一 sources 列表，生成原数值附录并由 checkpoint 返回检查结果。数值 blocked 不抹去归档事实，也不提升为经济正确。未声明数值仍显示 not-declared。

@@ -8,14 +8,18 @@ import subprocess
 
 import pytest
 
+from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.research_delivery import ResearchDelivery, delivery_manifest
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, Conflict, MissingObject, RecordError, UnknownWrite, encoded
-from decision_kernel.infrastructure.github_store import GitHubStore
+from decision_kernel.domain.research_artifacts import ArtifactInput
+from decision_kernel.infrastructure.github_store import GitHubStore, MAX_REQUESTS
 from decision_kernel.infrastructure.git_snapshot import bundle_from_bare, verify_bundle
 from decision_kernel.interfaces import research_runtime as runtime
 from decision_kernel.interfaces.delivery_pack import pack
 from decision_kernel.interfaces.research_payload import pack_payload
+from decision_kernel.methods.research import research_method
+from test_news_read_budget import transport
 from test_research_delivery import delivery_payload, continued
 from test_research_runtime import host, CODE
 
@@ -61,6 +65,96 @@ def test_partial_delivery_preserves_receipt_but_is_not_completed(host, tmp_path)
     saved = invoke(host, tmp_path / "partial", "deliver", payload, "partial")
     assert saved["status"] == "delivery-not-complete" and saved["write"] == "published"
     assert saved["result"]["reference"] and saved["result"]["delivery_verification"]["status"] == "partial"
+
+
+def test_ref_only_quick_delta_and_fresh_readback_share_real_request_budget(host, tmp_path, monkeypatch):
+    # Pre-existing materials live at distinct commits in the original bare Git
+    # fixture. Only HTTP responses are modeled; the host uses the real transport.
+    host.git.repository = host.binding.repository
+    local = VersionedStore(host.git)
+    payload = delivery_payload()
+    payload["request"]["kind"] = "quick"
+    payload["method_sha256"] = research_method("quick")["sha256"]
+    originals = deepcopy(payload["items"])
+    payload["items"] = originals[:2]
+    for number in range(2, 10):
+        payload["items"].append({"id": "artifact-" + str(number), "role": "supporting-file",
+            "status": "include", "required": True, "reason": "",
+            "artifact": asdict(ArtifactInput.from_bytes("original-" + str(number),
+                "original-" + str(number) + ".html", "text/html",
+                ("<!doctype html>\r\n<p>Synthetic original " + str(number) + "</p>").encode()))})
+    for number in range(3):
+        item = deepcopy(originals[2])
+        item["id"] = "source-" + str(number)
+        item["source"]["source_id"] = "synthetic-source-" + str(number)
+        item["source"]["title"] += " " + str(number)
+        payload["items"].append(item)
+    for number, status in enumerate(("missing", "rights-excluded", "unsupported")):
+        payload["items"].append({"id": "omission-" + str(number), "role": "supporting-file",
+            "status": status, "required": False, "reason": "Synthetic declared omission; no original supplied."})
+    first = ResearchDelivery(local).deliver(payload, submission_id="budget-baseline")
+    delta = continued(local, payload, first)
+    assert delta["body_mode"] == "delta" and delta["request"]["kind"] == "quick"
+    assert len(delta["items"]) == 16
+    assert len({item["artifact_ref"]["commit"] for item in delta["items"] if "artifact_ref" in item}) == 10
+    assert sum("source_ref" in item for item in delta["items"]) == 3
+    assert all("artifact" not in item and "source" not in item for item in delta["items"])
+    host.requests.clear()
+    api = transport(host)
+    phases = {}
+    original_fresh = runtime.verify_fresh
+
+    def traced_fresh(receipt, factory):
+        phases["before"] = api._requests
+        def fresh_reader():
+            reader = factory()
+            assert type(reader.backend) is GitHubStore and reader.backend.api is api
+            return reader
+        result = original_fresh(receipt, fresh_reader)
+        phases["after"] = api._requests
+        return result
+
+    monkeypatch.setattr(runtime, "verify_fresh", traced_fresh)
+    inputs = {"operation": "deliver", "payload": pack_payload(encoded(delta)), "code_sha": CODE,
+              "submission_id": "budget-supplement", "expected_head": host.git.head()}
+    saved = runtime.run_command(host.binding, api=api, inputs=inputs, code_sha=CODE,
+                               output=tmp_path / "supplement", run_id="456", attempt="1")
+    result = saved["result"]
+    assert saved["write"] == "published" and len(saved["published_stages"]) == host.writes == 2
+    assert 0 < phases["before"] < phases["after"] == api._requests == len(host.requests) <= MAX_REQUESTS == 512
+    assert saved["status"] == "delivery-not-complete" and result["readback"] == "fresh-reader-not-complete"
+    check = result["delivery_verification"]
+    assert check["status"] == "partial" and check["errors"] == []
+    assert check["base_revision"] == first["reference"]
+    assert sum(item["readback"] == "verified" for item in check["items"]) == 13
+    omitted = [{key: item[key] for key in ("id", "role", "status", "required", "reason")}
+               for item in check["items"] if item["readback"] == "not-retained"]
+    assert omitted == delta["items"][-3:]
+    assert [source["status"] for source in check["sources"]] == ["stored-representation"] * 3
+
+    # Verify exact retained references and the two published HTML/XLSX originals
+    # locally, without adding unrequested reads to the measured host operation.
+    revision = local.read_revision(BlobRef(**result["reference"]))
+    manifest = delivery_manifest(revision["body"])
+    assert manifest["body_mode"] == "delta" and manifest["base_revision"] == first["reference"]
+    for wanted, actual in zip(delta["items"][:13], manifest["items"][:13]):
+        assert actual["reference"] == wanted[actual["kind"] + "_ref"]
+    for original, retained in zip(originals[:2], manifest["items"][:2]):
+        view = ResearchArtifacts(local).read(retained["reference"])
+        assert view["bytes_verified"] and view["data_base64"] == original["artifact"]["data_base64"]
+
+    # A separate, read-only operation starts its own bounded API and changes no
+    # records; omissions remain declarations even when every retained item reads.
+    head, writes = host.git.head(), host.writes
+    readonly_api = transport(host)
+    inputs = {"operation": "verify-delivery", "payload": pack_payload(encoded({"reference": result["reference"]})),
+              "code_sha": CODE, "submission_id": "", "expected_head": ""}
+    verified = runtime.run_command(host.binding, api=readonly_api, inputs=inputs, code_sha=CODE,
+                                  output=tmp_path / "independent-verify", run_id="457", attempt="1")
+    assert verified["write"] == "not-requested" and verified["published_stages"] == []
+    assert verified["result"] == check
+    assert 0 < readonly_api._requests <= MAX_REQUESTS == 512
+    assert host.git.head() == head and host.writes == writes
 
 
 def test_refusal_precedes_public_input_retention_and_token_use(host, tmp_path):

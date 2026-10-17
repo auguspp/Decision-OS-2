@@ -1,4 +1,5 @@
 """Shared dispatch for local and restored market reading; no storage or source I/O."""
+from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, SESSION_REQUIRED, read_session_coverage
 from decision_kernel.application.global_index_inputs import (
     US_INDEX_READING_SCHEMA, US_INDEX_REQUIRED, read_us_index_context,
 )
@@ -19,7 +20,10 @@ def _route(payload):
     schema = payload.get("schema")
     required = {"schema", "calendar_result", "stock_results", "exchange", "start", "end"}
     optional = {"horizons"}
-    if schema == SHIBOR_READING_SCHEMA:
+    if schema == SESSION_SCHEMA:
+        required, optional = SESSION_REQUIRED | {'schema'}, {'reference_policy'}
+        reader = read_session_coverage
+    elif schema == SHIBOR_READING_SCHEMA:
         required, optional = SHIBOR_REQUIRED | {"schema"}, set()
         reader = read_shibor_context
     elif schema == "relay-stock-reading-v1":

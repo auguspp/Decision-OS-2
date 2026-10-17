@@ -7,14 +7,14 @@ on:
         type: string
         required: true
       selection:
-        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; US: us-indices'
+        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; session-coverage/CN; US: us-indices'
         type: choice
-        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members]
+        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage]
         default: sample
       exchange:
-        description: 'SSE/SZSE for domestic selections; US required for us-indices'
+        description: 'CN required for session-coverage; SSE/SZSE for other domestic selections; US for us-indices'
         type: choice
-        options: [SSE, SZSE, US]
+        options: [SSE, SZSE, US, CN]
         default: SSE
       start:
         description: 'YYYYMMDD; at most 120 past calendar days, no current-day sampling'
@@ -30,7 +30,7 @@ on:
         default: false
         required: true
       request_context_confirmed:
-        description: 'Explicitly retain generated member API request arguments for exact recovery; no returned rows'
+        description: 'Explicitly retain generated member/session API request arguments; no returned rows'
         type: boolean
         default: false
       member_code:

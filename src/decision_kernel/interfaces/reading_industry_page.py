@@ -13,6 +13,12 @@ function renderIndustry(){
   pane.append(el('p',`产业包${label(part.status)}：${part.error}。未自动替换来源；无法判断不等于没有变化或公司联系。`,'banner'));return;
  }
  const v=part.view,ip=part.plan,retained=v.retained||v,mode=ip.view;
+ const adoption=part.brief_adoption,adopted=new Map((adoption?.rows||[]).map(r=>[r.series_id,r]));
+ const adoptionTerms={'included':'指定简报已采用此选择','considered-not-included':'列入范围但本期未采用','not-considered-in-this-brief':'不在指定简报产业范围','industry-not-tracked-in-this-brief':'该简报未跟踪产业','brief-capacity':'本期容量省略（不是人工否决）','previously-included-same-selection':'前版已采用同一选择，本期省略','unreadable-or-outside-cutoff':'交付时不可读、超限或晚于截止','same-displayed-series-and-roles':'本页系列与可见角色和交付时一致','differs-from-delivery':'本页内容与交付时不同，不能套用原采用结论','unknown':'无法核对，不等于未采用'};
+ const adoptionLabel=x=>adoptionTerms[x]||x;
+ pane.append(el('p',adoption?.status==='related'?'下方逐系列关联指定已存简报；不代表研究采用、人工接受或当前净受益。':adoption?.status==='not-supplied'?'未指定已存简报；产业阅读不推断简报采用。':'简报采用关系未知或未展示；未读、权限及容量不当作未采用。','industry-adoption-notice'));
+ if(adoption?.status==='related')pane.append(button('查看指定已存简报',()=>{location.hash='brief';}),details('采用核对范围与原正文摘要',{reference:adoption.brief_reference,brief_body_sha256:adoption.brief_body_sha256,scope:adoption.scope}));
+
  const val=x=>x===null||x===undefined?'未知':String(x);
  const subjectName=s=>`${s.name||s.entity_id} (${s.entity_id})`;
  const terms={'read':'可读','changed':'观察变化','unchanged':'同值','unavailable':'不可用或不可比','historical':'历史适用','within-declared-period':'在声明适用期内','not-revalidated':'未重新核验','producer':'生产 / 销售端','purchaser':'采购端','processor':'加工端','transporter':'运输端','substitute':'替代品角色','inventory':'库存角色','price-level':'价格水平','index-level':'指数水平','stock':'期末余额','period-flow':'本期流量','ytd-flow':'年初至今累计','monthly-release':'月报','preliminary-scan':'初步扫描','revised-release':'修订发布','period-average':'期间均值'};
@@ -49,6 +55,10 @@ function renderIndustry(){
  function sourceButton(ref){return button('导出此来源读取请求',()=>request('industry-source.json',{operation:'read-source',payload:{reference:ref}}));}
  function showSeries(s){
   const box=el('div',undefined,'industry-series');box.append(el('h3',`${subjectName(s.subject)} · ${s.metric||s.series_id}`));
+  const ar=adopted.get(s.series_id);
+  if(ar){const text=[adoptionLabel(ar.status),ar.omission_reason?adoptionLabel(ar.omission_reason):ar.classification,ar.displayed_content?adoptionLabel(ar.displayed_content.status):null].filter(Boolean).join(' · ');
+   box.append(el('p',text,'industry-adoption'),details('确切选择、采用与当前显示核对（不代签经济质量）',ar));
+  }
   if(s.channel_meaning)box.append(el('p',s.channel_meaning));
   const scroll=el('div',undefined,'industry-scroll'),table=el('table',undefined,'industry-table'),thead=el('thead'),head=el('tr');
   for(const name of ['期间','原数值','单位','期间口径 / 发布阶段','读取状态'])head.append(el('th',name));thead.append(head);table.append(thead);

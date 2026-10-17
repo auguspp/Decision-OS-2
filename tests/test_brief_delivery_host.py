@@ -147,3 +147,6 @@ print(json.dumps({'status':'installed-mixed-brief-passed'}))
 
     from test_brief_industry import exercise_installed_industry_brief
     exercise_installed_industry_brief(outside, python, env, store)
+
+    from test_industry_adoption import exercise_installed_industry_adoption
+    exercise_installed_industry_adoption(outside, python, env, store)

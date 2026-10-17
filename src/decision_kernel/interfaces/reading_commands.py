@@ -13,7 +13,7 @@ def preflight(operation, payload):
         return
     require(isinstance(payload, dict) and "plan" in payload and set(payload) <= {
         "plan", "public_research_custody_confirmed", "public_feedback_custody_confirmed",
-        "public_material_custody_confirmed"},
+        "public_material_custody_confirmed", "public_sources_custody_confirmed"},
         "ROOM_PAYLOAD_INVALID")
     plan = plan_input(payload["plan"])
     require(payload.get("public_research_custody_confirmed") is True, "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
@@ -23,6 +23,9 @@ def preflight(operation, payload):
     require(not (plan.get("materials") or plan.get("review")) or payload.get("public_material_custody_confirmed") is True,
             "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
 
+    require(not plan.get("industry") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED")
+
 
 def perform(store, payload, *, public=True):
     if public:
@@ -31,7 +34,8 @@ def perform(store, payload, *, public=True):
     reads = _SourceReads(store.read_source)
     result = ReadingRoom(store, source_reader=reads).build(
         payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True,
-        material_export=not public or payload.get("public_material_custody_confirmed") is True)
+        material_export=not public or payload.get("public_material_custody_confirmed") is True,
+        industry_export=not public or payload.get("public_sources_custody_confirmed") is True)
     result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result
 

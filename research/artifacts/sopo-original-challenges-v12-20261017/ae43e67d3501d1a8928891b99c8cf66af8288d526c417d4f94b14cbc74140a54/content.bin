@@ -1,0 +1,63 @@
+{
+  "inherited": "prior/v1_1_challenge_increment.json plus unchanged predecessor package, not deleted or relabeled",
+  "increment": [
+    {
+      "question_id": "challenge",
+      "challenge_id": "cash-definition-not-restriction",
+      "prior": "现金余额减现金等价物差约1.22亿元，限制构成仍待核。",
+      "evidence": [
+        "W4",
+        "prior Relay H1 balance/cashflow"
+      ],
+      "resolution": "其他货币资金合计与原元值差额在舍入范围内相符；明确受限组成合计约2915.6万元，小于整个差额。",
+      "disposition": "partly-resolved",
+      "remaining": "无权据差额剩余部分认定可分红、可调度或无其他用途；未作银行函证。"
+    },
+    {
+      "question_id": "challenge",
+      "challenge_id": "annualized-denominator",
+      "prior": "需要理解票据及应收融资与收入、现金之间关系。",
+      "evidence": [
+        "W5A",
+        "prior Relay H1 income/balance"
+      ],
+      "resolution": "9.49%是年化分母；未经年化约18.97%。相关余额较年末增约4854.9万元。",
+      "disposition": "definition-resolved-causality-open",
+      "remaining": "不以余额或年化比率证明现金回收变化；保留贴现、背书、兑付与实际付款附注缺口。"
+    },
+    {
+      "question_id": "mechanism",
+      "challenge_id": "mixed-product-price",
+      "prior": "实际数量表尚未原始文本核到；不要靠醋酸/甲醇调查价相减算利润。",
+      "evidence": [
+        "W5",
+        "W6"
+      ],
+      "resolution": "现已取得Q1分产品价格/成本和Q2相关数量表的原文转录；Q2混合收入每吨仅为混合口径，不能代纯醋酸实现价。",
+      "disposition": "partly-resolved",
+      "remaining": "净自供/外购、实际成本归属、纯醋酸Q2均价及后续季度现金仍未确证。"
+    },
+    {
+      "question_id": "next-evidence",
+      "challenge_id": "capital-phase-versus-cash",
+      "prior": "5月预案只有历史预算，项目名字与经济产出须分离。",
+      "evidence": [
+        "W7"
+      ],
+      "resolution": "9月回复已分别说明一期安装与DMC土建，年底机械竣工属于计划。",
+      "disposition": "partly-resolved",
+      "remaining": "最新完整剩余合同支付、投产验收/达产、融资到账和资本回报没有全部取得；不采用二次摘要资金缺口。"
+    },
+    {
+      "question_id": "challenge",
+      "challenge_id": "historic-restatement-vintage",
+      "prior": "新增证据，非回写原来已知。",
+      "evidence": [
+        "W8"
+      ],
+      "resolution": "官方决定明确2022—2024报表追溯调整。",
+      "disposition": "new-unresolved",
+      "remaining": "以后使用历史均值或同行多年比较前须核同口径重述版；不推定2025/2026本轮现金桥无效。"
+    }
+  ]
+}

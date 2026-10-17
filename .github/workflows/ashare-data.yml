@@ -7,7 +7,7 @@ on:
         options: [status, sync]
         default: status
         required: true
-        description: 'Read health or advance explicitly authorized private SH/SZ daily partitions'
+        description: 'Read public records health or advance only licensed SH/SZ daily partitions'
       code_sha:
         type: string
         required: true
@@ -23,14 +23,18 @@ on:
       access_and_custody_confirmed:
         type: boolean
         default: false
-        description: 'Authorize these source queries and private retention through the separately configured binding'
+        description: 'Authorize this exact source access and storage scope; does not grant publication rights'
+      public_rights_confirmed:
+        type: boolean
+        default: false
+        description: 'Separate verified permission to publicly redistribute ALL selected source rows; never infer from access'
 permissions: {}
 concurrency:
   group: decision-os-relay-source
   cancel-in-progress: false
 jobs:
-  run:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main'
+  status:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'status'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -43,18 +47,36 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Advance private partitions with durable per-page checkpoints
-        if: inputs.operation == 'sync'
+      - name: Read the existing public records collection without source access
         env:
-          DECISION_OS_MARKET_BINDING_JSON: ${{ secrets.DECISION_OS_MARKET_BINDING_JSON }}
-          DECISION_OS_MARKET_STORE_TOKEN: ${{ secrets.DECISION_OS_MARKET_STORE_TOKEN }}
-          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+          DECISION_OS_MARKET_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"
-      - name: Read retained collection health without source credentials
-        if: inputs.operation == 'status'
+      - name: Preserve only the source-free status receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-ashare-data-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-ashare-data/result.json
+          if-no-files-found: warn
+          retention-days: 7
+  sync:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && inputs.access_and_custody_confirmed == true && inputs.public_rights_confirmed == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Advance only publicly licensed records with durable per-page checkpoints
         env:
-          DECISION_OS_MARKET_BINDING_JSON: ${{ secrets.DECISION_OS_MARKET_BINDING_JSON }}
-          DECISION_OS_MARKET_STORE_TOKEN: ${{ secrets.DECISION_OS_MARKET_STORE_TOKEN }}
+          DECISION_OS_MARKET_STORE_TOKEN: ${{ github.token }}
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
         run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"
       - name: Preserve only the engineering counts receipt
         if: always()

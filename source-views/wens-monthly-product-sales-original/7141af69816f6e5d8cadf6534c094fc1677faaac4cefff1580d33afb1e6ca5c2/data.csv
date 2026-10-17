@@ -1,0 +1,6 @@
+company_id,security_code,business,period,monthly_sales_volume,ytd_sales_volume,volume_unit,monthly_sales_revenue,ytd_sales_revenue,revenue_unit,live_animal_average_price,price_unit,pdf_page
+company-wens,300498.SZ,chicken,2026-08,12406.90,86979.60,万只,33.30,222.70,CNY-亿元,12.89,CNY/kg,2
+company-wens,300498.SZ,chicken,2026-09,12595.71,99575.31,万只,37.31,260.01,CNY-亿元,14.20,CNY/kg,2
+company-wens,300498.SZ,pork,2026-08,297.35,2352.34,万头,40.16,313.38,CNY-亿元,10.86,CNY/kg,2
+company-wens,300498.SZ,pork,2026-09,298.83,2651.17,万头,40.56,353.94,CNY-亿元,10.75,CNY/kg,2
+company-wens,300498.SZ,white-feather-chicks,2026-09,1671.01,12906.30,万只,,,,,,2

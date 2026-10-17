@@ -120,14 +120,12 @@ def selection(**changes):
 
 def runtime_input(tmp_path):
     event = {"inputs": {"operation": "sync", "code_sha": SHA,
-        "selection": json.dumps(selection()), "work_units": "7", "access_and_custody_confirmed": True}}
-    binding = {"repository": "private-owner/private-market-records", "repository_id": 7,
-        "branch": "records/private", "anchor": "b" * 40, "store_id": "private-market-store",
-        "visibility": "private", "write_enabled": True}
+        "selection": json.dumps(selection()), "work_units": "7", "access_and_custody_confirmed": True,
+        "public_rights_confirmed": True}}
     env = {"GITHUB_REPOSITORY": "auguspp/Decision-OS-2", "GITHUB_REF": "refs/heads/main",
         "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": SHA, "RUNNER_TEMP": str(tmp_path),
         "GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": "1",
-        cli.BINDING_ENV: json.dumps(binding), cli.MARKET_TOKEN_ENV: STORE_TOKEN}
+        cli.MARKET_TOKEN_ENV: STORE_TOKEN}
     return event, env
 
 
@@ -330,8 +328,9 @@ def test_completed_runtime_sync_checks_same_generation_plan_before_fastpath():
     assert later.calls == [] and host.shared["head"] == before
 
 
-@pytest.mark.parametrize("change", ["repository", "ref", "event", "sha", "authorization", "units",
-                                    "selection", "binding-missing", "public", "token", "readonly"])
+@pytest.mark.parametrize("change", ["repository", "ref", "event", "sha", "authorization", "rights",
+                                    "units", "selection", "binding-missing", "binding-override",
+                                    "target-mismatch", "private", "token", "readonly"])
 def test_runtime_main_configuration_gate_precedes_all_source_and_store_execution(tmp_path, monkeypatch, change):
     monkeypatch.chdir(ROOT_DIR)
     event, env = runtime_input(tmp_path)
@@ -339,15 +338,20 @@ def test_runtime_main_configuration_gate_precedes_all_source_and_store_execution
     elif change == "ref": env["GITHUB_REF"] = "refs/heads/feature"
     elif change == "event": env["GITHUB_EVENT_NAME"] = "push"
     elif change == "sha": event["inputs"]["code_sha"] = "f" * 40
+    elif change == "rights": event["inputs"]["public_rights_confirmed"] = False
     elif change == "authorization": event["inputs"]["access_and_custody_confirmed"] = False
     elif change == "units": event["inputs"]["work_units"] = "33"
     elif change == "selection": event["inputs"]["selection"] = json.dumps({**selection(), "sessions": [END]})
-    elif change == "binding-missing": env.pop(cli.BINDING_ENV)
+    elif change == "binding-missing": monkeypatch.setattr(cli, "RECORDS_BINDING_FILE", tmp_path / "missing")
+    elif change == "binding-override": env[cli.BINDING_ENV] = json.dumps({"visibility": "private"})
     elif change == "token": env.pop(cli.MARKET_TOKEN_ENV)
     else:
-        binding = json.loads(env[cli.BINDING_ENV])
-        binding.update({"visibility": "public"} if change == "public" else {"write_enabled": False})
-        env[cli.BINDING_ENV] = json.dumps(binding)
+        binding = json.loads((ROOT_DIR / cli.RECORDS_BINDING_FILE).read_text())
+        binding.update({"branch": "records/other"} if change == "target-mismatch" else
+                       {"visibility": "private"} if change == "private" else {"write_enabled": True})
+        other = tmp_path / "changed-binding.json"
+        other.write_text(json.dumps(binding))
+        monkeypatch.setattr(cli, "RECORDS_BINDING_FILE", other)
     calls = []
 
     def forbidden(**kwargs):
@@ -364,6 +368,37 @@ def test_runtime_main_configuration_gate_precedes_all_source_and_store_execution
         receipt = json.loads((out / "result.json").read_text())
         assert receipt["source_requests"] == 0
         assert_public(receipt)
+
+
+def test_records_runtime_binds_existing_public_target_with_separate_read_and_write_scopes(tmp_path, monkeypatch):
+    monkeypatch.chdir(ROOT_DIR)
+    for operation in ("status", "sync"):
+        event, env = runtime_input(tmp_path)
+        event["inputs"]["operation"] = operation
+        event["inputs"]["work_units"] = "1"
+        if operation == "status":
+            event["inputs"].pop("public_rights_confirmed")
+            event["inputs"]["access_and_custody_confirmed"] = False
+        observed = []
+
+        def stub_open(binding, token):
+            observed.append((binding, token))
+            return lambda write: None
+
+        def stub_execute(**kwargs):
+            observed.append(kwargs)
+            return {"receipt": {"status": "read" if operation == "status" else "complete",
+                "source_requests": 0, "supplier_rows_in_receipt": False},
+                "reference": None, "reading": None}
+
+        monkeypatch.setattr(cli, "_open_remote", stub_open)
+        out = tmp_path / ("run-" + operation)
+        assert cli.run_runtime(event, env, out, execute=stub_execute) == 0
+        binding, token = observed[0]
+        assert binding.repository == "auguspp/Decision-OS-2" and binding.branch == "records"
+        assert binding.visibility == "public" and binding.write_enabled is (operation == "sync")
+        assert token == STORE_TOKEN and observed[1]["public_rights_confirmed"] is (operation == "sync")
+        assert json.loads((out / "result.json").read_text())["source_requests"] == 0
 
 
 def test_public_runtime_artifact_uses_real_sync_counts_and_no_private_result_members(tmp_path, monkeypatch):
@@ -465,11 +500,22 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     inputs = flow["on"]["workflow_dispatch"]["inputs"]
     assert inputs["operation"]["options"] == ["status", "sync"]
     assert inputs["access_and_custody_confirmed"]["default"] == "false"
-    steps = flow["jobs"]["run"]["steps"]
-    sync = next(step for step in steps if step.get("if") == "inputs.operation == 'sync'")
-    status = next(step for step in steps if step.get("if") == "inputs.operation == 'status'")
-    assert SECRET_ENV in sync["env"] and SECRET_ENV not in status["env"]
-    assert cli.MARKET_TOKEN_ENV in sync["env"] and cli.MARKET_TOKEN_ENV in status["env"]
-    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
-    assert upload["with"]["path"] == "${{ runner.temp }}/dos2-ashare-data/result.json"
-    assert upload["if"] == "always()"
+    assert inputs["public_rights_confirmed"]["default"] == "false"
+    assert set(flow["jobs"]) == {"sync", "status", "rejected-sync"}
+    rejected = flow["jobs"]["rejected-sync"]
+    assert rejected["permissions"] == {"contents": "read"}
+    assert rejected["if"].count("!= true") == 2
+    assert len(rejected["steps"]) == 1 and "exit 1" in rejected["steps"][0]["run"]
+    assert "secrets." not in str(rejected) and "actions/checkout" not in str(rejected)
+    assert flow["jobs"]["sync"]["permissions"] == {"contents": "write"}
+    assert flow["jobs"]["status"]["permissions"] == {"contents": "read"}
+    assert "inputs.public_rights_confirmed == true" in flow["jobs"]["sync"]["if"]
+    for operation in ("sync", "status"):
+        steps = flow["jobs"][operation]["steps"]
+        runtime = next(step for step in steps if "python -m decision_kernel.interfaces.market_collection_cli runtime" in step.get("run", ""))
+        assert cli.MARKET_TOKEN_ENV in runtime["env"]
+        assert runtime["env"][cli.MARKET_TOKEN_ENV] == "${{ github.token }}"
+        assert (SECRET_ENV in runtime["env"]) is (operation == "sync")
+        upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+        assert upload["with"]["path"] == "${{ runner.temp }}/dos2-ashare-data/result.json"
+        assert upload["if"] == "always()"

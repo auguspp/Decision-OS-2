@@ -1,6 +1,6 @@
 # 沪深 A 股日数据：持续保管、增量更新与正常读取
 
-责任：#10，来源和保管分别复用 #12 与 #6 的原合同。这个入口把一次检查变成可接续的数据链：保存已经成功取得的页，按交易日保留全市场分区，正常读取明确版本，在下次显式更新时只补必要查询。实际生产启用与真实供应商可用性仍以原任务中的运行和保管回执为准。
+责任：#10，来源和保管分别复用 #12 与 #6 的原合同。这个入口把一次检查变成可接续的数据链：保存已经成功取得的页，按交易日保留全市场分区，正常读取明确版本，在下次显式更新时只补必要查询。实际生产启用与真实供应商可用性仍以原任务中的运行和保管回执为准。现有 records 为公开分支，原始供应商数据的公开再分发权须逐来源单独核定。
 
 ## 数据范围与“可用”的含义
 
@@ -31,9 +31,11 @@ raw/qfq 沿现有窗口算法计算 5/20/60 个交易日结果。前复权沿原
 
 新代的 `end` 与 `calendar_end` 不得倒退，已经使用的旧 generation 不能重开。历史版本仍可按原 SourceRef 读取。运行没有可推进单元时明确返回 `ASHARE_NO_PROGRESS`，不会持续空转重建预算。
 
-## 日常操作
+## 日常操作：沿用现有 records
 
-受控宿主先提供一个小选择文件。例如，以下日期仅是可审阅的初始回填例子，不代表生产已经采集：
+**唯一保管目标是本仓已经存在的公共 `records` 分支**。`config/store-binding.json` 是可信只读配置（现有仓库 ID、分支、anchor、store_id 与公开可见性），绝不把 `write_enabled` 永久修改为 true。运行时的写入能力仅由受信的、显式授权 sync 分支临时授予。无需创建 `Decision-OS-2-data`，也不需要第二种保管平台或新的市场仓。
+
+先编写有界选择文件，例如：
 
 ```json
 {
@@ -46,52 +48,33 @@ raw/qfq 沿现有窗口算法计算 5/20/60 个交易日结果。前复权沿原
 }
 ```
 
-`start` 至 `calendar_end` 最多 119 个自然日。实际交易日来自两所原日历；窗口所需天数仍由 reader 判定。下一代可以移动窗口并增加已经结束的日期；相同范围的已保管日期不会重新请求。
+`start` 至 `calendar_end` 最多 119 个自然日；真实交易日由两所日历派生。新增日期在后继 generation 补齐，不自动重抓已成功的旧日期。`plan` 不需要登录：
 
 ```bash
-# 离线生成固定请求计划：不读目标、不需要凭证、不发来源请求。
 python -m decision_kernel.interfaces.market_collection_cli plan \
   --selection /runtime/selection.json --out /runtime/plan.json
 
-# 一次明确运行包含 1..32 个有限单元；每个单元至多推进一个逻辑查询。
-python -m decision_kernel.interfaces.market_collection_cli sync \
-  --binding /runtime/market-binding.json --selection /runtime/selection.json \
-  --attempt-id initial-fill-1 --work-units 16 \
-  --access-confirmed --custody-authorized --out /runtime/sync-receipt.json
-
-# 同一选择继续：从实际集合末端和原检查点恢复。
-# 输出使用新文件，避免执行后才发现回执文件已存在。
-python -m decision_kernel.interfaces.market_collection_cli sync \
-  --binding /runtime/market-binding.json --selection /runtime/selection.json \
-  --attempt-id initial-fill-2 --work-units 16 \
-  --access-confirmed --custody-authorized --out /runtime/next-receipt.json
-
-# 正常读回：不需要来源凭证，也不触发采集。
+# 正常独立读取使用现役 records 绑定，仍须具备该仓只读 GitHub 凭据。
 python -m decision_kernel.interfaces.market_collection_cli read \
-  --binding /runtime/market-binding.json --selection /runtime/selection.json \
+  --binding config/store-binding.json --selection /runtime/selection.json \
   --out /runtime/reading.json
 ```
 
-远端专用凭据取 `DECISION_OS_MARKET_STORE_TOKEN`。配置使用原 `GitHubBinding`（真实 repository/repository_id、专用 records 分支、已初始化 anchor、store_id、明确 visibility，写入另需 write_enabled）。不回退工程 token，不根据来源正文选择目标，不自动创建或占用已有私有仓库。`--path` 仅接受已经初始化的本地合成 GitStore，不能冒充真实远端保管。
+GitHub Actions 的 `decision-os-ashare-data` 仅手动 `main` 运行 `status` 或 `sync`，填写精确 `code_sha` 与 selection；`status` 只读，**不需要来源密钥或公开授权声明**。如果尚无市场集合，返回 `ASHARE_COLLECTION_NOT_RETAINED`，并不表示空数据已经通过验收。
 
-sync 输出包含 exact `reference` 与计数回执。读取历史根或分页时，可直接将该引用交给原 `market_custody_cli read --input /runtime/root-ref.json`，或原 reading room 的 market plan。旧 custody CLI 仍从原 `DECISION_OS_STORE_TOKEN` 读取专用凭证；两类命令的环境变量需要由受控宿主分别配置，不能靠自动回退借用其他身份。
+`sync` 每次 1..32 个明确有限单元。操作人必须分别确认 **原来源访问及保管范围** `access_and_custody_confirmed` 和 **所选全部来源行可公开再分发的独立法律/许可依据** `public_rights_confirmed`。只有后者已经由证据确认时才可勾选；同意使用公开 `records`、购买接口访问权、知道密钥、或资料来自公开信息，都不是许可依据。两个确认任一缺失，workflow 会执行**无源凭据的拒绝作业并明确失败**，不进入 sync job；入口自身也在任何来源 HTTP 和 Store 写入之前拒绝。不能为取得绿灯而绕过该检查。
 
-## 手动托管运行与资料权限
+通过许可核查后，直接再次显式调度 `sync`，原断点、分页、失败预算和原始 SourceRef 保持。不会循环定时或后台重试，也不会因跳到新 generation 恢复耗尽预算。
 
-新增 `.github/workflows/ashare-data.yml`，仅手动 main、精确 `code_sha`，复用现有 `decision-os-relay-source` 串行组。`sync` 获得来源和保管凭据；`status` 步骤不获得 Relay 凭据。没有新增定时、通知、研究或交易任务。
+## 手动托管运行与资料权利
 
-运行前需要受信宿主配置两项：
+新 `.github/workflows/ashare-data.yml` 分别运行：`status` 获得 `contents:read`、无 Relay 密钥；`sync` 仅在两项声明显式成立时获得 `contents:write` 和既有 `TUSHARE_PROXY_API_KEY`。二者使用受信 `config/store-binding.json` 确认同一公共 `records`；GitHub 作业令牌直接传给原 `GitHubStore`，**无需新增数据仓、私有绑定 Secret 或专用市场 Store Token**。注意 `contents:write` 在 GitHub 平台层面是仓库权限而不是分支级隔离；唯一分支目标由应用绑定/anchor、CAS 和单一 writer 约束，不宣传它具有更强的平台强制隔离。
 
-| 配置 | 用途 |
-|---|---|
-| `DECISION_OS_MARKET_BINDING_JSON` | 原 GitHubBinding 的私有目标配置；不含 token，须已初始化和核验 |
-| `DECISION_OS_MARKET_STORE_TOKEN` | 该目标的专用 Contents 读写及实际原生条件提交权限 |
+公开 Actions 的 `result.json` 仍仅可包含操作、计数、日期、状态与代码/run 身份，不能包含任意来源行、证券名称、价格、SourceRef、Token 或原供应商错误正文。这个回执公开不等于已把数据集合保管成功；仅原 `records` 上可独立读回的 exact 引用才证明保管。
 
-source 同步使用既有 `TUSHARE_PROXY_API_KEY`。输入为 operation、精确 code_sha、上述 selection JSON、work_units，以及 `access_and_custody_confirmed=true`。原入口检查实际 private 绑定；公开绑定在此运行入口被拒绝，不将接口可调用或已经购买访问权当作公开再分发许可。
+**来源许可仍是单独的真实阻塞。** Tushare 当前《数据服务协议》在 https://tushare.pro/document/1?doc_id=405 明确描述个人、不可转让、非商业的许可；不能从中推定可以将原始行情大批量公开到 GitHub。用户已经选择公开分支，不等于取得 Tushare 的再分发权。未取得具体适用许可前，此入口只允许 `status`，禁止真实 `sync`；可以另行保管已获准公开的原创研究成果与非敏感工程回执，但不能用计数回执冒充恢复了供应商源行。
 
-公开 Actions 只上传 `result.json` 的计数、日期、代码/run 身份、容量和状态。私有目标、SourceRef、供应商行、证券名称、价格、原 Git clone、绑定文件、密钥及服务端错误正文均不进入公开产物。公开原 `market-custody` / recovery 工作流的目标和权限不因本能力改变。
-
-代码合并不等于私有目标已配置。当前公开 records 不能保管尚无公开权利的供应商数据；选择私有目标、初始化与专用凭据接线在原 #6/#10 明确后才能完成生产取源。第一次实际验收须记录：原 source 请求与失败、所存 exact 集合、无源凭证的新读取、真实分母/raw/qfq/时效，并保留仍未覆盖的证券与日期。
+旧 `market-custody`、research 和其他工作流继续使用它们原有的绑定与授权；本组不会为市场数据修改它们，也不会将其他私有材料迁入公开分支。首次合法回填的验收仍须分别记录原来源、exact 集合、跨进程只读恢复、真实分母和 raw/qfq 窗口/时效，不以工程 CI 代签。
 
 ## 容量、停止与恢复
 

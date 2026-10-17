@@ -22,7 +22,8 @@ from decision_kernel.interfaces.store_cli import _load
 
 REGISTRY = Path("docs/sources/relay-registry.json")
 MARKET_TOKEN_ENV = "DECISION_OS_MARKET_STORE_TOKEN"
-BINDING_ENV = "DECISION_OS_MARKET_BINDING_JSON"
+BINDING_ENV = "DECISION_OS_MARKET_BINDING_JSON"  # Reject overrides of canonical public records.
+RECORDS_BINDING_FILE = Path("config/store-binding.json")
 
 
 def selection_plan(value, registry):
@@ -38,6 +39,19 @@ def _parse(raw, limit=6000):
     value = json.loads(raw, object_pairs_hook=_object, parse_constant=_constant)
     require(isinstance(value, dict), "ASHARE_RUNTIME_JSON_OBJECT")
     return value
+
+
+def _records_runtime_binding(operation):
+    """Use the existing, read-only public records contract as the sole run target.
+
+    Write capability is derived only for a separately authorized sync, not
+    persisted in the trusted binding or provided by an event/source payload.
+    """
+    binding = GitHubBinding.from_dict(_load(RECORDS_BINDING_FILE))
+    require(binding.repository == "auguspp/Decision-OS-2" and binding.repository_id == 1420041744
+            and binding.branch == "records" and binding.visibility == "public"
+            and binding.write_enabled is False, "ASHARE_RECORDS_BINDING_MISMATCH")
+    return replace(binding, write_enabled=operation == "sync")
 
 
 def _open_remote(binding, token):
@@ -59,13 +73,14 @@ def _save_receipt(path, value):
 
 
 def run_runtime(event, env, out, *, execute=run_collection):
-    """Main-only manual host: private supplier rows never enter public artifacts."""
+    """Main-only host for existing public records; fail closed on source rights."""
     require(env.get("GITHUB_REPOSITORY") == "auguspp/Decision-OS-2"
             and env.get("GITHUB_REF") == "refs/heads/main"
             and env.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "ASHARE_MANUAL_MAIN_ONLY")
     inputs = event.get("inputs") if isinstance(event, dict) else None
     require(isinstance(inputs, dict) and set(inputs) <= {
-        "operation", "code_sha", "selection", "work_units", "access_and_custody_confirmed"}, "ASHARE_RUNTIME_INPUT")
+        "operation", "code_sha", "selection", "work_units", "access_and_custody_confirmed",
+        "public_rights_confirmed"}, "ASHARE_RUNTIME_INPUT")
     sha = inputs.get("code_sha")
     require(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha)
             and sha == env.get("GITHUB_SHA"), "ASHARE_CODE_SHA_MISMATCH")
@@ -74,6 +89,8 @@ def run_runtime(event, env, out, *, execute=run_collection):
     authorized = (inputs.get("access_and_custody_confirmed") is True
                   or inputs.get("access_and_custody_confirmed") == "true")
     require(operation != "sync" or authorized, "ASHARE_SOURCE_AND_CUSTODY_REQUIRED")
+    public_rights = (inputs.get("public_rights_confirmed") is True
+                     or inputs.get("public_rights_confirmed") == "true")
     units = str(inputs.get("work_units", "1"))
     require(re.fullmatch(r"[1-9][0-9]?", units) and 1 <= int(units) <= 32, "ASHARE_WORK_UNIT_BOUND")
     require(operation == "sync" or int(units) == 1, "ASHARE_READ_ONE_OPERATION")
@@ -88,19 +105,19 @@ def run_runtime(event, env, out, *, execute=run_collection):
     _save_receipt(receipt_path, {**context, "status": "configuration-not-validated", "source_requests": 0,
         "supplier_rows_in_receipt": False, "private_locations_in_receipt": False})
     try:
-        require(bool(env.get(BINDING_ENV)), "ASHARE_PRIVATE_BINDING_REQUIRED")
-        binding = GitHubBinding.from_dict(_parse(env[BINDING_ENV]))
-        require(binding.visibility == "private", "ASHARE_PRIVATE_RUNTIME_ONLY")
+        require(not env.get(BINDING_ENV), "ASHARE_RUNTIME_BINDING_OVERRIDE_FORBIDDEN")
+        require(operation != "sync" or public_rights, "ASHARE_PUBLIC_RIGHTS_REQUIRED")
+        binding = _records_runtime_binding(operation)
         require(bool(env.get(MARKET_TOKEN_ENV)), "ASHARE_STORE_TOKEN_REQUIRED")
-        require(operation != "sync" or binding.write_enabled, "REMOTE_READ_ONLY")
         attempt = "run-" + str(env.get("GITHUB_RUN_ID", "")) + "-" + str(env.get("GITHUB_RUN_ATTEMPT", ""))
         result = execute(operation=operation, plan=plan, registry=registry,
             open_unit=_open_remote(binding, env[MARKET_TOKEN_ENV]), attempt_id=attempt,
             max_work_units=int(units), access_confirmed=authorized, custody_authorized=authorized,
+            public_rights_confirmed=public_rights,
             progress=lambda value: _save_receipt(receipt_path, {**context, **value}))
         _save_receipt(receipt_path, {**context, **result["receipt"]})
-        # The private reference is available inside the actual store and through
-        # the controlled CLI, never in this public Actions result.
+        # The exact retained reference stays in the store/controlled reader;
+        # source rows and references are excluded from public Actions artifacts.
         return 0 if result["receipt"]["status"] in {"complete", "already-complete", "read"} else 2
     except Exception as exc:
         saved = _load(receipt_path)

@@ -21,6 +21,7 @@ from decision_kernel.application.market_suspension_inputs import SUSPENSION_FIEL
 from decision_kernel.application.market_reading import read_market_payload
 from decision_kernel.application.market_session_check import session_scope
 from decision_kernel.application.market_member_recovery import retry_context
+from decision_kernel.application.market_retry_diagnostics import retry_diagnostics
 from decision_kernel.application.market_source_check import _code, _last_attempt_failure
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
@@ -99,7 +100,7 @@ def _collect_stock_history_sources(*, registry, exchange, start, end, stock_code
     def register(slot, use, pages):
         api = use['api']
         report['queries'][slot] = {'api': api, 'status': 'not-attempted', 'reason_code': 'DEPENDENCY_UNAVAILABLE',
-            'row_count': None, 'page_count': None, 'http_attempts': 0, 'last_attempt_failure': None,
+            'row_count': None, 'page_count': None, 'http_attempts': 0, 'last_attempt_failure': None, 'retry_diagnostics': None,
             'retry_context': {'eligible': False}, 'request_context': {'schema': 'market-history-request-v1',
                 'api': api, 'parameters': deepcopy(use['parameters']), 'query_key': use['query_key'],
                 'max_pages': pages, 'registry_sha256': digest(encoded(registry.snapshot))}}
@@ -126,6 +127,7 @@ def _collect_stock_history_sources(*, registry, exchange, start, end, stock_code
             report['stopped'] = ((capture.get('failure') or {}).get('classification') in {'auth-or-entitlement', 'rate-limit'}
                                 or capture['error'] in {'RELAY_RUN_DEADLINE', 'RELAY_SECRET_REFLECTED'})
             item['last_attempt_failure'], item['retry_context'] = _last_attempt_failure(capture), retry_context(capture)
+            item['retry_diagnostics'] = retry_diagnostics(capture)
             result = {'case_id': 'market-source-check', 'use': use,
                 'status': 'captured' if capture['complete'] else 'capture-incomplete', 'capture': capture}
             results[slot] = result

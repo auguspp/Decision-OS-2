@@ -152,10 +152,12 @@ def capture_registered(request, registry, session, *, max_pages=100):
         'snapshot': deepcopy(registry.snapshot), 'source_identity': 'THIRD_PARTY_RELAY_NOT_ISSUER',
         'coverage': 'REQUESTED_PAGE_TERMINATION_NOT_HISTORY_COMPLETENESS'}
     offset, seen, total, declared = int(params.get('offset', 0)), set(), 0, 0
-    for _ in range(max_pages):
+    for page_number in range(1, max_pages + 1):
         page_params = {**params, 'offset': str(offset)} if offset else dict(params)
         try:
             body = session.run(lambda: session.client.request_registered(registry, request['api'], page_params))
+            result['request_execution'] = {'page_number': page_number,
+                'retry_decision': deepcopy(session.last_retry_decision)}
             table = _table(request['api'], page_params, body)
             fingerprint = digest(encoded({'fields': table['fields'], 'items': table['items']}))
             require(not table['items'] or fingerprint not in seen, 'SOURCE_PAGINATION_STALLED')
@@ -171,6 +173,8 @@ def capture_registered(request, registry, session, *, max_pages=100):
                 result['complete'] = True
                 return result
         except RecordError as exc:
+            result['request_execution'] = {'page_number': page_number,
+                'retry_decision': deepcopy(session.last_retry_decision)}
             result.update(error=str(exc), failure=deepcopy(session.last_error_meta),
                           pending_retry=deepcopy(session.pending_retry), attempts=deepcopy(session.last_attempts),
                           next_parameters=page_params)

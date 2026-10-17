@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from decision_kernel.domain.records import RecordError, require
-from decision_kernel.infrastructure.relay_failure import http_failure, transport_failure, retry_after
+from decision_kernel.infrastructure.relay_failure import http_failure, transport_failure, retry_after, rate_limit_headers
 
 ROOT = "https://pcd.mobcvb.cn/tushare/pro"
 CAPABILITIES = "https://pcd.mobcvb.cn/tushare/capabilities"
@@ -43,6 +43,7 @@ class RelayHTTP:
         self.last_response_bytes = None
         self.last_error_meta = None
         self.last_retry_after = ("missing", None)
+        self.last_header_diagnostics = None
 
     def validate_credential(self):
         key = self._credential
@@ -93,6 +94,7 @@ class RelayHTTP:
         self.last_response_bytes = None
         self.last_error_meta = None
         self.last_retry_after = ("missing", None)
+        self.last_header_diagnostics = None
         key = self.validate_credential()
         self.requests += 1
         request = Request(exact, method="GET", headers={"X-API-Key": key,
@@ -114,10 +116,17 @@ class RelayHTTP:
                     value = resp.headers.get(name)
                     return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) and key not in value else None
                 wait_metadata = retry_after(resp.headers, key, datetime.now(timezone.utc))
+                self.last_header_diagnostics = {
+                    'retry_after': {'state': wait_metadata[0], 'seconds': wait_metadata[1]},
+                    **rate_limit_headers(resp.headers, key)}
                 meta = {"http_status": 200, "x_request_id": safe_header("X-Request-ID"),
                         "x_cache": safe_header("X-Cache"), "wire_sha256": sha256(raw).hexdigest()}
         except HTTPError as exc:
             self.last_error_meta = http_failure(exc, key)
+            self.last_header_diagnostics = {
+                'retry_after': {'state': self.last_error_meta['retry_after_state'],
+                                'seconds': self.last_error_meta['retry_after_seconds']},
+                **rate_limit_headers(exc.headers or {}, key)}
             raise RecordError("RELAY_HTTP_" + str(exc.code)) from None
         except (URLError, OSError, TimeoutError, HTTPException) as exc:
             self.last_error_meta = transport_failure(exc)

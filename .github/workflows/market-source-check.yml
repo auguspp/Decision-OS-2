@@ -7,12 +7,12 @@ on:
         type: string
         required: true
       selection:
-        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; session-coverage/CN; US: us-indices'
+        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; session-coverage or stock-history/CN; US: us-indices'
         type: choice
-        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage]
+        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage, stock-history]
         default: sample
       exchange:
-        description: 'CN required for session-coverage; SSE/SZSE for other domestic selections; US for us-indices'
+        description: 'CN required for session-coverage/stock-history; SSE/SZSE for other domestic selections; US for us-indices'
         type: choice
         options: [SSE, SZSE, US, CN]
         default: SSE
@@ -30,13 +30,17 @@ on:
         default: false
         required: true
       request_context_confirmed:
-        description: 'Explicitly retain generated member/session API request arguments; no returned rows'
+        description: 'Explicitly retain generated member/session/history API request arguments; no returned rows'
         type: boolean
         default: false
       explain_quotes:
-        description: 'session-coverage only: also reconcile same-day suspension evidence; no source export'
+        description: 'session-coverage optional / stock-history required: reconcile suspension evidence; no source export'
         type: boolean
         default: false
+      stock_codes:
+        description: 'stock-history only: JSON list of 1-8 exact SH/SZ codes; fixed cohort, not discovery'
+        type: string
+        default: ''
       member_code:
         description: 'members only: one explicit six-digit .TI code; not a saved failed-query substitute'
         type: string

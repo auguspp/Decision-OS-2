@@ -14,6 +14,8 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 原附件、来源表示与前驱导航使用同一入口的可选 `materials` 计划，见[材料阅读](reading-materials.md)。仅显式请求时读取；材料公开权利独立确认，不由研究或反馈许可代签。
 
+按原问题核对相邻研究修订及实际简报行段覆盖，使用可选 `review` 计划，见[问题复核](research-review.md)。它复用现役来源公开确认；版本被采用不代表所选修订段落已覆盖，读取结果不代签经济判断或人工接受。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。

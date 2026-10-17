@@ -199,5 +199,5 @@ def test_private_upgrade_does_not_suppress_id_marker_or_branch_checks(public_api
         GitHubStore(replace(upgraded, repository_id=9999), public_api)
     with pytest.raises(RecordError, match="STORE_MARKER_MISMATCH"):
         GitHubStore(replace(upgraded, store_id="foreign"), public_api)
-    with pytest.raises(RecordError, match="PUBLIC_BINDING_MISMATCH"):
+    with pytest.raises(RecordError, match="REMOTE_REF_MISMATCH"):
         GitHubStore(replace(upgraded, branch="records/other"), public_api)

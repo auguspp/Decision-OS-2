@@ -26,16 +26,20 @@ def preflight(operation, payload):
     require(not plan.get("industry") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED")
 
+    require(not plan.get("market") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
 
-def perform(store, payload, *, public=True):
+
+def perform(store, payload, *, public=True, market_registry=None):
     if public:
         preflight(OPERATION, payload)
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
     reads = _SourceReads(store.read_source)
-    result = ReadingRoom(store, source_reader=reads).build(
+    result = ReadingRoom(store, source_reader=reads, market_registry=market_registry).build(
         payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True,
         material_export=not public or payload.get("public_material_custody_confirmed") is True,
-        industry_export=not public or payload.get("public_sources_custody_confirmed") is True)
+        industry_export=not public or payload.get("public_sources_custody_confirmed") is True,
+        market_export=not public or payload.get("public_sources_custody_confirmed") is True)
     result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result
 
@@ -55,8 +59,14 @@ def configure(actions):
     room.add_argument("--input", required=True, type=Path, help="reading-room plan JSON; not executable instructions")
     room.add_argument("--out", required=True, type=Path, help="NEW offline HTML path; existing files are never overwritten")
 
+    room.add_argument("--market-registry", type=Path, help="trusted local Relay registry for a market root; never source-provided")
+
 
 def execute(args, store, load):
-    result = perform(store, {"plan": load(args.input)}, public=False)
+    registry = None
+    if getattr(args, "market_registry", None) is not None:
+        from decision_kernel.application.relay_registry import RelayRegistry
+        registry = RelayRegistry(args.market_registry)
+    result = perform(store, {"plan": load(args.input)}, public=False, market_registry=registry)
     write_page(args.out, result)
     return result

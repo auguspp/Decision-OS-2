@@ -139,3 +139,6 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
 
     from test_industry_room import exercise_installed_industry_room
     exercise_installed_industry_room(outside, python, env, store)
+
+    from test_market_room import exercise_installed_market_room
+    exercise_installed_market_room(outside, python, env, store)

@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Read-only-input reproduction for a bounded Quick followup. No network or trade execution.
+Run: python reproduce_v1_2.py [--output /path/to/empty-or-approved-output]
+Original receipts and null/version distinctions are retained, not rewritten.
+"""
+from __future__ import annotations
+import argparse,csv,hashlib,io,json,zipfile
+from decimal import Decimal,localcontext,ROUND_HALF_UP
+from pathlib import Path
+D=Decimal
+ROOT=Path(__file__).resolve().parent
+
+def read_json(path:Path):
+    return json.loads(path.read_text(encoding='utf-8'))
+
+def native_rows(path:Path,index:int):
+    with zipfile.ZipFile(path) as z:
+        if z.testzip() is not None: raise ValueError('CRC failure')
+        data=[json.loads(s,parse_float=D) for s in z.read('capture.jsonl').decode().splitlines() if s.strip()]
+    item=data[index]
+    if item['case_id']!='g-explore-20261016' or not item['capture']['complete']:
+        raise ValueError('Unexpected or incomplete captured query')
+    rows=[]
+    for pi,p in enumerate(item['capture']['pages']):
+        for ri,row in enumerate(p['table']['items']):
+            rows.append((dict(zip(p['table']['fields'],row)),{'query_index':index,'page_index':pi,'row_index':ri,'captured_at':p['captured_at']}))
+    if not rows:raise ValueError('Empty query cannot supply scalar values')
+    first={k:v for k,v in rows[0][0].items() if k!='update_flag'}
+    if any({k:v for k,v in r.items() if k!='update_flag'}!=first for r,_ in rows):
+        raise ValueError('Nonidentical versions require manual selection, not latest-nonnull merge')
+    selected=next(((r,p) for r,p in rows if str(r['update_flag'])=='1'),rows[0])
+    return selected[0],{**selected[1],'versions_retained':[str(r['update_flag']) for r,_ in rows],
+                       'selection':'sole row or identical-valued versions; not PIT/latest certification',
+                       'file':str(path.relative_to(ROOT))}
+
+def s(v):return format(v,'f') if isinstance(v,D) else v
+
+def calculate():
+    inputs=read_json(ROOT/'analysis/new_inputs.json')
+    old=ROOT/'receipts/G_Quick_Relay_Capture.zip'
+    supp=ROOT/'receipts/G_Quick_Supplemental_Capture.zip'
+    income,ip=native_rows(old,0)
+    cash,cp=native_rows(old,2)
+    prior,bp0=native_rows(supp,0)
+    balance,bp1=native_rows(supp,2)
+    for r in [income,cash,balance]:
+        assert r['ts_code']=='600746.SH' and r['end_date']=='20260630' and r['report_type']=='1'
+    assert prior['end_date']=='20251231'
+    cashdiff=D(balance['money_cap'])-D(cash['c_cash_equ_end_period'])
+    notes=inputs['cash_notes']
+    explicit=[D(x['restricted_component']) for x in notes['banks'] if x['restricted_component'] is not None]
+    restricted=sum(explicit,D(0))
+    other=sum((D(x['balance']) for x in notes['banks']),D(0))
+    receiv=D(balance['notes_receiv'])+D(balance['receiv_financing'])
+    receiv0=D(prior['notes_receiv'])+D(prior['receiv_financing'])
+    revenue=D(income['revenue'])
+    q2=inputs['q2_mixed_products']['rows'][0]
+    mixed_price=D(q2['revenue_wan_cny'])*D(10000)/D(q2['sold_t'])
+    q1=inputs['q1_product']['rows']
+    product_checks=[]
+    for p in q1:
+        arithmetic=D(p['unit_sale_cny_t'])-D(p['unit_cost_cny_t'])
+        product_checks.append({'product':p['product'],'unit_spread_from_rounded_inputs':s(arithmetic),
+          'reported_unit_gross':p['reported_unit_gross_cny_t'],
+          'rounding_residual_cny_t':s(arithmetic-D(p['reported_unit_gross_cny_t'])),
+          'note':'Unit margin uses separately rounded disclosures. Residual is retained; not a loss or proof of supplier error.'})
+    result={
+      'case_id':'g-explore-20261016','research_kind':'quick','version':'v1.2','as_of':inputs['as_of'],
+      'units':'CNY unless key says wan_cny (万元), yi_cny (亿元), pct or cny_t',
+      'cash_reconciliation':{
+        'money_cap':s(D(balance['money_cap'])),'cash_equivalents':s(D(cash['c_cash_equ_end_period'])),
+        'difference_yuan':s(cashdiff),'difference_wan_cny':s(cashdiff/D(10000)),
+        'other_monetary_sum_from_rounded_bank_rows_wan_cny':s(other),
+        'other_monetary_reported_wan_cny':notes['other_monetary_total'],
+        'rounding_residual_yuan':s(cashdiff-other*D(10000)),
+        'explicit_restricted_components_wan_cny':[s(x) for x in explicit],
+        'approx_restricted_total_wan_cny':s(restricted),
+        'approx_difference_less_restricted_wan_cny':s(cashdiff/D(10000)-restricted),
+        'meaning':'Accounting cash-equivalent exclusion is not identical to legal/contractual restriction. Residual is NOT automatically distributable shareholder cash; selected restriction sum is rounded issuer disclosure.'},
+      'receivables_denominator':{
+        'notes_and_financing_h1_yuan':s(receiv),'notes_and_financing_yearend_yuan':s(receiv0),
+        'balance_increase_yuan':s(receiv-receiv0),'balance_increase_pct':s((receiv/receiv0-1)*100),
+        'h1_revenue_yuan':s(revenue),'unannualized_h1_pct':s(receiv/revenue*100),
+        'annualized_h1_pct':s(receiv/(revenue*2)*100),
+        'reported_annualized_h1_pct':inputs['receivable_ratio_note']['reported_annualized_revenue_ratio_pct'],
+        'sum_of_rounded_components_wan_cny':s((D(balance['notes_receiv'])/10000).quantize(D('.01'),rounding=ROUND_HALF_UP)+(D(balance['receiv_financing'])/10000).quantize(D('.01'),rounding=ROUND_HALF_UP)),
+        'meaning':'The annualization changes the denominator only. Neither ratio measures collections, turnover days or a decline in ending balances.'},
+      'operating_scope':{
+        'q2_mixed_revenue_per_sold_t_cny':s(mixed_price),
+        'pure_acetic_achieved_q2_price':'NOT_ESTABLISHED',
+        'q2_production_less_sales_t':s(D(q2['production_t'])-D(q2['sold_t'])),
+        'exact_self_use_or_inventory_change_t':'NOT_ESTABLISHED',
+        'q1_revenue_two_separate_products_wan_cny':s(sum((D(p['revenue_wan_cny']) for p in q1),D(0))),
+        'q1_unit_rounding_checks':product_checks,
+        'note':'Revenue/tonne is a mixed-product quotient, not a pure acetic-acid price or basis for comparison with a tax-ambiguous survey quote.'},
+      'native_row_provenance':{'income_h1':ip,'cash_h1':cp,'balance_yearend':bp0,'balance_h1':bp1},
+      'native_new_capture_count':0,'native_source_audit_rerun':False,'ordinary_shareholder_cash':'not-established'}
+    checks=[]
+    def check(name,condition):
+        checks.append({'name':name,'passed':bool(condition)})
+        if not condition:raise ValueError('Check failed: '+name)
+    check('cash_difference_equals_retained_v11_value',cashdiff==D('121764864.07'))
+    check('bank_rows_sum_to_declared_rounded_subtotal',other==D(notes['other_monetary_total']))
+    check('cash_classification_matches_rounded_other_money_within_50_cny',abs(cashdiff-other*10000)<=50)
+    check('restricted_components_equal_2915_60_wan',restricted==D('2915.60'))
+    check('restriction_is_not_entire_account_balance',restricted<other)
+    check('restricted_portions_do_not_exceed_corresponding_balances',all(D(b['restricted_component'])<=D(b['balance']) for b in notes['banks'] if b['restricted_component'] is not None))
+    check('null_in_unrestricted_account_not_changed_to_observed_zero',notes['banks'][1]['restricted_component'] is None)
+    check('receivables_positive_balance_increase',receiv>receiv0)
+    check('reported_ratio_reproduced_after_annualization',(receiv/(revenue*2)*100).quantize(D('.01'),rounding=ROUND_HALF_UP)==D('9.49'))
+    check('same_number_is_18_97pct_without_annualization',(receiv/revenue*100).quantize(D('.01'),rounding=ROUND_HALF_UP)==D('18.97'))
+    check('component_rounding_explains_reported_subtotal',D(result['receivables_denominator']['sum_of_rounded_components_wan_cny'])==D('65082.31'))
+    check('q2_mixed_quotient_to_two_decimals',mixed_price.quantize(D('.01'),rounding=ROUND_HALF_UP)==D('3396.42'))
+    check('unit_gross_rounding_is_retained_not_filled',D(product_checks[0]['rounding_residual_cny_t'])==D('-.01') and D(product_checks[1]['rounding_residual_cny_t'])==0)
+    oldaudit=read_json(ROOT/'prior/v1_1_source_audit_receipt.json')
+    check('prior_audit_identified_not_replaced',oldaudit['run_id']=='38924100177' and oldaudit['result']['gaps']==['RELAY_CAPTURE_NOT_ADOPTED'])
+    check('four_original_question_ids_retained',[q['question_id'] for q in read_json(ROOT/'prior/v1_1_request.json')['questions']]==['discovery','mechanism','challenge','next-evidence'])
+    result['verification']={'checks':checks,'passed':len(checks),'failed':0,'scope':'local arithmetic/identity/retained-byte checks, not live native reauthentication, issuer authenticity certification or economic approval'}
+    return result
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output',type=Path,default=ROOT/'analysis')
+    args=parser.parse_args()
+    with localcontext() as ctx:
+        ctx.prec=40
+        result=calculate()
+    args.output.mkdir(parents=True,exist_ok=True)
+    raw=(json.dumps(result,ensure_ascii=False,sort_keys=True,indent=2)+'\n').encode('utf8')
+    (args.output/'calculations_v1_2.json').write_bytes(raw)
+    rows=[]
+    for section in ['cash_reconciliation','receivables_denominator','operating_scope']:
+        for key,value in result[section].items():
+            if isinstance(value,str) and key not in ['meaning','note']:
+                rows.append([section,key,value])
+    with (args.output/'calculation_summary.csv').open('w',encoding='utf-8-sig',newline='') as handle:
+        writer=csv.writer(handle);writer.writerow(['section','metric','value']);writer.writerows(rows)
+    print(json.dumps({'mechanical_checks_passed':result['verification']['passed'],'sha256':hashlib.sha256(raw).hexdigest(),'economic_assessment':'not-certified'},ensure_ascii=False))
+if __name__=='__main__':main()

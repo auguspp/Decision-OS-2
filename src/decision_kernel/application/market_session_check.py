@@ -13,6 +13,7 @@ from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, QU
 from decision_kernel.application.market_suspension_inputs import SUSPENSION_FIELDS, session_suspensions
 from decision_kernel.application.market_reading import read_market_payload
 from decision_kernel.application.market_member_recovery import retry_context
+from decision_kernel.application.market_retry_diagnostics import retry_diagnostics
 from decision_kernel.application.market_source_check import _code, _last_attempt_failure
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
@@ -69,6 +70,7 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
         slot, api, _, _, size, pages = spec
         report['queries'][slot] = {'api':api,'status':'not-attempted','reason_code':'DEPENDENCY_UNAVAILABLE',
             'row_count':None,'page_count':None,'http_attempts':0,'last_attempt_failure':None,'retry_context':{'eligible':False},
+            'retry_diagnostics':None,
             'request_context':{'schema':'market-session-request-v1','api':api,'parameters':deepcopy(use['parameters']),
                 'query_key':use['query_key'],'max_pages':pages,'registry_sha256':digest(encoded(registry.snapshot))}}
     def emit():
@@ -99,6 +101,7 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
             report['stopped'] = ((capture.get('failure') or {}).get('classification') in {'auth-or-entitlement','rate-limit'}
                                 or capture['error'] in {'RELAY_RUN_DEADLINE','RELAY_SECRET_REFLECTED'})
             item['last_attempt_failure'] = _last_attempt_failure(capture)
+            item['retry_diagnostics'] = retry_diagnostics(capture)
             item['retry_context'] = retry_context(capture)
             result = {'case_id':'market-source-check','use':use,
                 'status':'captured' if capture['complete'] else 'capture-incomplete','capture':capture}

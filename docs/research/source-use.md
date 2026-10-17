@@ -57,6 +57,14 @@ GitHub插件运行已有`relay-source-runtime.yml`：`family=research`，`source
 
 原财务和参与者CLI也使用该包装，底层单次传输和旧capture可读性不变。当前分页失败只重试本页，不重复已成功页。跨运行恢复仍须核原capture与具体pending参数，不以同一批rerun掩盖旧失败；没有无人值守续作或第二任务数据库。
 
+### 原重试的执行证据
+
+原包装器在作决定时记录有限原因（不可重试、Retry-After不可用、尝试数、逐页等待预算、运行deadline、采用重试或收到响应），不在下游重新计算原因。attempt的`completed_wait_seconds`只在原`sleep`正常返回后记录其传入秒数；它不测墙钟耗时，中断或仅计划的等待不计为完成。旧`pending_retry`结构和全部请求/等待界限保持。原capture顶层`request_execution`只说明最后一页请求；发HTTP前的deadline也有自己的页号与决定，不能借用上一响应。
+
+HTTP层只增加独立、安全的头诊断：原Retry-After解析，以及[供应商归档手册](../sources/vendor/tushare-relay-v0.5.61.md)明确列出的`X-RateLimit-Remaining`和`X-RateLimit-IP-Remaining`。共享余量是当次服务端快照，不是本进程独享配额；没有重置时间便不能推得固定等待、额外请求许可或持续可用。原成功transport四字段不变，头诊断只进入attempt，不进入正常inspect/export的SourceInput。旧capture没有新字段仍按原来源合同可读，不能补造未记录的等待完成或服务端头。
+
+现役市场宿主通过[市场重试回执合同](../architecture/market-source-check.md#retry-execution-diagnosis)消费这些白名单事实，保留查询最终资格及原成员恢复准入。研究/财务/参与者继续使用同一个重试器；元数据目录原有有限重试策略不变。本次复用既有Relay、原标准库头解析与此前urllib3评估，不新增通用重试框架、网络依赖、调度或状态库。维护责任仍归共享来源执行层；退出诊断时同步退出专属字段、投影和测试，保留现役请求安全、保管和恢复保护。
+
 ## 验收与维护
 
 新Full无历史/缺口即可获得来源入口；不同阶段能调用不同相关接口，也能复用同一取数；单次计划跨接口验证后执行；排队至少30秒且只恢复本页；错误、部分数据、原值与来源限制保留；SourceInput经原VersionedStore及新Reader读回供后继研究。工程测试不替代真实HTTP、不把原始资料齐全当充分经济分析，实际Full使用仍需真实委托内取证/核算/挑战验收。

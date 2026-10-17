@@ -53,6 +53,28 @@ def retry_after(headers, key: str, now: datetime) -> tuple[str, int | None]:
         return "invalid", None
 
 
+def rate_limit_headers(headers, key: str) -> dict:
+    """Vendor remaining snapshots only; neither a quota nor a reset-time promise."""
+    def remaining(name):
+        values = headers.get_all(name) if hasattr(headers, 'get_all') else None
+        raw = headers.get(name)
+        if values is not None and len(values) != 1:
+            state, value = 'invalid', None
+        elif raw is None:
+            state, value = 'missing', None
+        elif not isinstance(raw, str) or len(raw) > 128 or any(ord(c) < 32 or ord(c) > 126 for c in raw):
+            state, value = 'invalid', None
+        elif key in raw:
+            state, value = 'withheld', None
+        elif re.fullmatch(r'[0-9]{1,12}', raw.strip()):
+            state, value = 'valid', int(raw.strip())
+        else:
+            state, value = 'invalid', None
+        return {'state': state, 'remaining': value}
+    return {'key_remaining': remaining('X-RateLimit-Remaining'),
+            'ip_remaining': remaining('X-RateLimit-IP-Remaining')}
+
+
 def _error_code(raw: bytes, key: str) -> tuple[str, str | None]:
     if not raw:
         return "empty", None

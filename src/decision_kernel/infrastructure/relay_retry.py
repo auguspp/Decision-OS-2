@@ -8,6 +8,9 @@ import time
 
 from decision_kernel.domain.records import RecordError, require
 
+RETRYABLE_CLASSES = frozenset({'temporary-upstream', 'temporary-gateway', 'timeout',
+                              'connection', 'dns-temporary', 'incomplete-read', 'rate-limit'})
+
 
 @dataclass(frozen=True)
 class RetryPolicy:
@@ -27,8 +30,7 @@ def business_retry_delay(failure):
         return None
     category = failure.get('classification')
     state, wait = failure.get('retry_after_state'), failure.get('retry_after_seconds')
-    if category not in {'temporary-upstream', 'temporary-gateway', 'timeout',
-                        'connection', 'dns-temporary', 'incomplete-read', 'rate-limit'}:
+    if category not in RETRYABLE_CLASSES:
         return None
     if state in {'invalid', 'withheld'} or category == 'rate-limit' and state != 'valid':
         return None
@@ -49,6 +51,7 @@ class RetryingRelay:
         self.deadline = deadline
         self.last_attempts = []
         self.pending_retry = None
+        self.last_retry_decision = None
 
     def __getattr__(self, key):
         return getattr(self.client, key)
@@ -58,9 +61,11 @@ class RetryingRelay:
 
     def run(self, call):
         self.last_attempts, self.pending_retry = [], None
+        self.last_retry_decision = None
         waited = 0
         for attempt in range(1, self.policy.max_attempts + 1):
             if self.deadline is not None and self.monotonic() + 30 > self.deadline:
+                self.last_retry_decision = {'reason': 'run-deadline', 'required_wait_seconds': None}
                 self.pending_retry = {'reason': 'run-deadline', 'retry_after_seconds': None}
                 raise RecordError('RELAY_RUN_DEADLINE')
             started = self.clock()
@@ -84,20 +89,41 @@ class RetryingRelay:
             except RecordError as exc:
                 failure = deepcopy(getattr(self.client, 'last_error_meta', None))
                 delay = business_retry_delay(failure)
-                retry = (delay is not None and attempt < self.policy.max_attempts
-                         and waited + delay <= self.policy.max_wait_seconds
-                         and (self.deadline is None or self.monotonic() + delay + 30 <= self.deadline))
-                self.last_attempts.append({'attempt': attempt, 'requested_at': started,
+                # Same short-circuit order and budgets as the original decision.
+                # Record the first blocking condition here, not by guessing later.
+                if delay is None:
+                    reason = ('retry-after-unusable' if isinstance(failure, dict)
+                              and failure.get('classification') in RETRYABLE_CLASSES else 'not-retryable')
+                elif attempt >= self.policy.max_attempts:
+                    reason = 'attempt-limit'
+                elif waited + delay > self.policy.max_wait_seconds:
+                    reason = 'wait-budget'
+                elif self.deadline is not None and not self.monotonic() + delay + 30 <= self.deadline:
+                    reason = 'run-deadline'
+                else:
+                    reason = 'retry'
+                retry = reason == 'retry'
+                self.last_retry_decision = {'reason': reason, 'required_wait_seconds': delay}
+                recorded = {'attempt': attempt, 'requested_at': started,
                     'received_at': self.clock(), 'error': str(exc), 'failure': failure,
-                    'wait_before_next_attempt': delay if retry else None})
+                    'wait_before_next_attempt': delay if retry else None,
+                    'headers': deepcopy(getattr(self.client, 'last_header_diagnostics', None)),
+                    'retry_decision': deepcopy(self.last_retry_decision), 'completed_wait_seconds': 0}
+                self.last_attempts.append(recorded)
                 if not retry:
                     if delay is not None:
                         self.pending_retry = {'reason': 'attempt-or-wait-bound', 'retry_after_seconds': delay}
                     raise
                 self.sleep(delay)
+                # A planned or interrupted wait is not a completed wait. This is
+                # the requested duration whose sleep returned, not elapsed wall time.
+                recorded['completed_wait_seconds'] = delay
                 waited += delay
             else:
+                self.last_retry_decision = {'reason': 'response', 'required_wait_seconds': None}
                 self.last_attempts.append({'attempt': attempt, 'requested_at': started,
                     'received_at': self.clock(), 'error': None,
+                    'headers': deepcopy(getattr(self.client, 'last_header_diagnostics', None)),
+                    'retry_decision': deepcopy(self.last_retry_decision), 'completed_wait_seconds': 0,
                     'transport': deepcopy(getattr(self.client, 'last_response_meta', None))})
                 return body

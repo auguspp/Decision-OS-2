@@ -136,15 +136,81 @@ sets. It describes the latest failed attempt, including one recovered by a later
 successful retry; it is not necessarily the final query outcome. No failure
 metadata means null, not proof there was no unrecorded network issue. Unknown
 classes become `unclassified`, invalid statuses and unknown business errors become
-null. Original exception prose, request IDs, headers, timestamps, source digests
-and retry details are not emitted. No new transport classifier or retry policy is
-introduced. Earlier receipts lacking this information cannot be reconstructed.
+null. This three-field object emits no original exception prose, request IDs,
+headers, timestamps, source digests or retry details. The separate execution
+diagnostic below does not change its contract. No new transport classifier or
+retry policy is introduced. Earlier receipts lacking this information cannot be
+reconstructed.
 
 The change responds to the first live check's `CHECK_REJECTED` diagnosis loss.
 Existing failed evidence stays intact. A new targeted diagnosis is a new explicit
 operation, never a rerun that repairs the old sample. It proves only the actual
 new result at its exact code/operation identity. Source/publication permissions and
 later compatible normalization must be established separately from counters.
+
+## Retry execution diagnosis
+
+Every attempted market query can now carry `retry_diagnostics` with schema
+`market-retry-diagnostics-v1`. The original `RelayHTTP` parses the two documented
+remaining headers into a separate transient `last_header_diagnostics` field;
+the original `RetryingRelay` records its decision and completed wait calls in
+each attempt. `capture_registered` also binds the last page request's decision
+to `request_execution.page_number`, including a deadline refusal before HTTP.
+The market projection uses those records, never the client's possibly stale
+last error or a reconstruction from today's policy.
+
+| Receipt field | Exact meaning |
+| --- | --- |
+| `recorded_attempts` | Recorded wrapper attempts across this query's pages; distinct from the original `http_attempts` counter. A post-page count rejection does not count the same attempt twice. |
+| `completed_wait_seconds` | Sum of requested durations whose original `sleep` calls returned normally. Interrupted/planned waits are not added; this is not measured wall time. Missing old completion records make the total null. |
+| `last_response` | Last recorded response-header snapshot, bound to its page number and attempt within that page. It may precede a later transport failure or a deadline before the next page. |
+| `last_failure` | Last recorded failed wrapper attempt, with its own headers, decision, completed wait and `request_recovered`. The boolean only means a later attempt in that same page returned a response; it does not qualify the capture or market reading. |
+| `last_request` | Page number and the original wrapper's final decision for the last page request. `response` can coexist with a later table/count/reader rejection. `run-deadline` can occur with zero HTTP. |
+
+`retry_after` contains only `state` and parsed `seconds`; `key_remaining` and
+`ip_remaining` contain only `state` and parsed `remaining`. States are `valid`,
+`missing`, `invalid`, `withheld`, or `not-recorded`. Explicit missing headers are
+different from unavailable old diagnostics or a transport failure without a
+recorded response. Remaining values must be a single bounded nonnegative ASCII
+decimal integer (at most 12 digits); duplicate/merged, signed, floating, boolean,
+non-ASCII, overlong and credential-reflecting values cannot become counts. Valid
+Retry-After seconds retain the original parser's value, including zero, HTTP-date
+conversion and waits longer than the execution budget; they are never clamped.
+
+The decision is made by the existing retry owner, in the original short-circuit
+order: `not-retryable` / `retry-after-unusable`, then `attempt-limit`, `wait-budget`,
+`run-deadline`, or `retry`. `required_wait_seconds` is the original policy delay,
+so an observed zero-second Retry-After can require the existing minimum 30 seconds.
+The first blocking condition does not claim all other budgets were available.
+`response` denotes return from the request wrapper; `not-recorded` denotes missing
+old/unrecognized diagnostics. Existing `pending_retry` and query status remain
+unchanged. Not-attempted query diagnostics stay null.
+
+This is a bounded snapshot, not the full attempt timeline, a cooling permit,
+source authentication or source custody. The archived
+[vendor manual](../sources/vendor/tushare-relay-v0.5.61.md) describes shared Key/IP
+limits with actual server headers authoritative. A remaining count supplies no
+reset time, exclusive allocation or promise that the next request will succeed.
+No successful-request pacing, default cooldown, alternate Key/host or extra retry
+is inferred. The existing 4 attempts, 180-second per-page wait budget, shared
+600-second market deadline and terminal global stops remain in force.
+
+The same projection serves sample/catalogue/member, session, history/reconcile
+and factor checks through the original fixed host. `retry_context` still means
+only the existing member recovery admission, which excludes rate limits; its
+`eligible=false` says nothing about Retry-After validity. These new facts neither
+authorize cross-run recovery nor reconstruct headers absent from older receipts.
+
+Original headers, request IDs, credentials, source values, response bodies,
+timestamps and arbitrary diagnostic prose never leave this projection. Successful
+`page`/`transport` key sets, inspected views and `SourceInput` exports remain
+unchanged: attempts and top-level execution diagnostics are not source excerpts.
+`tests/test_relay_retry_diagnostics.py` and `tests/test_market_retry_diagnostics.py`
+protect this source-to-receipt responsibility, including host routing, page
+identity, recovered-but-rejected responses, interruption and legacy reading.
+Retiring this diagnostic capability removes its side field, attempt/capture
+additions, market projection/wiring and these tests together; the shared retry,
+source export, custody and recovery protections continue under their owners.
 
 ## Classification diagnosis across the received directory
 

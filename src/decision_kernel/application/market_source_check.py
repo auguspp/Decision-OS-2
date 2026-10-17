@@ -29,6 +29,7 @@ from decision_kernel.application.market_security_inputs import (
     qualified_adj_factors, qualified_security_master, inspect_security_master,
 )
 from decision_kernel.application.market_reading import read_market_payload
+from decision_kernel.application.market_retry_diagnostics import retry_diagnostics
 from decision_kernel.application.market_member_recovery import member_code as checked_member_code, member_context, retry_context
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import capture_registered, inspect_result, validate_plan
@@ -257,7 +258,8 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                           else 'first-sorted-code-from-qualified-stock-master-not-candidates' if selection == 'stock'
                           else 'first-sorted-code-per-qualified-source-catalogue-not-candidates'),
         'queries': {k: {'api': api, 'status': 'not-attempted', 'reason_code': 'DEPENDENCY_UNAVAILABLE',
-                        'row_count': None, 'page_count': None, 'http_attempts': 0, 'last_attempt_failure': None}
+                        'row_count': None, 'page_count': None, 'http_attempts': 0, 'last_attempt_failure': None,
+                        'retry_diagnostics': None}
                     for k, api in selected_slots.items()},
         'surfaces': {}, 'http_attempts': 0, 'stopped': False,
         'supplier_data_retained': False, 'source_refs_created': False,
@@ -325,6 +327,7 @@ def check_sources(*, registry: RelayRegistry, exchange: str, start: str, end: st
                        or capture['error'] in {'RELAY_RUN_DEADLINE', 'RELAY_SECRET_REFLECTED'})
             report['stopped'] = stopped
             item['last_attempt_failure'] = _last_attempt_failure(capture)
+            item['retry_diagnostics'] = retry_diagnostics(capture)
             if request_context_confirmed and api == 'ths_member':
                 item['retry_context'] = retry_context(capture)
             result = {'case_id': 'market-source-check', 'use': use,

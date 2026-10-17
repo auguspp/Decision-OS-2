@@ -31,6 +31,63 @@ def paused_master(store, fresh):
     return request, paused
 
 
+def test_missing_credential_blocks_only_this_operation_then_resumes_saved_page(monkeypatch):
+    backend, store, fresh = memory()
+    request, previous = paused_master(store, fresh)
+    saved_unit = previous["collection"]["units"]["master:SSE"]
+    old = restore_market_checkpoint(saved_unit["checkpoint"], REGISTRY, fresh())
+    assert len(old["state"]["capture"]["pages"]) == 1
+    writes = backend.shared["count"]
+    monkeypatch.delenv(SECRET_ENV, raising=False)
+    blocked = run(request, store, fresh, previous=previous["reference"], max_queries=1)
+    assert blocked["receipt"]["latest_attempt"]["status"] == "blocked"
+    assert blocked["receipt"]["latest_attempt"]["reason_code"] == "RELAY_CREDENTIAL_REQUIRED"
+    assert blocked["receipt"]["latest_attempt"]["source_requests"] == 0
+    assert blocked["receipt"]["execution_error_persisted"] is False
+    # Only the entry plan was saved. The missing credential is not a new source
+    # outcome, and no catch-block commit may turn the durable page into blocked.
+    assert backend.shared["count"] == writes + 1
+    durable = restore_market_collection(blocked["reference"], REGISTRY, fresh())["collection"]
+    assert encoded(durable["units"]["master:SSE"]) == encoded(saved_unit)
+    assert encoded(latest_collection(fresh(), request)) == encoded(blocked["reference"])
+    supplied = CollectionOpener(count=501, start=END, end=END)
+    resumed = run(request, store, fresh, supplied, previous=blocked["reference"], max_queries=1)
+    assert source_calls(supplied) == [("stock_basic", "SSE", 500)]
+    unit = resumed["collection"]["units"]["master:SSE"]
+    assert unit["status"] == "complete"
+    restored = restore_market_checkpoint(unit["checkpoint"], REGISTRY, fresh())
+    assert restored["state"]["capture"]["pages"][0] == old["state"]["capture"]["pages"][0]
+    assert restored["page_references"][0] == old["page_references"][0]
+
+
+def test_rejected_old_callback_does_not_poison_durable_query_or_repeat_successful_page():
+    backend, store, fresh = memory()
+    request, previous = paused_master(store, fresh)
+    saved_unit = previous["collection"]["units"]["master:SSE"]
+    old = restore_market_checkpoint(saved_unit["checkpoint"], REGISTRY, fresh())
+    accepted = restore_market_checkpoint(old["predecessor"], REGISTRY, fresh())
+    stale = accepted["predecessor"]
+    assert restore_market_checkpoint(stale, REGISTRY, fresh())["state"]["capture"]["pages"] == []
+    writes = backend.shared["count"]
+    blocked_opener = CollectionOpener(count=501, start=END, end=END)
+    blocked = run(request, store, fresh, blocked_opener, previous=previous["reference"],
+                  max_queries=1, latest_checkpoint=lambda owner: stale)
+    assert blocked["receipt"]["latest_attempt"]["status"] == "blocked"
+    assert blocked["receipt"]["latest_attempt"]["reason_code"] == "ASHARE_CHECKPOINT_ROLLBACK"
+    assert blocked["receipt"]["execution_error_persisted"] is False
+    assert blocked_opener.calls == [] and backend.shared["count"] == writes + 1
+    durable = restore_market_collection(blocked["reference"], REGISTRY, fresh())["collection"]
+    assert encoded(durable["units"]["master:SSE"]) == encoded(saved_unit)
+    corrected = CollectionOpener(count=501, start=END, end=END)
+    resumed = run(request, store, fresh, corrected, previous=blocked["reference"], max_queries=1)
+    assert source_calls(corrected) == [("stock_basic", "SSE", 500)]
+    unit = resumed["collection"]["units"]["master:SSE"]
+    assert unit["status"] == "complete"
+    restored = restore_market_checkpoint(unit["checkpoint"], REGISTRY, fresh())
+    assert restored["state"]["capture"]["pages"][0] == old["state"]["capture"]["pages"][0]
+    assert restored["page_references"][0] == old["page_references"][0]
+
+
 def test_stale_collection_predecessor_is_rejected_before_new_writes_or_http():
     backend, store, fresh = memory()
     request, old = paused_master(store, fresh)

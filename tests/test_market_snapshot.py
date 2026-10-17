@@ -149,6 +149,9 @@ def test_native_capacity_counts_one_pinned_snapshot_and_rechecks_visibility(nati
     result = market_capacity(reader)
     assert result["tree_entries"] == 9 and result["version_count"] == 1
     assert result["native_bytes"] > 0 and result["admit_work_unit"] is True
+    assert result["tree_response_applicability"] == "required"
+    assert 0 < result["tree_response_bytes_estimate"] < (
+        result["limits"]["tree_response_bytes_estimate"] - result["work_unit_reserve"]["tree_response_bytes_estimate"])
     assert len(fetches) == 1 and api._requests == len(model.requests) < 32
     assert b"private source rows" not in encoded(result) and b"source-views" not in encoded(result)
     original = backend.market_inventory

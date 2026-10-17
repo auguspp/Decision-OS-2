@@ -13,11 +13,16 @@ from decision_kernel.application.market_collection import (
     EXCHANGES, _partition_complete, _qualified, _reason, unit_request, validate_collection,
 )
 from decision_kernel.application.market_collection_inputs import read_ashare_collection
-from decision_kernel.domain.records import RecordError, SourceRef, StoreUnavailable, digest, encoded, require
+from decision_kernel.application.relay_registry import RelayRegistry
+from decision_kernel.application.versioned_store import MAX_STORE_VERSIONS
+from decision_kernel.domain.records import MAX_BYTES, RecordError, SourceRef, StoreUnavailable, digest, encoded, require
 from decision_kernel.observations.market_daily import MarketInputError
 
-MAX_CURSOR_VERSIONS = 1024
-MAX_CURSOR_BYTES = 128 * 1024 * 1024
+MAX_CURSOR_VERSIONS = MAX_STORE_VERSIONS
+MAX_CURSOR_BYTES = 512 * 1024 * 1024
+COLLECTION_ROOT_METADATA_BYTES = 64 * 1024
+MAX_COLLECTION_ROOT_BYTES = MAX_BYTES // 2 + COLLECTION_ROOT_METADATA_BYTES
+CURSOR_WORK_UNIT_RESERVE = {"node_count": 2, "unique_body_bytes": 2 * MAX_COLLECTION_ROOT_BYTES}
 
 
 def same_reference(left, right):
@@ -27,14 +32,38 @@ def same_reference(left, right):
         right if isinstance(right, SourceRef) else SourceRef.from_dict(right))
 
 
-def latest_market_reference(store, registry, *, collection_id=None, generation=None, checkpoint_id=None):
-    """Find one explicit owner's immutable chain tip, never sort by a timestamp.
+def market_cursor_capacity(*, node_count, unique_body_bytes):
+    """Pure counts admission for the initial and final roots of one work unit.
+
+    Unknown counts never admit a source operation. The node and logical body
+    limits are independent of the store's native Git/tree capacity checks.
+    """
+    counts = {"node_count": node_count, "unique_body_bytes": unique_body_bytes}
+    require(all(value is None or type(value) is int and value >= 0 for value in counts.values()),
+            "ASHARE_CURSOR_CAPACITY_COUNTS")
+    limits = {"node_count": MAX_CURSOR_VERSIONS, "unique_body_bytes": MAX_CURSOR_BYTES}
+    admit = all(counts[key] is not None and counts[key] + CURSOR_WORK_UNIT_RESERVE[key] <= bound
+                for key, bound in limits.items())
+    return {**counts, "limits": limits, "work_unit_reserve": dict(CURSOR_WORK_UNIT_RESERVE),
+            "admit_work_unit": admit}
+
+
+def inspect_market_chain(store, registry, *, collection_id=None, generation=None, checkpoint_id=None):
+    """Inspect one explicit owner's immutable chain and its retained body size.
 
     The bounded scan pins a store snapshot. Concurrent or orphaned branches are
     ambiguous, so no caller receives a guessed latest version or fresh allowance.
-    The returned SourceRef uses the original manifest commit, not the scan head.
+    Each candidate uses its original manifest commit, as does the returned tip.
+    Parent reuse requires the complete exact SourceRef to have been verified in
+    this scope; a matching path or body digest alone cannot bypass its commit,
+    selection, source integrity or owner checks. Only small summaries are cached.
     """
     require((checkpoint_id is None) != (collection_id is None), "ASHARE_CURSOR_OWNER_REQUIRED")
+    require(isinstance(registry, RelayRegistry), "ASHARE_REGISTRY_REQUIRED")
+    # The stored collection itself has the original MAX_BYTES // 2 bound.
+    # Leave a fixed, checked allowance for its registry, predecessor and schema.
+    require(len(encoded(registry.snapshot)) <= COLLECTION_ROOT_METADATA_BYTES - 4096,
+            "ASHARE_CURSOR_REGISTRY_BOUND")
     source_id = (checkpoint_source_id(checkpoint_id) if checkpoint_id is not None else
                  collection_source_prefix(collection_id) if generation is None else
                  collection_source_id(collection_id, generation))
@@ -46,30 +75,48 @@ def latest_market_reference(store, registry, *, collection_id=None, generation=N
                  if p.startswith(prefix) and p.endswith("/manifest.json")]
         require(len(paths) <= MAX_CURSOR_VERSIONS, "ASHARE_CURSOR_VERSION_BOUND")
         if not paths:
-            return None
-        parents, refs, total = {}, {}, 0
-        for path in paths:
-            ref = SourceRef(reader.backend.reference(snapshot, path))
-            _, body = read_manifest(ref, registry, reader)
+            return {"reference": None, "node_count": 0, "unique_body_bytes": 0}
+        parents, refs, verified, bodies, total = {}, {}, {}, set(), 0
+
+        def inspect(reference):
+            nonlocal total
+            reference = reference if isinstance(reference, SourceRef) else SourceRef.from_dict(reference)
+            identity = encoded(asdict(reference))
+            if identity in verified:
+                return verified[identity]
+            _, body = read_manifest(reference, registry, reader)
             require(body["checkpoint_id"] == checkpoint_id if checkpoint_id is not None else
                     body["collection"]["plan"]["collection_id"] == collection_id,
                     "ASHARE_CURSOR_OWNER_CHANGED")
-            total += len(encoded(body))
-            require(total <= MAX_CURSOR_BYTES, "ASHARE_CURSOR_BYTE_BOUND")
+            raw = encoded(body)
+            if checkpoint_id is None:
+                metadata_bytes = len(raw) - len(encoded(body["collection"]))
+                require(metadata_bytes <= COLLECTION_ROOT_METADATA_BYTES,
+                        "ASHARE_CURSOR_ROOT_METADATA_BOUND")
+            body_hash = digest(raw)
+            if body_hash not in bodies:
+                total += len(raw)
+                require(total <= MAX_CURSOR_BYTES, "ASHARE_CURSOR_BYTE_BOUND")
+                bodies.add(body_hash)
             parent = None if body["predecessor"] is None else SourceRef.from_dict(body["predecessor"])
             require(parent is None or parent.manifest.repository == reader.backend.repository,
                     "ASHARE_CURSOR_FOREIGN_PREDECESSOR")
-            if parent is not None:
-                # Authenticate the exact parent bytes and selection, including
-                # an older generation at the start of a collection chain.
-                _, parent_body = read_manifest(parent, registry, reader)
-                if checkpoint_id is not None:
-                    require(parent_body["checkpoint_id"] == checkpoint_id, "ASHARE_CURSOR_OWNER_CHANGED")
-                else:
-                    require(parent_body["collection"]["plan"]["collection_id"] == collection_id,
-                            "ASHARE_CURSOR_OWNER_CHANGED")
+            verified[identity] = parent
+            return parent
+
+        for path in paths:
+            original = reader.backend.last_change(snapshot, path)
+            ref = SourceRef(reader.backend.reference(original, path))
+            parent = inspect(ref)
             parents[path] = None if parent is None else parent.manifest.path
             refs[path] = ref
+        # All in-scope originals have been verified before examining edges.
+        # Cross-generation boundary parents and noncanonical exact references
+        # still perform their own authenticated read, including commit reachability.
+        for reference in refs.values():
+            parent = verified[encoded(asdict(reference))]
+            if parent is not None:
+                inspect(parent)
         tips = set(paths) - {p for p in parents.values() if p is not None}
         require(len(tips) == 1, "ASHARE_CURSOR_AMBIGUOUS")
         tip = next(iter(tips))
@@ -79,10 +126,13 @@ def latest_market_reference(store, registry, *, collection_id=None, generation=N
             seen.add(cursor)
             cursor = parents[cursor]
         require(len(seen) == len(paths), "ASHARE_CURSOR_AMBIGUOUS")
-        original = reader.backend.last_change(snapshot, tip)
-        result = asdict(SourceRef(reader.backend.reference(original, tip)))
-        read_manifest(result, registry, reader)
-        return result
+        return {"reference": asdict(refs[tip]), "node_count": len(paths), "unique_body_bytes": total}
+
+
+def latest_market_reference(store, registry, *, collection_id=None, generation=None, checkpoint_id=None):
+    """Return the original exact tip; existing callers retain their ref-only API."""
+    return inspect_market_chain(store, registry, collection_id=collection_id, generation=generation,
+                                checkpoint_id=checkpoint_id)["reference"]
 
 
 def require_checkpoint_descendant(candidate, known, registry, store):

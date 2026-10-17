@@ -23,6 +23,9 @@ MAX_RESPONSE = 8 * 1024 * 1024
 MAX_TREE_ENTRIES = 32768
 MAX_REQUESTS = 512
 MAX_ANCESTOR_PROOFS = 128
+TREE_RESPONSE_ROW_MARGIN = 128
+TREE_RESPONSE_ENVELOPE_MARGIN = 1024
+TREE_RESPONSE_WORK_UNIT_RESERVE = 256 * 1024
 COMMIT_MUTATION = """mutation StoreCommit($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
 }"""
@@ -92,6 +95,48 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def github_tree_inventory(binding, files, *, directories=()):
+    """Estimate the complete recursive response using the actual trusted origin.
+
+    SHA lengths do not change with a commit. Include every documented row
+    field, a size allowance even for directories, and formatting headroom;
+    the transport still enforces its original independent eight-MiB limit.
+    """
+    require(isinstance(binding, GitHubBinding) and isinstance(files, dict)
+            and isinstance(directories, (list, tuple, set, frozenset))
+            and all(isinstance(path, str) for path in directories), "INVALID_TREE_INVENTORY")
+    folders = set(directories)
+    for path in directories:
+        parts = path.split("/")
+        folders.update("/".join(parts[:number]) for number in range(1, len(parts)))
+    for path, size in files.items():
+        GitHubStore._path(path)
+        require(type(size) is int and 0 <= size <= 2 * MAX_BYTES, "INVALID_TREE_INVENTORY")
+        parts = path.split("/")
+        folders.update("/".join(parts[:number]) for number in range(1, len(parts)))
+    require(not folders.intersection(files), "TREE_PATH_CONFLICT")
+    for path in folders:
+        BlobRef(binding.repository, "0" * 40, path, "0" * 64)
+        require(path in ("source-views", "research", "research/cases", "research/artifacts",
+                        "research/watch-activities", "submissions")
+                or path.startswith(("source-views/", "research/cases/", "research/artifacts/",
+                                    "research/watch-activities/", "submissions/")), "PATH_OUTSIDE_STORE")
+    prefix = API_ROOT + "/repos/" + binding.repository + "/git/"
+    response = len(encoded({"sha": "0" * 40, "url": prefix + "trees/" + "0" * 40,
+                            "tree": [], "truncated": False})) + TREE_RESPONSE_ENVELOPE_MARGIN
+    for kind, entries in (("blob", files), ("tree", folders)):
+        for path in entries:
+            row = {"path": path, "mode": "100644" if kind == "blob" else "040000", "type": kind,
+                   "sha": "0" * 40, "size": files[path] if kind == "blob" else 2 * MAX_BYTES,
+                   "url": prefix + ("blobs/" if kind == "blob" else "trees/") + "0" * 40}
+            response += len(encoded(row)) + TREE_RESPONSE_ROW_MARGIN
+    versions = sum((path.startswith("source-views/") and path.endswith("/manifest.json"))
+        or (path.startswith("research/cases/") and path.endswith("/record.json"))
+        or (path.startswith("research/artifacts/") and path.endswith("/manifest.json")) for path in files)
+    return {"tree_entries": len(files) + len(folders), "version_count": versions,
+            "tree_response_bytes_estimate": response}
+
+
 class GitHubAPI:
     """Bounded, non-retrying transport. Never forwards credentials to another host."""
     def __init__(self, token: str):
@@ -154,6 +199,8 @@ class GitHubStore:
         self.repository = binding.repository
         self._prefix = "/repos/" + self.repository
         self._trees: dict[str, dict] = {}
+        self._tree_directories: dict[str, frozenset[str]] = {}
+        self._last_tree_directories = (None, frozenset())
         self._blobs: dict[str, bytes] = {}
         self._blob_bytes = 0
         self._ancestor_proofs: set[tuple[str, str]] = set()
@@ -213,6 +260,7 @@ class GitHubStore:
     def _tree(self, commit: str) -> dict[str, dict]:
         _sha(commit)
         if commit in self._trees:
+            self._last_tree_directories = (commit, self._tree_directories[commit])
             return self._trees[commit]
         tree_sha = self._commit(commit)["tree"]["sha"]
         value = self._get("git/trees/" + tree_sha + "?recursive=1")
@@ -239,8 +287,11 @@ class GitHubStore:
                     "REGULAR_REMOTE_BLOB_REQUIRED")
             entries[path] = row
         # Exact immutable object data only; mutable repository/ref checks remain live.
+        directories = frozenset(paths - set(entries))
+        self._last_tree_directories = (commit, directories)
         if len(self._trees) < 32:
             self._trees[commit] = entries
+            self._tree_directories[commit] = directories
         return entries
 
     def _read(self, commit: str, path: str, *, tree: dict | None = None) -> bytes:
@@ -353,6 +404,18 @@ class GitHubStore:
         if self.head() != expected:
             raise Conflict("HEAD_CHANGED")
         tree = self._tree(expected)
+        # Validate the resulting whole tree before sending any write bytes. A
+        # successful commit must not create a head that exceeds the reader's
+        # original response bound or the store's independent version bound.
+        from decision_kernel.application.versioned_store import MAX_STORE_VERSIONS
+        projected = {path: row["size"] for path, row in tree.items()}
+        projected.update({path: len(raw) for path, raw in files.items()})
+        require(self._last_tree_directories[0] == expected, "TREE_INVENTORY_CHANGED")
+        inventory = github_tree_inventory(self.binding, projected, directories=self._last_tree_directories[1])
+        require(inventory["tree_entries"] <= MAX_TREE_ENTRIES, "REMOTE_TREE_LIMIT_BEFORE_WRITE")
+        require(inventory["version_count"] <= MAX_STORE_VERSIONS, "STORE_VERSION_LIMIT_BEFORE_WRITE")
+        require(inventory["tree_response_bytes_estimate"] <= MAX_RESPONSE,
+                "REMOTE_TREE_RESPONSE_LIMIT_BEFORE_WRITE")
         for path, raw in files.items():
             if path in tree and not re.fullmatch(r"(?:research/cases/[a-z0-9][a-z0-9_-]{0,95}|research/watch-activities/[a-f0-9]{64})/current\.json", path):
                 require(self._read(expected, path, tree=tree) == raw, "IMMUTABLE_RECORD_CONFLICT")

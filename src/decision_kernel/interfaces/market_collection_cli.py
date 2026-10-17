@@ -71,7 +71,8 @@ def run_runtime(event, env, out, *, execute=run_collection):
             and sha == env.get("GITHUB_SHA"), "ASHARE_CODE_SHA_MISMATCH")
     operation = inputs.get("operation")
     require(operation in {"sync", "status"}, "ASHARE_RUNTIME_OPERATION")
-    authorized = inputs.get("access_and_custody_confirmed") in (True, "true")
+    authorized = (inputs.get("access_and_custody_confirmed") is True
+                  or inputs.get("access_and_custody_confirmed") == "true")
     require(operation != "sync" or authorized, "ASHARE_SOURCE_AND_CUSTODY_REQUIRED")
     units = str(inputs.get("work_units", "1"))
     require(re.fullmatch(r"[1-9][0-9]?", units) and 1 <= int(units) <= 32, "ASHARE_WORK_UNIT_BOUND")
@@ -127,6 +128,9 @@ def main(argv=None):
         if args.operation == "runtime":
             require(args.out is not None, "ASHARE_RUNTIME_OUTPUT")
             return run_runtime(_load(Path(os.environ["GITHUB_EVENT_PATH"])), dict(os.environ), args.out)
+        if args.out is not None:
+            require(not args.out.exists() and not args.out.is_symlink() and args.out.parent.is_dir(),
+                    "ASHARE_OUTPUT_ALREADY_EXISTS_OR_PARENT_MISSING")
         require(args.selection is not None, "ASHARE_SELECTION_REQUIRED")
         registry = RelayRegistry(args.registry)
         plan = selection_plan(_load(args.selection), registry)

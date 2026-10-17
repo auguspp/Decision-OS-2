@@ -16,7 +16,7 @@ from tempfile import TemporaryDirectory
 from decision_kernel.domain.records import RecordError, StoreUnavailable, require
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.git_snapshot import GitSnapshot, MAX_BUNDLE_BYTES
-from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore, github_tree_inventory
 
 
 def _fetch_market_branch(binding, api, destination):
@@ -129,16 +129,17 @@ class GitMarketReader:
     def market_inventory(self):
         """Return bounded counts for the same pinned tree, never private paths."""
         with self.market_read_scope():
-            rows = [row for row in self._reader._run("ls-tree", "-r", "-t", "-z",
+            rows = [row for row in self._reader._run("ls-tree", "-r", "-t", "-l", "-z",
                 self._reader.head()).stdout.split(b"\0") if row]
-            paths = []
+            files, directories = {}, []
             for row in rows:
                 meta, path = row.split(b"\t")
-                if meta.split()[1] == b"blob":
-                    paths.append(path.decode("ascii"))
-            versions = sum((path.startswith("source-views/") and path.endswith("/manifest.json"))
-                or (path.startswith("research/cases/") and path.endswith("/record.json"))
-                or (path.startswith("research/artifacts/") and path.endswith("/manifest.json")) for path in paths)
+                fields = meta.split()
+                if fields[1] == b"blob":
+                    files[path.decode("ascii")] = int(fields[3])
+                else:
+                    directories.append(path.decode("ascii"))
+            counts = github_tree_inventory(self.binding, files, directories=directories)
             total = 0
             def failed(error):
                 raise error
@@ -150,7 +151,8 @@ class GitMarketReader:
                         total += (Path(current) / name).stat().st_size
             except OSError:
                 raise StoreUnavailable("MARKET_SNAPSHOT_SIZE_UNAVAILABLE") from None
-            return {"tree_entries": len(rows), "version_count": versions, "native_bytes": total}
+            require(counts["tree_entries"] == len(rows), "MARKET_SNAPSHOT_TREE_INVENTORY_CHANGED")
+            return {**counts, "native_bytes": total, "tree_response_applicability": "required"}
 
     def commit(self, files, *, expected):
         raise RecordError("MARKET_SNAPSHOT_READ_ONLY")

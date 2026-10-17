@@ -4,6 +4,12 @@ This capability closes the persistence gap between the existing Relay capture
 results and the existing market readers. It does not acquire sources, select
 winners, grant publication rights or turn synthetic tests into market evidence.
 
+Durable SH/SZ daily acquisition, execution checkpoints, incremental collections,
+private native reading and their explicit runtime are described in
+[A-share data continuity](ashare-data-continuity.md). The existing save/read
+entry remains supported; its normal read dispatcher also accepts exact collection
+roots without concatenating multi-day data into the old payload envelope.
+
 ## Reuse and ownership
 
 `market_custody` uses `research_sources.source_inputs` as the **only page exporter**,

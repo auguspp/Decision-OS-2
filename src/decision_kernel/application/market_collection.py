@@ -275,7 +275,8 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         retain_market_collection, restore_market_collection,
     )
     from decision_kernel.application.market_collection_reading import (
-        latest_market_reference, require_checkpoint_descendant, same_reference,
+        inspect_market_chain, latest_market_reference, market_cursor_capacity,
+        require_checkpoint_descendant, same_reference,
     )
     now = datetime.now(timezone.utc) if now is None else now
     through = completed_through(now)
@@ -292,12 +293,16 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     at = clock(); source_time(at)
     collection = _new_collection(plan, previous, previous_ref, attempt_id, at, registry)
-    current = latest_market_reference(reader, registry, collection_id=plan["collection_id"])
+    chain = inspect_market_chain(reader, registry, collection_id=plan["collection_id"])
+    current = chain["reference"]
     if current is not None:
         require(same_reference(previous_ref, current), "ASHARE_COLLECTION_STALE_REFERENCE")
     if previous is not None and previous["plan"]["generation"] != plan["generation"]:
         require(latest_market_reference(reader, registry, collection_id=plan["collection_id"],
                 generation=plan["generation"]) is None, "ASHARE_GENERATION_ALREADY_EXISTS")
+    cursor_capacity = market_cursor_capacity(node_count=chain["node_count"],
+                                             unique_body_bytes=chain["unique_body_bytes"])
+    require(cursor_capacity["admit_work_unit"], "ASHARE_CURSOR_CAPACITY")
     reference = previous_ref
     permission = {"custody_authorized": custody_authorized, "public_rights_confirmed": public_rights_confirmed}
     source_client = client
@@ -305,6 +310,7 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
     selected_slot = None
     persistence_error = None
     calendars_checked = False
+    execution_error_persisted = True
 
     def save(action, *args, **kwargs):
         nonlocal persistence_error
@@ -319,6 +325,7 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         if source_client is not None:
             collection["attempt"]["source_requests"] = source_client.requests - source_before
         receipt = collection_summary(collection, reference)
+        receipt["cursor_capacity_before_work_unit"] = deepcopy(cursor_capacity)
         if progress is not None:
             progress(deepcopy(receipt))
         return receipt
@@ -501,15 +508,15 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
             reason = _reason(exc)
             collection["units"][selected_slot].update(query=None, status="blocked", reason_code=reason)
             collection["attempt"].update(status="blocked", reason_code=reason)
+            # Invalid caller control or missing credentials are errors in this
+            # operation, not observations that permanently terminate a source.
+            # The saved pending/paused checkpoint remains the restart authority.
+            execution_error_persisted = False
             emit()
-            try:
-                persist_collection()
-            except _PersistenceStopped as stopped:
-                collection["attempt"].update(status="blocked", reason_code="ASHARE_PERSISTENCE_UNCONFIRMED")
-                receipt = emit()
-                receipt["persistence_error"] = _reason(persistence_error or stopped)
-                raise CollectionSyncInterrupted(receipt, reference) from stopped
         else:
             raise
+    receipt = collection_summary(collection, reference)
+    receipt["execution_error_persisted"] = execution_error_persisted
+    receipt["cursor_capacity_before_work_unit"] = cursor_capacity
     return {"status": "complete" if _partition_complete(collection) else "partial", "reference": reference,
-            "collection": collection, "receipt": collection_summary(collection, reference)}
+            "collection": collection, "receipt": receipt}

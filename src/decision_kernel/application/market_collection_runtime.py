@@ -9,7 +9,10 @@ from decision_kernel.application.market_collection import (
     validate_collection_plan,
 )
 from decision_kernel.application.market_collection_custody import restore_market_collection
-from decision_kernel.application.market_collection_reading import latest_market_reference, read_collection_version
+from decision_kernel.application.market_collection_reading import (
+    inspect_market_chain, market_cursor_capacity, read_collection_version,
+)
+from decision_kernel.application.market_custody import market_read_scope
 from decision_kernel.application.market_capacity import market_capacity
 from decision_kernel.domain.records import RecordError, digest, encoded, identifier, require
 
@@ -70,8 +73,13 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
     for number in range(1, max_work_units + 1):
         store, fresh, api = open_unit(operation == "sync")
         reader = fresh()
-        reference = latest_market_reference(reader, registry, collection_id=plan["collection_id"])
-        collection = None if reference is None else restore_market_collection(reference, registry, reader)["collection"]
+        with market_read_scope(reader) as grouped:
+            chain = inspect_market_chain(grouped, registry, collection_id=plan["collection_id"])
+            reference = chain["reference"]
+            collection = None if reference is None else restore_market_collection(reference, registry, grouped)["collection"]
+            receipt["capacity"] = capacity(grouped)
+        receipt["cursor_capacity"] = market_cursor_capacity(node_count=chain["node_count"],
+                                                           unique_body_bytes=chain["unique_body_bytes"])
         if collection is not None and collection["plan"]["generation"] == plan["generation"]:
             require({k: v for k, v in plan.items() if k != "sessions"} ==
                     {k: v for k, v in collection["plan"].items() if k != "sessions"},
@@ -81,7 +89,6 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
             # Read/status select the explicitly named generation; older versions
             # remain readable by exact reference through the normal custody CLI.
             require(collection["plan"]["generation"] == plan["generation"], "ASHARE_GENERATION_NOT_CURRENT")
-        receipt["capacity"] = capacity(reader)
         if collection is not None:
             receipt["latest"] = collection_summary(collection, reference)
         if operation != "sync" or collection is not None and (
@@ -95,6 +102,10 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
             break
         if not receipt["capacity"]["admit_work_unit"]:
             receipt.update(status="blocked", reason_code="ASHARE_STORAGE_CAPACITY")
+            report()
+            break
+        if not receipt["cursor_capacity"]["admit_work_unit"]:
+            receipt.update(status="blocked", reason_code="ASHARE_CURSOR_CAPACITY")
             report()
             break
         before = None if collection is None else digest(encoded(collection["units"]))

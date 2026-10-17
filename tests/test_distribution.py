@@ -225,3 +225,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same cold wheel: news -> explicit choice -> saved Brief -> independent read.
     from test_news_delivery_host import exercise_installed_news
     exercise_installed_news(outside, python, env, store)
+
+    # Same cold wheel: original Relay business rows -> counts, without keys or network.
+    from test_main_business import exercise_installed_main_business
+    exercise_installed_main_business(outside, python, env)

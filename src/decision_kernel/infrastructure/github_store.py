@@ -61,6 +61,7 @@ class GitHubBinding:
     store_id: str
     write_enabled: bool = False
     visibility: str = "private"
+    private_upgrade_allowed: bool = False  # One-way private upgrade of this exact public-origin store.
 
     def __post_init__(self):
         require(isinstance(self.repository, str) and bool(re.fullmatch(
@@ -74,6 +75,9 @@ class GitHubBinding:
         require(type(self.write_enabled) is bool, "INVALID_WRITE_AUTHORIZATION")
         require(isinstance(self.visibility, str) and self.visibility in ("private", "public"),
                 "INVALID_DATA_VISIBILITY")
+        require(type(self.private_upgrade_allowed) is bool and
+                (not self.private_upgrade_allowed or self.visibility == "public"),
+                "INVALID_PRIVATE_UPGRADE_POLICY")
 
     @classmethod
     def from_dict(cls, value: dict) -> GitHubBinding:
@@ -83,8 +87,16 @@ class GitHubBinding:
         except TypeError as exc:
             raise RecordError("INVALID_GITHUB_BINDING") from exc
 
+    def accepts_privacy(self, actual_private) -> bool:
+        """Actual GitHub privacy, not source data or a mutable caller claim."""
+        return type(actual_private) is bool and (
+            actual_private is (self.visibility == "private")
+            or self.private_upgrade_allowed and actual_private is True)
+
     def marker(self) -> bytes:
-        # The anchor is a separate trusted commit, avoiding a self-referential hash.
+        # The anchor records its ORIGINAL visibility, not mutable GitHub privacy.
+        # Upgrading that same repository to private MUST NOT rewrite legacy markers.
+        # The separate opt-in only affects native live-repository validation.
         return encoded(dict(schema="github-store-binding-v1", project="decision-os-2", mode=self.visibility,
                             repository=self.repository, repository_id=self.repository_id,
                             branch=self.branch, store_id=self.store_id))
@@ -205,6 +217,8 @@ class GitHubStore:
         self._blob_bytes = 0
         self._ancestor_proofs: set[tuple[str, str]] = set()
         self._branch_node: str | None = None
+        self._observed_private_upgrade = False
+        self._verified_visibility: str | None = None
         self.head()  # Read/validate an existing binding; never initialize a remote target.
 
     def _get(self, path: str):
@@ -212,13 +226,29 @@ class GitHubStore:
 
     def _repository(self) -> None:
         meta = self.api.request("GET", self._prefix)
-        require(isinstance(meta, dict) and meta.get("id") == self.binding.repository_id
-                and type(meta.get("id")) is int and meta.get("full_name") == self.repository
-                and meta.get("private") is (self.binding.visibility == "private")
+        expected_private = self.binding.visibility == "private"
+        actual_private = meta.get("private") if isinstance(meta, dict) else None
+        opt_in_upgrade = self.binding.private_upgrade_allowed and actual_private is True
+        require(isinstance(meta, dict) and type(meta.get("id")) is int
+                and meta.get("id") == self.binding.repository_id
+                and meta.get("full_name") == self.repository
+                and self.binding.accepts_privacy(actual_private)
                 and meta.get("archived") is False
                 and isinstance(meta.get("default_branch"), str)
                 and meta["default_branch"] != self.binding.branch,
-                "PRIVATE_BINDING_MISMATCH" if self.binding.visibility == "private" else "PUBLIC_BINDING_MISMATCH")
+                "PRIVATE_BINDING_MISMATCH" if expected_private else "PUBLIC_BINDING_MISMATCH")
+        # In a single checked session, privacy reversal must not become a
+        # public write after a private source/record was admitted.
+        require(not (self._observed_private_upgrade and actual_private is False),
+                "PRIVATE_UPGRADE_REVERSED")
+        if opt_in_upgrade:
+            self._observed_private_upgrade = True
+        self._verified_visibility = "private" if actual_private else "public"
+
+    def live_visibility(self) -> str:
+        """Recheck native GitHub metadata, never trust source/event visibility."""
+        self._repository()
+        return self._verified_visibility
 
     def _ancestor(self, base: str, head: str) -> None:
         _sha(base); _sha(head)

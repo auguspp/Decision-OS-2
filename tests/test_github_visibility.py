@@ -140,3 +140,64 @@ def test_public_native_cas_keeps_concurrent_winner(public_api):
         store.put_source("loser", source())
     assert public_api.git.read(public_api.git.head(), "submissions/winner.json") == b"{}\n"
     assert public_api.writes == 1
+
+ 
+def test_public_origin_upgrade_preserves_marker_and_original_research_references(public_api):
+    from decision_kernel.domain.records import encoded
+    original = public_api.binding
+    upgraded = replace(original, private_upgrade_allowed=True)
+    assert upgraded.marker() == original.marker()
+    writer = VersionedStore(GitHubStore(upgraded, public_api))
+    first = writer.put_source("legacy-before-private", source("synthetic published before upgrade"))
+    before = writer.submit_revision("legacy-quick", RevisionInput(
+        "public-then-private", "one", "quick", "synthetic research",
+        "synthetic method", "test-only", (first,)))
+    current = public_api.git.head()
+    assert json.loads(public_api.git.read(current, "store.json"))["mode"] == "public"
+    public_api.meta["private"] = True
+    reader = VersionedStore(GitHubStore(replace(upgraded, write_enabled=False), public_api))
+    assert reader.read_source(first)["data"] == "synthetic published before upgrade"
+    assert reader.read_revision(before)["body"] == "synthetic research"
+    assert reader.current("public-then-private") == before
+    assert reader.backend.live_visibility() == "private"
+    assert public_api.git.read(current, "store.json") == original.marker()
+    assert reader.backend.binding.marker() == original.marker()
+    assert encoded(reader.read_revision(before)) == encoded(writer.read_revision(before))
+
+
+def test_private_upgrade_allows_authorized_private_write_and_blocks_live_reversal(public_api):
+    upgraded = replace(public_api.binding, private_upgrade_allowed=True)
+    public_api.meta["private"] = True
+    backend = GitHubStore(upgraded, public_api)
+    store = VersionedStore(backend)
+    first = store.put_source("private-created", source("synthetic private retained rows"))
+    assert store.read_source(first)["data"] == "synthetic private retained rows"
+    before = public_api.writes
+    public_api.meta["private"] = False
+    with pytest.raises(RecordError, match="PRIVATE_UPGRADE_REVERSED"):
+        backend.read(first.manifest.commit, first.manifest.path)
+    with pytest.raises(RecordError, match="PRIVATE_UPGRADE_REVERSED"):
+        backend.commit({"submissions/no-write.json": b"{}\\n"}, expected=public_api.git.head())
+    assert public_api.writes == before
+
+
+@pytest.mark.parametrize("invalid", [None, 1, "true", [], {}])
+def test_private_upgrade_requires_explicit_boolean_policy(public_api, invalid):
+    with pytest.raises(RecordError, match="INVALID_PRIVATE_UPGRADE_POLICY"):
+        replace(public_api.binding, private_upgrade_allowed=invalid)
+
+
+def test_private_upgrade_is_not_allowed_for_native_private_markers(public_api):
+    with pytest.raises(RecordError, match="INVALID_PRIVATE_UPGRADE_POLICY"):
+        replace(public_api.binding, visibility="private", private_upgrade_allowed=True)
+
+
+def test_private_upgrade_does_not_suppress_id_marker_or_branch_checks(public_api):
+    upgraded = replace(public_api.binding, private_upgrade_allowed=True)
+    public_api.meta["private"] = True
+    with pytest.raises(RecordError, match="PUBLIC_BINDING_MISMATCH"):
+        GitHubStore(replace(upgraded, repository_id=9999), public_api)
+    with pytest.raises(RecordError, match="STORE_MARKER_MISMATCH"):
+        GitHubStore(replace(upgraded, store_id="foreign"), public_api)
+    with pytest.raises(RecordError, match="REMOTE_REF_MISMATCH"):
+        GitHubStore(replace(upgraded, branch="records/other"), public_api)

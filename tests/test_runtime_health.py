@@ -332,3 +332,37 @@ def test_a_backup_run_cannot_be_hidden_as_the_inspector():
     assert report["excluded_inspection"] is None
     assert report["workflows"][0]["error"]=="HEALTH_SELF_NOT_INSPECTION"
     assert report["status"]=="needs-attention"
+
+ 
+def test_native_health_private_upgrade_reads_same_runs_without_metadata_relabeling():
+    upgraded = replace(BINDING, private_upgrade_allowed=True)
+    values = fixture()
+    values[""]["private"] = True
+    api = API(values)
+    report = h.inspect_runtime(upgraded, api, as_of=NOW, backup_run_id=101)
+    assert report["status"] == "metadata-ok"
+    baseline = h.inspect_runtime(BINDING, API(), as_of=NOW, backup_run_id=101)
+    assert report["native_reads"] == len(api.calls) == baseline["native_reads"]
+    assert report["specified_backup"]["status"] == "inspected"
+    assert report["writes"] == report["dispatches"] == 0
+
+
+def test_native_health_private_to_public_reversal_is_rejected():
+    upgraded = replace(BINDING, private_upgrade_allowed=True)
+    values = fixture()
+    values[""]["private"] = True
+    api = API(values)
+    def reverse(path, calls):
+        if path == "" and calls.count("") == 2:
+            return {**api.values[""], "private": False}
+    api.mutate = reverse
+    with pytest.raises(RecordError, match="HEALTH_REPOSITORY_MISMATCH"):
+        h.inspect_runtime(upgraded, api, as_of=NOW)
+    assert api.calls.count("") == 2
+
+
+def test_native_health_default_public_binding_still_rejects_private():
+    values = fixture()
+    values[""]["private"] = True
+    with pytest.raises(RecordError, match="HEALTH_REPOSITORY_MISMATCH"):
+        h.inspect_runtime(replace(BINDING, private_upgrade_allowed=False), API(values), as_of=NOW)

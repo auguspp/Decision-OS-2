@@ -7,7 +7,7 @@ on:
         options: [status, sync]
         default: status
         required: true
-        description: 'Read public records health or advance only licensed SH/SZ daily partitions'
+        description: 'Read original records or advance SH/SZ daily partitions within native private/rights gate'
       code_sha:
         type: string
         required: true
@@ -27,7 +27,7 @@ on:
       public_rights_confirmed:
         type: boolean
         default: false
-        description: 'Separate verified permission to publicly redistribute ALL selected source rows; never infer from access'
+        description: 'Required for PUBLIC records. A native-verified PRIVATE repository instead uses the custody authorization'
 permissions: {}
 concurrency:
   group: decision-os-relay-source
@@ -60,7 +60,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
   rejected-sync:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true || inputs.public_rights_confirmed != true)
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true || (github.event.repository.private != true && inputs.public_rights_confirmed != true))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -71,7 +71,7 @@ jobs:
           echo "::error::ASHARE_PUBLIC_RIGHTS_REQUIRED_OR_ACCESS_NOT_CONFIRMED"
           exit 1
   sync:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && inputs.access_and_custody_confirmed == true && inputs.public_rights_confirmed == true
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && inputs.access_and_custody_confirmed == true && (github.event.repository.private == true || inputs.public_rights_confirmed == true)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -84,7 +84,7 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Advance only publicly licensed records with durable per-page checkpoints
+      - name: Advance explicitly authorized records with native privacy recheck and per-page checkpoints
         env:
           DECISION_OS_MARKET_STORE_TOKEN: ${{ github.token }}
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}

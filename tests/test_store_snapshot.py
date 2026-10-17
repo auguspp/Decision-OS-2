@@ -134,3 +134,39 @@ def test_external_object_sources_are_refused(public_api, path):
     target.write_text("\n")
     with pytest.raises(RecordError, match="EXTERNAL_OBJECTS_FORBIDDEN"):
         GitSnapshot(public_api.git.root, replace(public_api.binding, write_enabled=False), public_api.git.head())
+
+ 
+def test_private_upgrade_native_bundle_keeps_legacy_refs(public_api, tmp_path, monkeypatch):
+    from decision_kernel.infrastructure.git_snapshot import export_public_snapshot
+    from decision_kernel.infrastructure import market_snapshot
+    from decision_kernel.domain.records import encoded
+    from pathlib import Path
+    import subprocess
+
+    store, first, old, current = populated(public_api)
+    # Freeze original pre-upgrade values. The strict old public-only backend
+    # intentionally becomes unusable after GitHub switches to private.
+    expected_source, expected_old = store.read_source(first), store.read_revision(old)
+    original = public_api.binding
+    binding = replace(original, private_upgrade_allowed=True, write_enabled=False)
+    original_head = public_api.git.head()
+    public_api.meta["private"] = True
+    reopened = VersionedStore(GitHubStore(binding, public_api))
+    assert reopened.read_source(first) == expected_source
+    assert reopened.read_revision(old) == expected_old
+
+    calls = []
+    def credential_scoped_clone(binding, api, destination):
+        calls.append((binding, api, destination))
+        subprocess.run(["git", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always",
+            "clone", "--bare", "--single-branch", "--branch", "records", "--template=",
+            str(public_api.git.root), str(destination)], capture_output=True, check=True,
+            env=public_api.git._env(), timeout=30)
+    monkeypatch.setattr(market_snapshot, "_fetch_market_branch", credential_scoped_clone)
+    bundle = tmp_path / "after-private.bundle"
+    report = export_public_snapshot(binding, original_head, bundle, api=public_api)
+    assert report["status"] == "verified" and len(calls) == 1
+    assert calls[0][0] == binding and calls[0][1] is public_api
+    assert verify_bundle(bundle, binding, original_head) == report
+    assert json.loads(public_api.git.read(original_head, "store.json"))["mode"] == "public"
+    assert reopened.read_source(first)["data"] == expected_source["data"]

@@ -43,10 +43,12 @@ def guide_source(repository: str, code_sha: str, text: str) -> SourceInput:
 
 def run_operation(binding: GitHubBinding, *, api: GitHubAPI, operation: str,
                   expected: str, code_sha: str, guide: str, output: Path,
-                  exporter=export_public_snapshot, code_root: Path | None = None) -> dict:
+                  exporter=None, code_root: Path | None = None) -> dict:
     """The trusted host supplies configuration. Payload/role strings are not credentials."""
     require(operation in ("backup", "retain-guide"), "UNSUPPORTED_STORE_OPERATION")
     require(binding.visibility == "public" and not binding.write_enabled, "PUBLIC_READ_ONLY_CONFIG_REQUIRED")
+    if exporter is None:
+        exporter = lambda b, snapshot, path: export_public_snapshot(b, snapshot, path, api=api)
     require(isinstance(expected, str) and bool(SHA.fullmatch(expected)), "EXPECTED_HEAD_REQUIRED")
     require(isinstance(code_sha, str) and bool(SHA.fullmatch(code_sha)), "INVALID_CODE_SHA")
     try:

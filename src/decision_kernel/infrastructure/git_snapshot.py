@@ -158,18 +158,36 @@ def verify_bundle(bundle: Path, binding: GitHubBinding, snapshot: str) -> dict:
         return audit_store(VersionedStore(reader), snapshot)
 
 
-def export_public_snapshot(binding: GitHubBinding, snapshot: str, output: Path) -> dict:
-    """Full native Git backup of the bound public branch; no token is passed to Git."""
+def export_public_snapshot(binding: GitHubBinding, snapshot: str, output: Path, *, api=None) -> dict:
+    """Bounded native backup; use an authenticated child only after verified upgrade.
+
+    The function name is kept for existing callers. Private credentials are
+    never passed as Git arguments, persisted, or returned to the artifact.
+    """
     require(binding.visibility == "public", "PUBLIC_BACKUP_ONLY")
     require(isinstance(snapshot, str) and bool(SHA.fullmatch(snapshot)), "INVALID_SNAPSHOT")
+    if binding.private_upgrade_allowed:
+        require(api is not None and callable(getattr(api, "request", None)),
+                "SNAPSHOT_LIVE_VISIBILITY_REQUIRED")
+        visibility = GitHubStore(replace(binding, write_enabled=False), api).live_visibility()
+    else:
+        visibility = "public"
     with TemporaryDirectory(prefix="dos2-export-") as directory:
         bare = Path(directory) / "records.git"
-        git("clone", "--bare", "--single-branch", "--branch", binding.branch, "--template=",
-            "https://github.com/" + binding.repository + ".git", str(bare), https=True)
+        if visibility == "private":
+            # Reuse the existing source-only, child-scoped secure clone. Its
+            # public error codes never contain authentication or server text.
+            from decision_kernel.infrastructure.market_snapshot import _fetch_market_branch
+            _fetch_market_branch(replace(binding, write_enabled=False), api, bare)
+        else:
+            git("clone", "--bare", "--single-branch", "--branch", binding.branch, "--template=",
+                "https://github.com/" + binding.repository + ".git", str(bare), https=True)
         # A subsequent legitimate write may have advanced the remote. Retain the pinned older snapshot.
         GitSnapshot(bare, replace(binding, write_enabled=False), snapshot)
         ref = "refs/heads/" + binding.branch
         fetched = git("--git-dir=" + str(bare), "rev-parse", ref).decode().strip()
         git("--git-dir=" + str(bare), "merge-base", "--is-ancestor", snapshot, fetched)
         git("--git-dir=" + str(bare), "update-ref", ref, snapshot, fetched)
+        if binding.private_upgrade_allowed:
+            GitHubStore(replace(binding, write_enabled=False), api).check_commit(snapshot)
         return bundle_from_bare(bare, binding, snapshot, output)

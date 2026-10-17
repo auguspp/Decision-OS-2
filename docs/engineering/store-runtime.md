@@ -40,3 +40,5 @@ python -m decision_kernel.interfaces.store_runtime verify-bundle \
 无新Python依赖，Git/JSON/Hashlib与既有应用/适配器是全部基础。专属snapshot/runtime/audit与测试随当前手动运维用途维护；退出手动运行时一起退出workflow、入口及专属验证，不删除共享来源/研究版本、精确引用、幂等或CI保护。本次是否真实运行、读回及下一研究消费者仍由#6原生回执记录，不在本文维护状态表。
 
 官方依据（本次有界复用）：[每job令牌](https://docs.github.com/en/actions/concepts/security/github_token)、[工作流权限](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions)、[Git bundle创建/完整前置/恢复](https://git-scm.com/docs/git-bundle)。原有GraphQL、存储/身份与许可边界沿GitHub保管合同，不重开旧实验或全面审计。
+
+交付宿主最近执行、产物到期与生产启用边界使用[只读运行巡检](production-readiness.md)；该检查不触发备份、研究或自动重试。

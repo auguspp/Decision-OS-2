@@ -158,6 +158,12 @@ def authorize_market_custody(store, *, custody_authorized=False, public_rights_c
             "MARKET_CUSTODY_AUTHORIZATION_INVALID")
     binding = getattr(store.backend, "binding", None)
     if binding is not None:
+        # A missing authorization is rejected before any extra network/API
+        # request. This preserves the original shared request budget and avoids
+        # even probing remote visibility for an unauthorized source write.
+        if not custody_authorized and not public_rights_confirmed:
+            require(False, "MARKET_CUSTODY_AUTHORIZATION_REQUIRED"
+                    if binding.visibility == "private" else "MARKET_CUSTODY_PUBLIC_RIGHTS_REQUIRED")
         live = getattr(store.backend, "live_visibility", None)
         visibility = live() if callable(live) else getattr(binding, "visibility", None)
         require(visibility in ("private", "public"), "MARKET_CUSTODY_BINDING_REQUIRED")

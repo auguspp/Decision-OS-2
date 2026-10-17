@@ -181,7 +181,7 @@ def test_private_upgrade_allows_authorized_private_write_and_blocks_live_reversa
     assert public_api.writes == before
 
 
-@pytest.mark.parametrize("invalid", [True, None, 1, "true", [], {}])
+@pytest.mark.parametrize("invalid", [None, 1, "true", [], {}])
 def test_private_upgrade_requires_explicit_boolean_policy(public_api, invalid):
     with pytest.raises(RecordError, match="INVALID_PRIVATE_UPGRADE_POLICY"):
         replace(public_api.binding, private_upgrade_allowed=invalid)

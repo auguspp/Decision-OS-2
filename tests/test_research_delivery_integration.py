@@ -290,9 +290,12 @@ def test_packer_rejects_symlink_without_reading_target(tmp_path):
 
 def exercise_installed_delivery(command, outside, python, env, cli, store):
     """Extend the existing one-wheel consumer, not a separate build/install test."""
+    from test_zip_artifacts import zip_item
     payload = delivery_payload()
+    payload["items"].append(zip_item())
     root = outside / "delivery-originals"; root.mkdir()
     inventory = local_inventory(root, payload)
+    assert (root / "archive.original").read_bytes() == base64.b64decode(payload["items"][-1]["artifact"]["data_base64"])
     packed = subprocess.run([str(python), "-I", "-m", "decision_kernel.interfaces.delivery_pack",
                              "--input", str(inventory)], cwd=outside, env=env,
                              check=True, capture_output=True)
@@ -304,10 +307,16 @@ def exercise_installed_delivery(command, outside, python, env, cli, store):
     opened = command("open-delivery", "--ref", str(reference))
     assert opened["context"]["research"]["reference"] == saved["reference"]
     assert {a["question_id"] for a in opened["continuation"]["actions"]} == {"cash", "value"}
-    for original, retained in zip(payload["items"][:2], opened["delivery"]["items"][:2]):
+    assert len(opened["delivery"]["items"]) == len(payload["items"])
+    for original, retained in zip(payload["items"], opened["delivery"]["items"]):
+        if "artifact" not in original:
+            continue
+        assert retained["id"] == original["id"]
         file_ref = root / "file-ref.json"; file_ref.write_bytes(encoded(retained["reference"]))
         actual = command("read-artifact", "--ref", str(file_ref))
         assert actual["data_base64"] == original["artifact"]["data_base64"]
+        assert actual["metadata"]["media_type"] == original["artifact"]["media_type"]
+        assert actual["bytes_verified"] is True and actual["executed"] is False
     partial = deepcopy(payload)
     partial["request"]["case_id"] = "installed-partial"
     partial["items"][1].pop("artifact")

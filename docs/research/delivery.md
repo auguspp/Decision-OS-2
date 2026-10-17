@@ -34,6 +34,10 @@
 
 `ArtifactInput` 字段是 `artifact_id/name/media_type/data_base64/sha256/size`。文件按原始字节计算 SHA-256 并再次读回；HTML 的样式、导航、CRLF 和 Unicode 不剥除，XLSX 的 ZIP 字节、公式和样式不转换成 CSV。保管不解析/执行 HTML、JavaScript、宏、公式、PDF，也不认证扩展名与文件语义。结构化财务字段仍通过独立 SourceRef 表示。
 
+ZIP 使用显式 `application/zip`，沿同一 `research-artifact-v1` 保存完整压缩包字节、原名、大小和摘要。程序不检查压缩包结构、不读取或展开成员、不重打包、不执行其中的脚本或工作簿；成员名也不成为本地路径。`bytes_verified=true` 只证明原字节一致，不证明 ZIP 有效、内容可信或适合执行。包内材料不会自动成为 SourceRef、来源使用证据或研究前驱；这些仍须通过原清单和确切引用单独声明。
+
+新类型支持不修改旧修订的 `unsupported`、`rights-excluded` 或 `missing`。取得实际原件及相应公开权利后，调用者才可用新修订、新意图显式补项并引用原前驱；不能用改过的 payload 重放旧意图，也不从已存正文重建所谓原包。格式支持不能替代对包内每项材料的再分发权利核实。
+
 路径由安全 ID 与版本摘要生成，原中文名/大小写仅为元数据：
 
 ```
@@ -43,9 +47,9 @@ research/artifacts/<artifact-id>/<version-digest>/content.bin
 
 同一 VersionedStore 的 `_replay/_save` 与 submissions 日志承担保管；原 GitHubStore 承担身份、可见性、不可变路径及 expectedHeadOid。原生 Git bundle 包含附件字节，原 audit_store 同时核附件的历史和当前表示及修订清单。没有新数据库、孤儿清理或并行 current 指针。
 
-**先升级使用该数据分支的所有 reader/备份消费者，再实际写入新附件。** 旧代码的严格路径白名单不能读取新增路径，不能宣传新文件对旧程序透明兼容。新代码仍可读取所有旧正文研究；旧档没有清单时显示 not-declared，不补造完整性。
+**先升级使用该数据分支的所有 reader/备份消费者，再实际写入新附件。** 旧代码的严格路径或媒体类型白名单可能拒绝新附件；即使路径和 schema 不变，尚未支持 `application/zip` 的 reader、audit_store 和 bundle 恢复也会拒绝该类型，不能宣传对旧程序透明兼容。新代码仍可读取所有旧正文研究；旧档没有清单时显示 not-declared，不补造完整性。已保存新类型后，回退写入口仍须保留其历史读取、审计和恢复能力，不能只回退类型白名单。
 
-容量：每个文件最多 1 MiB（允许空文件但不声称有内容）、每次清单最多32项、规范化总输入最多2 MiB；原宿主传输字段仍为60 KiB、解码最多2 MiB、结果最多8 MiB，原请求数量/写入预算不变。**XLSX通常已经压缩，二进制不保证压缩后能进入60 KiB字段。** 本地可信配置 CLI 可处理1 MiB文件；公开 Actions 仅支持实际能够打包进入该字段的输入。超限需分开使用获准的文件保管入口后引用已有 artifact_ref，或明确保留 unsupported；未交付通用分块上传、大文件服务或任意长度附件。分开提交也各自受同一字段限制，不能用“拆开”掩盖单文件仍超限。
+容量：每个文件最多 1 MiB（允许空文件但不声称有内容）、每次清单最多32项、规范化总输入最多2 MiB；原宿主传输字段仍为60 KiB、解码最多2 MiB、结果最多8 MiB，原请求数量/写入预算不变。**ZIP/XLSX通常已经压缩，二进制不保证压缩后能进入60 KiB字段。** 本地可信配置 CLI 可处理1 MiB文件；公开 Actions 仅支持实际能够打包进入该字段的输入。超限需分开使用获准的文件保管入口后引用已有 artifact_ref，或明确保留 unsupported；未交付通用分块上传、大文件服务或任意长度附件。分开提交也各自受同一字段限制，不能用“拆开”掩盖单文件仍超限。
 
 ## 命令与宿主
 
@@ -95,6 +99,6 @@ answered/reframed 仍带 next_action 的事项同时进入 `review-declared-foll
 
 ## 验证、依赖与退出
 
-验证使用合成 HTML/XLSX 原字节、真实本地 Git、GitHub API 的既有真实Git模拟器、同一次包外 cold-wheel、原生 bundle恢复，以及获准真实档案的只读打开。每层回执分别记录，未取得的真实工作簿不由合成成功签收。独立reader是不同存储实例/缓存，不冒充独立研究者或人工接受。
+验证使用合成 HTML/XLSX/ZIP 原字节、真实本地 Git、GitHub API 的既有真实Git模拟器、同一次包外 cold-wheel、原生 bundle恢复，以及获准真实档案的只读打开。ZIP 合成样本覆盖 Unicode、CRLF、脚本、工作簿与嵌套包作为不解释的字节，并保护原清单缺口、只读接续和历史读取。每层回执分别记录，未取得的真实工作簿或 ZIP 不由合成成功签收。独立reader是不同存储实例/缓存，不冒充独立研究者或人工接受。
 
-沿用标准库 base64/hashlib 和已有 Git blob/条件提交，不新增文件服务、包依赖或模型执行器。参考 Python 3.12 base64 官方文档及 GitHub REST Git blobs 文档，仅使用现成能力，不复制第三方源码。专属命令、宿主操作、路径及测试随能力维护；退役写入口不删除历史附件/清单的读取责任。普通反向PR回退工程，不删除或重写数据。
+沿用标准库 base64/hashlib 和已有 Git blob/条件提交，不新增文件服务、包依赖或模型执行器。参考 Python 3.12 base64 官方文档及 GitHub REST Git blobs 文档；ZIP 类型采用 [IANA application/zip 注册](https://www.iana.org/assignments/media-types/application/zip)，现有原字节保管已满足用途，无需生产 ZIP 解析器。测试样本使用 Python 3.12 标准库 zipfile 构造，不增加运行依赖或复制第三方源码。专属命令、宿主操作、路径及测试随能力维护；退役写入口不删除历史附件/清单的读取责任。普通反向PR回退工程，不删除或重写数据。

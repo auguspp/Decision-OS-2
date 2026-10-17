@@ -35,14 +35,17 @@ def room_plan(ref, **options):
     return {'as_of': AT, 'reference': ref, 'materials': {'reference': ref, **options}}
 
 
-def saved(store):
+def saved(store, *, include_zip=False):
     p = payload()
+    if include_zip:
+        from test_zip_artifacts import zip_item
+        p['items'].append(zip_item())
     return p, ResearchDelivery(store).deliver(p, submission_id='materials-one')['reference']
 
 
-@pytest.mark.parametrize('selected,index', [('html', 0), ('model', 1)])
+@pytest.mark.parametrize('selected,index', [('html', 0), ('model', 1), ('archive', 3)])
 def test_original_bytes_download_and_fresh_reader_without_writes(store, tmp_path, selected, index):
-    p, ref = saved(store)
+    p, ref = saved(store, include_zip=selected == 'archive')
     before = store.backend.head()
     first = ReadingRoom(store).build(room_plan(ref, attachment_id=selected))
     fresh = VersionedStore(GitStore(tmp_path/'records.git'))
@@ -193,17 +196,22 @@ def test_public_material_permission_cannot_be_inherited_and_leaves_no_host_outpu
     assert not (tmp_path/'must-not-exist').exists() and host.git.head() == before
 
 
-def test_native_host_saves_no_data_and_reopens_selected_original(host, tmp_path):
+@pytest.mark.parametrize('selected,index', [('model', 1), ('archive', 3)])
+def test_native_host_saves_no_data_and_reopens_selected_original(host, tmp_path, selected, index):
     p = payload()
+    if selected == 'archive':
+        from test_zip_artifacts import zip_item
+        p['items'].append(zip_item())
     saved = invoke(host, tmp_path/'delivery', 'deliver', p, 'original')['result']['reference']
     before, writes = host.git.head(), host.writes
-    data = {'plan': room_plan(saved, attachment_id='model'), 'public_research_custody_confirmed': True,
+    data = {'plan': room_plan(saved, attachment_id=selected), 'public_research_custody_confirmed': True,
             'public_material_custody_confirmed': True}
     report = invoke(host, tmp_path/'room', 'reading-room', data)
     assert report['status'] == 'completed' and report['write'] == 'not-requested'
     assert host.git.head() == before and host.writes == writes
     view = report['result']['materials']['view']
-    assert base64.b64decode(view['attachment']['data_base64']) == base64.b64decode(p['items'][1]['artifact']['data_base64'])
+    assert base64.b64decode(view['attachment']['data_base64']) == base64.b64decode(p['items'][index]['artifact']['data_base64'])
+    assert view['attachment']['metadata']['media_type'] == p['items'][index]['artifact']['media_type']
     page = (tmp_path/'room/reading-room.html').read_text()
     assert '下载已核验原附件' in page and 'renderMaterials();' in page
     assert '<iframe' not in page and 'window.UNTRUSTED=1</script>' not in page

@@ -28,7 +28,9 @@
 
 本地仍为 `decision-os store ... research-room --input plan.json --out new.html`，不会覆盖已存在文件。可信本地调用者仍负责输出权限；本地成功不等于有权公开。
 
-已取回附件用原 base64 解码为字节下载，下载介质为 application/octet-stream，使用由摘要及固定格式映射生成的安全文件名；原名、原 media_type、大小和摘要仍显示。HTML 附件不放入 iframe、srcdoc 或 DOM，XLSX 不计算公式。用户在页面外打开文件是另一操作。来源表示按原已选 data 字面显示，JSON 导出只是此表示的序列化，**不是原 CSV/PDF/网页文件字节**。external-only 没有正文下载，不补抓也不升级为原件认证。
+已取回附件用原 base64 解码为字节下载，下载介质为 application/octet-stream，使用由摘要及固定格式映射生成的安全文件名；原名、原 media_type、大小和摘要仍显示。HTML 附件不放入 iframe、srcdoc 或 DOM，XLSX 不计算公式；`application/zip` 下载为 `artifact-<摘要前16位>.zip`，不读取或展开包内成员，不把成员变成页面、文件路径或来源。用户在页面外打开文件是另一操作，原字节核验不认证包的结构、内容或执行结果。来源表示按原已选 data 字面显示，JSON 导出只是此表示的序列化，**不是原 CSV/PDF/网页文件字节**。external-only 没有正文下载，不补抓也不升级为原件认证。
+
+使用新增附件类型前，读取与备份消费者按[交付入口](../research/delivery.md#原字节附件不拿转换件替原件)一同升级。旧修订的 unsupported 等缺项原样展示，不因程序增加 ZIP 支持而补造附件或删除缺口。
 
 ## 失败与有限资源
 

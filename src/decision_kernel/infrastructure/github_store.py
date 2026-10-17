@@ -149,6 +149,54 @@ def github_tree_inventory(binding, files, *, directories=()):
             "tree_response_bytes_estimate": response}
 
 
+class GitHubRateLimits:
+    """Native quota observations shared across finite units, without retries.
+
+    Only the documented numeric quota fields are retained. A new API object's
+    local request counter must never manufacture a new GitHub hourly budget.
+    """
+    def __init__(self):
+        self._resources = {}
+        self.throttled = False
+
+    def observe(self, headers):
+        if headers is None or not callable(getattr(headers, "get", None)):
+            return None
+        resource = headers.get("x-ratelimit-resource")
+        if resource not in {"core", "graphql"}:
+            return None
+        values = {}
+        for name in ("limit", "remaining", "reset"):
+            raw = headers.get("x-ratelimit-" + name)
+            if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,12}", raw):
+                return None
+            values[name] = int(raw)
+        if not 0 <= values["remaining"] <= values["limit"] or values["limit"] == 0 or values["reset"] == 0:
+            return None
+        previous = self._resources.get(resource)
+        if previous is None or values["reset"] > previous["reset"]:
+            self._resources[resource] = values
+        elif values["reset"] == previous["reset"]:
+            # Out-of-order or cached responses cannot replenish one reset window.
+            self._resources[resource] = {**values, "remaining": min(previous["remaining"], values["remaining"])}
+        return {"resource": resource, **values}
+
+    def debit(self, resource):
+        if resource in self._resources:
+            current = self._resources[resource]
+            current["remaining"] = max(0, current["remaining"] - 1)
+
+    def admits(self, reserve):
+        require(type(reserve) is int and reserve >= 0, "INVALID_REMOTE_QUOTA_RESERVE")
+        # The first native REST response is required before source admission.
+        return not self.throttled and "core" in self._resources and all(
+            values["remaining"] >= reserve for values in self._resources.values())
+
+    def receipt(self):
+        return {"observed": "core" in self._resources, "throttled": self.throttled,
+                "resources": {key: dict(value) for key, value in sorted(self._resources.items())}}
+
+
 class GitHubAPI:
     """Bounded, non-retrying transport. Never forwards credentials to another host."""
     def __init__(self, token: str):
@@ -157,6 +205,7 @@ class GitHubAPI:
         self._token = token
         self._opener = build_opener(ProxyHandler({}), _NoRedirect())
         self._requests = 0
+        self.rate_limits = GitHubRateLimits()
 
     @classmethod
     def from_environment(cls) -> GitHubAPI:
@@ -180,16 +229,29 @@ class GitHubAPI:
             "Authorization": "Bearer " + self._token, "Accept": "application/vnd.github+json",
             "Content-Type": "application/json", "X-GitHub-Api-Version": "2026-03-10",
         })
+        self.rate_limits.debit("graphql" if method == "POST" else "core")
         try:
             with self._opener.open(request, timeout=30) as response:
                 if response.status != 200 or response.geturl() != API_ROOT + path:
                     raise IntegrityError("UNEXPECTED_REMOTE_RESPONSE")
+                self.rate_limits.observe(getattr(response, "headers", None))
                 raw = response.read(MAX_RESPONSE + 1)
                 if len(raw) > MAX_RESPONSE:
                     raise IntegrityError("REMOTE_RESPONSE_TOO_LARGE")
             return _json(raw)
         except HTTPError as exc:
             # Never include GitHub's error body, request URL or authorization in a public error.
+            quota = self.rate_limits.observe(exc.headers)
+            retry_after = exc.headers.get("retry-after") if exc.headers is not None else None
+            limited = exc.code == 429 or exc.code == 403 and (
+                quota is not None and quota["remaining"] == 0
+                or isinstance(retry_after, str) and bool(re.fullmatch(r"[0-9]{1,12}", retry_after)))
+            if limited:
+                self.rate_limits.throttled = True
+                # Preserve the existing ambiguous-write boundary for POST 429.
+                if method == "POST" and exc.code == 429:
+                    raise UnknownWrite("REMOTE_WRITE_UNCONFIRMED") from None
+                raise StoreUnavailable("REMOTE_RATE_LIMIT") from None
             if exc.code in (401, 403):
                 raise StoreUnavailable("REMOTE_NOT_AUTHORIZED") from None
             if exc.code == 404:

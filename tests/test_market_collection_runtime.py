@@ -24,7 +24,7 @@ from decision_kernel.application.market_custody import QUERY_SCHEMA
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, StoreUnavailable, UnknownWrite, encoded
 from decision_kernel.infrastructure.git_store import GitStore
-from decision_kernel.infrastructure.github_store import GitHubBinding, github_tree_inventory
+from decision_kernel.infrastructure.github_store import GitHubBinding, GitHubRateLimits, github_tree_inventory
 from decision_kernel.infrastructure import market_snapshot
 from decision_kernel.infrastructure.relay_http import RelayHTTP, SECRET_ENV
 from decision_kernel.interfaces import market_collection_cli as cli
@@ -168,10 +168,23 @@ def test_remote_factory_shares_real_bounded_api_with_each_native_fresh_reader(tm
     model.binding = replace(model.binding, anchor=anchor)
     model.git.repository, model.git.binding = model.binding.repository, model.binding
     apis, fetches = [], []
+    usage = {"core": 0, "graphql": 0}
 
     def original_api_with_synthetic_wire(token):
         assert token == STORE_TOKEN
         api = transport(model)
+        wire = api._opener.open
+
+        def native_headers(request, timeout):
+            response = wire(request, timeout)
+            resource = "graphql" if request.method == "POST" else "core"
+            usage[resource] += 1
+            limit = 5000 if resource == "graphql" else 1000
+            response.headers = {"x-ratelimit-resource": resource, "x-ratelimit-limit": str(limit),
+                "x-ratelimit-remaining": str(limit - usage[resource]), "x-ratelimit-reset": "2000000000"}
+            return response
+
+        api._opener.open = native_headers
         apis.append(api)
         return api
 
@@ -186,11 +199,90 @@ def test_remote_factory_shares_real_bounded_api_with_each_native_fresh_reader(tm
     assert result["receipt"]["status"] == "partial" and result["receipt"]["source_requests"] == 2
     assert source_calls(opener) == [("trade_cal", "SSE", 0), ("trade_cal", "SZSE", 0)]
     assert len(apis) == 2 and apis[0] is not apis[1]
+    assert apis[0].rate_limits is apis[1].rate_limits
     assert all(0 < api._requests <= 512 for api in apis)
     assert sum(api._requests for api in apis) == len(model.requests)
     assert {id(item["api"]) for item in fetches} == {id(api) for api in apis}
     assert all(not item["destination"].exists() for item in fetches)
     assert [u["store_api_requests"] for u in result["receipt"]["work_units"]] == [api._requests for api in apis]
+
+
+def native_quota(host, *, remaining=1000):
+    """Synthetic host with an explicitly observed native window, never a bypass."""
+    limits = GitHubRateLimits()
+    limits.observe({"x-ratelimit-resource": "core", "x-ratelimit-limit": "1000",
+                    "x-ratelimit-remaining": str(remaining), "x-ratelimit-reset": "2000000000"})
+    original = host.open
+
+    def open_unit(write):
+        store, fresh, api = original(write)
+        api.rate_limits = limits
+        return store, fresh, api
+
+    host.open = open_unit
+    return limits
+
+
+def test_low_native_quota_stops_before_source_or_creating_a_collection_attempt():
+    host, opener = UnitHost(), CollectionOpener(start=END, end=END)
+    native_quota(host, remaining=400)
+    result = execute(host, opener, max_work_units=32)
+    assert result["receipt"]["status"] == "paused"
+    assert result["receipt"]["reason_code"] == "ASHARE_REMOTE_RATE_LIMIT"
+    assert len(host.opened) == 1 and opener.calls == [] and host.commits == []
+    assert result["receipt"]["store_rate_limits"]["resources"]["core"]["remaining"] == 400
+
+
+def test_native_quota_does_not_reopen_a_unit_after_a_successfully_retained_query():
+    host, opener = UnitHost(), CollectionOpener(start=END, end=END)
+    limits = native_quota(host)
+
+    def another_native_consumer_used_quota(backend, files):
+        if manifest_bodies(files, QUERY_SCHEMA):
+            limits.observe({"x-ratelimit-resource": "core", "x-ratelimit-limit": "1000",
+                "x-ratelimit-remaining": "511", "x-ratelimit-reset": "2000000000"})
+
+    host.after_commit = another_native_consumer_used_quota
+    result = execute(host, opener, max_work_units=32)
+    assert result["receipt"]["status"] == "paused"
+    assert result["receipt"]["source_requests"] == 1 and len(host.opened) == 1
+    assert result["receipt"]["latest"]["unit_counts"]["complete"] == 1
+    assert source_calls(opener) == [("trade_cal", "SSE", 0)]
+    assert_public(result["receipt"])
+
+
+def test_native_quota_pause_keeps_original_pagination_and_retry_history_for_later_resume():
+    host, opener = UnitHost(), CollectionOpener(count=501, start=END, end=END)
+    limits = native_quota(host)
+
+    def low_after_first_master_page(backend, files):
+        for body in manifest_bodies(files, CHECKPOINT_SCHEMA):
+            if body["capture"]["api"] == "stock_basic" and body["capture"]["parameters"]["exchange"] == "SSE" \
+                    and len(body["pages"]) == 1 and body["control"]["state"] == "ready":
+                limits.observe({"x-ratelimit-resource": "core", "x-ratelimit-limit": "1000",
+                    "x-ratelimit-remaining": "200", "x-ratelimit-reset": "2000000000"})
+
+    host.after_commit = low_after_first_master_page
+    result = execute(host, opener, max_work_units=32)
+    assert result["receipt"]["status"] == "paused" and len(host.opened) == 3
+    assert source_calls(opener)[2:] == [("stock_basic", "SSE", 0)]
+    ref = latest_market_reference(host.reader(), REGISTRY,
+        checkpoint_id=checkpoint_id(plan(start=END), "master:SSE"))
+    state = restore_market_checkpoint(ref, REGISTRY, host.reader())["state"]
+    assert state["control"]["state"] == "paused" and state["control"]["pause_reason"] == "STORAGE_BUDGET"
+    assert state["control"]["max_pages"] == 20
+    host.after_commit = None
+    # Only a new native reset window renews the observed hourly allowance.
+    limits.observe({"x-ratelimit-resource": "core", "x-ratelimit-limit": "1000",
+                    "x-ratelimit-remaining": "1000", "x-ratelimit-reset": "2000003600"})
+    continued = execute(host, opener, max_work_units=1)
+    assert continued["receipt"]["source_requests"] == 1
+    assert source_calls(opener)[2:] == [("stock_basic", "SSE", 0), ("stock_basic", "SSE", 500)]
+    ref = latest_market_reference(host.reader(), REGISTRY,
+        checkpoint_id=checkpoint_id(plan(start=END), "master:SSE"))
+    capture = restore_market_checkpoint(ref, REGISTRY, host.reader())["state"]["capture"]
+    assert [page["offset"] for page in capture["pages"]] == [0, 500]
+    assert all([item["attempt"] for item in page["attempts"]] == [1] for page in capture["pages"])
 
 
 def test_status_opens_one_readonly_unit_without_source_credentials_or_mutation(monkeypatch):
@@ -404,7 +496,7 @@ def test_records_runtime_binds_existing_public_target_with_separate_read_and_wri
         assert json.loads((out / "result.json").read_text())["source_requests"] == 0
 
 
-def test_public_runtime_artifact_uses_real_sync_counts_and_no_private_result_members(tmp_path, monkeypatch):
+def test_public_runtime_artifact_uses_real_sync_counts_and_no_private_result_members(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(ROOT_DIR)
     event, env = runtime_input(tmp_path)
     host, opener, clock = UnitHost(), CollectionOpener(start=END, end=END), Clock()
@@ -427,10 +519,11 @@ def test_public_runtime_artifact_uses_real_sync_counts_and_no_private_result_mem
     assert PRIVATE_LOCATION in encoded(actual_results[0]["reference"]).decode()
     assert "reference" not in receipt and "reading" not in receipt
     assert_public(receipt)
+    assert json.loads(capsys.readouterr().out) == receipt
 
 
 @pytest.mark.parametrize("after_source", [False, True])
-def test_public_runtime_global_error_keeps_completed_source_counts_and_no_private_error_prose(tmp_path, monkeypatch, after_source):
+def test_public_runtime_global_error_keeps_completed_source_counts_and_no_private_error_prose(tmp_path, monkeypatch, after_source, capsys):
     monkeypatch.chdir(ROOT_DIR)
     event, env = runtime_input(tmp_path)
     host, opener, clock = UnitHost(), CollectionOpener(start=END, end=END), Clock()
@@ -454,6 +547,7 @@ def test_public_runtime_global_error_keeps_completed_source_counts_and_no_privat
     assert len(host.opened) == 2
     assert receipt["reason_code"] == ("ASHARE_COLLECTION_PERSISTENCE_UNCONFIRMED" if after_source else "ASHARE_OPERATION_FAILED")
     assert_public(receipt)
+    assert json.loads(capsys.readouterr().out) == receipt
 
 
 def test_cli_existing_output_is_checked_before_any_store_or_source_operation(tmp_path, monkeypatch):

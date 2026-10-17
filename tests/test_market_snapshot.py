@@ -4,9 +4,11 @@ Only the remote responses and fetch transport are synthetic. Native Git owns
 the actual commit graph, reference bodies and immutable predecessor history.
 """
 from copy import deepcopy
+from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 import base64
+import json
 import subprocess
 
 import pytest
@@ -246,3 +248,66 @@ def test_twenty_original_master_pages_restore_in_one_bounded_native_scope(native
     assert promoted["restored"]["page_references"] == restored["page_references"]
     assert model.writes == 1 and api._requests == len(model.requests) <= 512
     assert api._requests - before < 64 and client.requests == 20
+
+
+@pytest.mark.parametrize("revoke_on_calendar_exit", [False, True])
+def test_collection_prerequisites_close_shared_scope_before_source_or_write(revoke_on_calendar_exit):
+    from decision_kernel.application.market_custody import QUERY_SCHEMA
+    from decision_kernel.domain.records import StoreUnavailable
+    from test_market_collection_sync import CollectionOpener, END, memory, plan, run, source_calls
+    from test_market_custody import MemoryBackend
+
+    backend, store, ordinary_fresh = memory()
+    request = plan(start=END)
+    saved = run(request, store, ordinary_fresh, CollectionOpener(start=END, end=END), max_queries=2)
+    before = backend.shared["count"]
+    scopes, active = [], []
+
+    class ScopedReader(MemoryBackend):
+        depth = 0
+
+        @contextmanager
+        def market_read_scope(self):
+            outer = self.depth == 0
+            if outer:
+                self.calendars = set()
+                scopes.append(self.calendars)
+            self.depth += 1
+            active.append(self)
+            try:
+                yield self
+                if outer and revoke_on_calendar_exit and self.calendars == {"SSE", "SZSE"}:
+                    raise StoreUnavailable("SYNTHETIC_BINDING_REVOKED")
+            finally:
+                self.depth -= 1
+                active.pop()
+
+        def read(self, commit, path):
+            assert self.depth > 0
+            raw = super().read(commit, path)
+            if path.endswith("/content.txt"):
+                body = json.loads(raw)
+                if body.get("schema") == QUERY_SCHEMA and body["use"]["api"] == "trade_cal":
+                    self.calendars.add(body["use"]["parameters"]["exchange"])
+            return raw
+
+    commit = backend.commit
+
+    def write(files, *, expected):
+        assert not active  # No pinned pre-write snapshot survives any mutation.
+        return commit(files, expected=expected)
+
+    backend.commit = write
+    opener = CollectionOpener(start=END, end=END)
+    fresh = lambda: VersionedStore(ScopedReader(backend.shared))
+    if revoke_on_calendar_exit:
+        with pytest.raises(StoreUnavailable, match="SYNTHETIC_BINDING_REVOKED"):
+            run(request, store, fresh, opener, previous=saved["reference"], max_queries=1)
+        assert opener.calls == []
+        assert backend.shared["count"] == before + 1  # Only the prior, independently restored plan.
+    else:
+        result = run(request, store, fresh, opener, previous=saved["reference"], max_queries=1)
+        assert result["collection"]["units"]["master:SSE"]["status"] == "complete"
+        assert source_calls(opener) == [("stock_basic", "SSE", 0)]
+    assert sum(calendars == {"SSE", "SZSE"} for calendars in scopes) == 1
+    assert not active

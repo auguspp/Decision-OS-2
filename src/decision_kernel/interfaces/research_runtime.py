@@ -69,12 +69,12 @@ def parse_inputs(inputs: dict) -> dict:
             "submission_id": submission, "expected_head": expected}
 
 
-def _perform(store: VersionedStore, command: dict) -> dict:
+def _perform(store: VersionedStore, command: dict, *, room_public=True) -> dict:
     operation, payload = command["operation"], command["payload"]
     if operation == industry_commands.OPERATION:
         return industry_commands.perform(store, payload)
     if operation == reading_commands.OPERATION:
-        return reading_commands.perform(store, payload)
+        return reading_commands.perform(store, payload, public=room_public)
     if operation in agenda_commands.COMMANDS:
         return agenda_commands.perform(store, operation, payload)
     if operation == "audit-source-use":
@@ -184,9 +184,18 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
                 "ARTIFACT_RIGHTS_NOT_CONFIRMED")
         ArtifactInput.from_dict(payload["artifact"])
     industry_commands.preflight(command["operation"], command["payload"])
-    reading_commands.preflight(command["operation"], command["payload"])
+    private_room_allowed = command["operation"] == reading_commands.OPERATION and binding.private_upgrade_allowed
+    reading_commands.preflight(command["operation"], command["payload"], public=not private_room_allowed)
     agenda_commands.preflight(command["operation"], command["payload"])
     odds_commands.preflight(command["operation"], command["payload"])
+    backend, room_public = None, True
+    if private_room_allowed:
+        # A public-origin marker/opt-in is not evidence of today's visibility.
+        # Keep this checked adapter for the entire read, including its one-way
+        # private latch, rather than recreating it after deciding export rights.
+        backend = _CommandStore(binding, api, command)
+        room_public = backend.live_visibility() == "public"
+        reading_commands.preflight(command["operation"], command["payload"], public=room_public)
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     operation = command["operation"]
     report = {"schema": "research-operation-v1", "operation": operation,
@@ -204,18 +213,26 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         require(len(raw) <= MAX_RESULT_BYTES, "COMMAND_RESULT_TOO_LARGE")
         (output / "report.json").write_bytes(raw)
 
-    backend = None
     try:
         # Preserve exact original input before any possible write. All input must be
-        # authorized for public disclosure; artifacts are transport, not a new store.
-        (output / "inputs.json").write_bytes(encoded(inputs))
+        # authorized for its destination; artifacts are transport, not a new store.
+        # Private room reads have no write to reconcile. Defer their exact references
+        # until the final native visibility check, just like the body and HTML.
+        if room_public:
+            (output / "inputs.json").write_bytes(encoded(inputs))
         persist()
-        backend = _CommandStore(replace(binding, write_enabled=operation in WRITE_OPERATIONS), api, command)
+        if backend is None:
+            backend = _CommandStore(replace(binding, write_enabled=operation in WRITE_OPERATIONS), api, command)
         report["observed_head"] = backend.head()
         persist()
-        result = _perform(VersionedStore(backend), command)
+        result = _perform(VersionedStore(backend), command, room_public=room_public)
         if operation == reading_commands.OPERATION:
+            # Components may use independent source-only GitMarketReader snapshots.
+            # Recheck the original adapter after all components and before release.
+            report["repository_visibility"] = backend.live_visibility()
             reading_commands.write_page(output / "reading-room.html", result)
+            if not room_public:
+                (output / "inputs.json").write_bytes(encoded(inputs))
         if operation in ("deliver", "reconcile-delivery"):
             result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS:

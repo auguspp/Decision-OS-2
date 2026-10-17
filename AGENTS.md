@@ -32,7 +32,9 @@ Full从原委托默认实际执行信息池与接口取材，并按[来源使用
 
 ## 不得越过的边界
 
-首版采用[#6已采纳的路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)：同一公开仓的 `main` 负责工程代码/规则，独立 `records` 数据分支允许保存有对外公开权利的原创研究成果及获准资料；仓内[只读绑定](config/store-binding.json)不授权自动写入。数据分支公开不等于隐私或角色隔离，凭据、账号/个人识别信息、第三方隐私、无再分发权的付费原文及正式人工 Decision 均不得公开；既有私人材料不自动迁出，公开内容无法保证被收回。未来需要私有化可迁往独立数据仓库B，不在首版新建第二套保管平台。
+首版沿用[#6已采纳的路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)：同仓 `main` 负责工程代码/规则，独立 `records` 负责获准资料与研究成果。本仓现已整体转为 private；沿[#10原任务](https://github.com/auguspp/Decision-OS-2/issues/10)核当前原生可见性，保留同一 repository_id、分支、store_id、anchor 和历史公开建仓标记，不新建数据仓或第二套保管平台。[只读绑定](config/store-binding.json)仍不授权自动写入。已授权的来源访问、保管与研究委托按原范围接续；私有化不增加来源许可或研究写权限，具体运行及读取按[工作协议](WORKING-PROTOCOLS.md#permissions)。
+
+对外公开资料仍须单独具备相应权利，不能把 private 或原保管授权填成公开再分发确认。凭据、账号/个人识别信息、第三方隐私、无再分发权的付费原文及正式人工 Decision 均不得公开；既有私人材料不自动迁出，历史公开内容无法保证被收回。数据分支和共享仓库凭据不构成角色隔离，读取成功也不代签研究或市场可用性。
 
 Quick/Full 双核心、完整 CI 首日起交付、Decision 独立人工确认、Relay 单标准市场入口、PIT/Learning 减负、旧研究不兼容是已定方向，不重开投票。现有资源可用、费用不阻塞，但不授权新研究任务、主动通知、破坏性清理或绕过平台拒绝。
 

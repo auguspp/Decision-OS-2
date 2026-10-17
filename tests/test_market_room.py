@@ -20,10 +20,10 @@ from decision_kernel.domain.records import (
 )
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubStore
-from decision_kernel.interfaces import reading_commands
+from decision_kernel.interfaces import reading_commands, research_runtime
 from decision_kernel.interfaces.reading_page import render_page
 from test_market_custody import security_payload, raw_payload, extra, REGISTRY, REGISTRY_PATH, CODE
-from test_research_runtime import host, invoke
+from test_research_runtime import host, inputs, invoke
 
 CLOCK = "2026-10-17T12:00:00+08:00"
 
@@ -228,6 +228,109 @@ def test_native_host_reads_original_root_and_denies_unconfirmed_export(host, tmp
     with pytest.raises(RecordError, match='PUBLIC_MARKET'):
         invoke(host, tmp_path/'denied', 'reading-room', payload)
     assert not (tmp_path/'denied').exists() and len(host.requests) == before
+
+
+@pytest.fixture
+def private_native_room(host, monkeypatch):
+    from test_market_collection_consumers import seed_native_day
+    from test_market_snapshot import local_fetch
+    from test_news_read_budget import transport
+
+    host.binding = replace(host.binding, private_upgrade_allowed=True)
+    host.meta['private'] = True
+    writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
+    fresh = lambda: VersionedStore(GitHubStore(host.binding, host))
+    reference = seed_native_day(writer, fresh)
+    api, fetches = transport(host), []
+    monkeypatch.setattr('decision_kernel.infrastructure.market_snapshot._fetch_market_branch',
+                        local_fetch(host, fetches))
+    monkeypatch.setattr('decision_kernel.infrastructure.relay_http.RelayHTTP.__init__',
+                        lambda *a, **kw: pytest.fail('reading must not load source credentials'))
+    host.requests.clear()
+    return host, api, reference, fetches
+
+
+def test_native_private_room_reads_collection_without_public_authorization(private_native_room, tmp_path):
+    model, api, reference, fetches = private_native_room
+    head, writes = model.git.head(), model.writes
+    original = inputs('reading-room', {'plan': plan(reference, limit=1)})
+    output = tmp_path / 'private-room'
+    report = research_runtime.run_command(model.binding, api=api, inputs=original,
+        code_sha='a' * 40, output=output)
+    assert report['status'] == 'completed' and report['write'] == 'not-requested'
+    assert report['repository_visibility'] == 'private'
+    market = report['result']['market']
+    assert market['status'] == 'readable' and market['reference'] == reference
+    assert market['view']['source_requests'] == 0
+    assert market['view']['view']['schema'] == 'relay-ashare-collection-view-v1'
+    assert market['view']['view']['scope_count'] == 4
+    assert market['next_plan']['reference'] == reference
+    assert len(fetches) == 1 and fetches[0]['api'] is api
+    assert not fetches[0]['destination'].exists()
+    assert 0 < api._requests == len(model.requests) < 128
+    assert all(method == 'GET' for method, _, _ in model.requests)
+    assert model.git.head() == head and model.writes == writes
+    assert json.loads((output / 'inputs.json').read_bytes()) == original
+    assert (output / 'reading-room.html').read_text() == render_page(report['result'])
+
+
+def test_private_room_visibility_reversal_after_reading_cannot_release_output(private_native_room, tmp_path, monkeypatch):
+    model, api, reference, fetches = private_native_room
+    original = reading_commands.perform
+
+    def reverse(*args, **kwargs):
+        result = original(*args, **kwargs)
+        assert result['market']['status'] == 'readable'
+        model.meta['private'] = False
+        return result
+
+    monkeypatch.setattr(reading_commands, 'perform', reverse)
+    output = tmp_path / 'reversed'
+    head, writes = model.git.head(), model.writes
+    with pytest.raises(RecordError, match='PRIVATE_UPGRADE_REVERSED'):
+        research_runtime.run_command(model.binding, api=api,
+            inputs=inputs('reading-room', {'plan': plan(reference)}),
+            code_sha='a' * 40, output=output)
+    report = json.loads((output / 'report.json').read_bytes())
+    assert report['status'] == 'failed' and 'result' not in report
+    assert 'repository_visibility' not in report
+    assert not (output / 'reading-room.html').exists()
+    assert not (output / 'inputs.json').exists()
+    assert len(fetches) == 1 and not fetches[0]['destination'].exists()
+    assert model.git.head() == head and model.writes == writes
+
+
+def test_private_upgrade_policy_does_not_authorize_still_public_market_export(host, tmp_path, monkeypatch):
+    writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
+    reference = retain(writer, lambda: VersionedStore(GitHubStore(host.binding, host)))
+    host.binding = replace(host.binding, private_upgrade_allowed=True)
+    monkeypatch.setattr(ReadingRoom, 'build', lambda *a, **kw: pytest.fail('unconfirmed public read'))
+    head, writes = host.git.head(), host.writes
+    output = tmp_path / 'public-room'
+    with pytest.raises(RecordError, match='PUBLIC_MARKET'):
+        invoke(host, output, 'reading-room', {'plan': plan(reference),
+            'public_research_custody_confirmed': True, 'public_sources_custody_confirmed': False})
+    assert not output.exists() and host.git.head() == head and host.writes == writes
+
+
+def test_private_room_requires_native_boolean_visibility_before_output(host, tmp_path):
+    host.binding = replace(host.binding, private_upgrade_allowed=True)
+    host.meta['private'] = 'true'
+    output = tmp_path / 'unverified-private'
+    with pytest.raises(RecordError, match='PUBLIC_BINDING_MISMATCH'):
+        invoke(host, output, 'reading-room', {'plan': {'as_of': CLOCK}})
+    assert not output.exists() and host.writes == 0
+    assert [(method, path) for method, path, _ in host.requests] == [
+        ('GET', '/repos/' + host.binding.repository)]
+
+
+def test_private_room_payload_cannot_select_export_mode(host, tmp_path):
+    host.binding = replace(host.binding, private_upgrade_allowed=True)
+    host.meta['private'] = True
+    output = tmp_path / 'untrusted-mode'
+    with pytest.raises(RecordError, match='ROOM_PAYLOAD_INVALID'):
+        invoke(host, output, 'reading-room', {'plan': {'as_of': CLOCK}, 'public': False})
+    assert not output.exists() and host.requests == [] and host.writes == 0
 
 
 def exercise_installed_market_room(outside, python, env, store):

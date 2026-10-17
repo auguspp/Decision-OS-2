@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'plan is offline; capture calls the existing Relay with the selected scope'
+        description: 'plan is offline; capture retains authorized rows; industry-pmi check emits counts only'
         type: choice
-        options: [plan, capture]
+        options: [plan, capture, check]
         default: plan
         required: true
       code_sha:
@@ -15,7 +15,7 @@ on:
       family:
         description: 'Typed source family or catalogue-gated public research plan'
         type: choice
-        options: [financial, participants, research]
+        options: [financial, participants, research, industry-pmi]
         default: financial
       codes:
         description: 'Typed families only: securities separated by spaces or commas'
@@ -42,9 +42,13 @@ on:
         type: string
         default: '100'
       source_plan:
-        description: 'Research only: JSON schema/case_id/requests with stage, purpose, api, parameters; no credentials'
+        description: 'Research source plan, or industry-pmi reference-check plan with exact SourceRef; no credentials'
         type: string
         required: false
+      access_confirmed:
+        description: 'industry-pmi/check only: authorize transient Relay use; NOT source republication'
+        type: boolean
+        default: false
       public_rights_confirmed:
         description: 'Capture only: I authorize querying and retaining these data in this public repository artifacts'
         type: boolean
@@ -77,6 +81,12 @@ jobs:
         env:
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
         run: python -m decision_kernel.interfaces.relay_source_runtime capture --out "$RUNNER_TEMP/dos2-relay-source"
+      - name: Check retained PMI reference without exporting supplier rows
+        if: inputs.family == 'industry-pmi' && inputs.operation == 'check'
+        env:
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.relay_source_runtime check --out "$RUNNER_TEMP/dos2-relay-source"
       - name: Preserve selected plan and authorized complete or partial capture
         if: always() && steps.prepare.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

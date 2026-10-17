@@ -102,3 +102,11 @@ python -m decision_kernel.interfaces.industry_pmi_cli read \
 与官方同月原发布逐项对照，沿既有保管获得 SourceRef 后独立读回，并在实际研究中采用/挑战。
 真实产销数量、库存金额与资金占用、利润、汽车细分、运价航线、公司暴露及 500+ 扩展
 均未被这五项宏观景气指标替代；未开定时任务、通知或交易动作。
+
+## 运行内参考核对
+
+未确认供应商源行的公开保管权利时，可用原 Relay 宿主的
+[industry-pmi/check 参考核对](pmi-reference-check.md)：实际取数仅在进程内消费，
+对既存官方转录 SourceRef 的同月五字段和月差作精确比较，公开仅状态/计数。
+原读取结果不被改写为 original_verified，原 capture 的公开许可门槛不降低；
+比较成功、原件真实性、历史 PIT 和研究/交付采用仍是不同验收。

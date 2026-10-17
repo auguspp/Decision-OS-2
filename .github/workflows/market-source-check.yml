@@ -33,6 +33,10 @@ on:
         description: 'Explicitly retain generated member/session API request arguments; no returned rows'
         type: boolean
         default: false
+      explain_quotes:
+        description: 'session-coverage only: also reconcile same-day suspension evidence; no source export'
+        type: boolean
+        default: false
       member_code:
         description: 'members only: one explicit six-digit .TI code; not a saved failed-query substitute'
         type: string

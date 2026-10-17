@@ -20,6 +20,7 @@ from decision_kernel.observations.market_daily import MarketInputError
 SESSION_SCHEMA = 'relay-ashare-session-reading-v1'
 SESSION_REQUIRED = {'calendar_results', 'master_results', 'session_results', 'start', 'end', 'calendar_end'}
 QUOTE_FIELDS = {'daily': {'ts_code', 'trade_date', 'close'}, 'adj_factor': FACTOR_FIELDS}
+NO_SUSPENSION = object()
 VALUE_STATES = ('observed', 'missing', 'quarantined', 'input-unavailable')
 
 
@@ -71,7 +72,7 @@ def _value(data, code):
 
 def read_session_coverage(*, calendar_results, master_results, session_results,
                           registry, start, end, calendar_end, reference_policy='strict',
-                          offset=0, limit=50, entity_id=None):
+                          offset=0, limit=50, entity_id=None, suspension_result=NO_SUSPENSION):
     """Read all declared and received SH/SZ identities; paginate only the view.
 
     Calendar lag is relative to the supplied full calendar's explicit end, not
@@ -86,7 +87,8 @@ def read_session_coverage(*, calendar_results, master_results, session_results,
     for value, allowed in ((calendar_results, set(EXCHANGES)), (master_results, set(EXCHANGES)),
                            (session_results, set(QUOTE_FIELDS))):
         _require(isinstance(value, dict) and value.keys() <= allowed, 'SESSION_RESULT_MAP')
-    _require(len(encoded([calendar_results, master_results, session_results])) <= MAX_BYTES, 'SESSION_INPUT_BOUND')
+    _require(len(encoded([calendar_results, master_results, session_results,
+                          None if suspension_result is NO_SUSPENSION else suspension_result])) <= MAX_BYTES, 'SESSION_INPUT_BOUND')
     _require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100, 'PAGE_INVALID')
     _require(entity_id is None or isinstance(entity_id, str) and re.fullmatch(r'[0-9]{6}\.(SH|SZ)', entity_id), 'SECURITY_INVALID')
     sources, queries, calendars, masters, quotes = {}, {}, {}, {}, {}
@@ -171,6 +173,9 @@ def read_session_coverage(*, calendar_results, master_results, session_results,
             'MISSING_DAILY_IS_NOT_ZERO_OR_CONFIRMED_SUSPENSION', 'SINGLE_SESSION_NOT_5_20_60_HISTORY',
             'CALENDAR_LAG_ONLY_THROUGH_DECLARED_END; NO_LATEST_OR_LONG_TERM_HEALTH_CERTIFICATION',
             'BJ_OUTSIDE_SUPPORTED_SCOPE; UNREFERENCED_SH_SZ_RETAINED_NOT_QUALIFIED']}
+    if suspension_result is not NO_SUSPENSION:
+        from decision_kernel.application.market_suspension_inputs import reconcile_suspensions
+        reconcile_suspensions(result, rows, suspension_result, registry=registry, day=end)
     result['view_version'] = digest(encoded({'context': result, 'entries': rows}))
     selected = rows if entity_id is None else [e for e in rows if e['entity_id'] == entity_id]
     result.update(entries=selected[offset:offset + limit], page={'offset': offset, 'limit': limit,

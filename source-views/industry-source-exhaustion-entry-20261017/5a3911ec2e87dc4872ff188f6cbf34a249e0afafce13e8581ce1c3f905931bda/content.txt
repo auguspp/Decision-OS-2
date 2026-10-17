@@ -1,0 +1,215 @@
+# #11 数据源扩展总入口
+
+编制时间：2026-10-17T12:49:36Z。本入口属于 2026-10-17 经用户授权的来源穷尽、事实保管与现役读取责任组。总任务与历次交接：[Decision-OS-2 #11](https://github.com/auguspp/Decision-OS-2/issues/11)。本轮认领：[6232359914](https://github.com/auguspp/Decision-OS-2/issues/11#issuecomment-6232359914)。
+
+## 完成范围
+
+本轮既定材料 65 份，均已真实保存并从现有消费者读回：42 份原始事实分片、14 份完整资格目录、3 份浏览目录/交叉关系表、6 份派生产业阅读包。65 次 put-source、59 次 read-source、6 次 industry-read 均已对账。此后下方 6 份效果索引也分别完成保存和原生读回。本入口自身的保存和读取由最终 #11 交接另行记录，不递归加入上述分母。
+
+230 条排查记录分为国内64家族记录、国际51家族记录、农业100产品记录、主线15补证记录。记录粒度不同，独立上游总数保留未核定；57条交叉关系供同源和产品归并使用。
+
+|最终处置|目录记录数|
+|---|---:|
+|关联到已保管并读回的事实|126|
+|沿同一上游继承（FRED/Fed）|1|
+|只有资格信息、未采用实际事实|76|
+|国内样本因使用条件或原件证据不足未采用|16|
+|国际样本因使用条件未采用|3|
+|农业样本未满足本轮公开保管条件|8|
+
+表中的126按目录记录计；产业消费者的126个统计系列另有分母。单个机构的不同产品、地域、季调版本、指数及数量列不能相加为独立商品或上游。
+
+## 浏览入口
+
+|表|固定链接|原记录数|
+|---|---|---:|
+|来源浏览表：第1—184条|[原表](https://github.com/auguspp/Decision-OS-2/blob/5501480016a7f52527d6bee8a9868ca4f7171f37/source-views/user-directory-01/c2d623e65233a45b2a9303a5fc8a60b319d1e1024a5e0235ffb4d48fa224df3e/data.csv)|184|
+|来源浏览表：第185—230条|[原表](https://github.com/auguspp/Decision-OS-2/blob/83bb5e67f001123df8572fa7049cc4348616b7ec/source-views/user-directory-02/a03136023bf972e951113c7c06b43430810094edb68946107aa4743e23f4d248/data.csv)|46|
+|同源、转发与产品关系表|[原表](https://github.com/auguspp/Decision-OS-2/blob/d540610f3146a875d3b168920f36dc16ba2b1abe/source-views/user-directory-crosswalk-01/2aa9822c0008b53efb3a5b3d0020f9c3b5e0c74124096750355993971ff43303/data.csv)|57|
+
+先按浏览表的 record_id 定位效果索引中的 coverage 记录，再由对应 material label 取完整 SourceRef。完整资格目录包含原发布者、产品、实际访问/使用条件和停止原因；效果索引区分直接事实关联与仅相关材料。
+
+## 完整效果索引
+
+六片合计464条自编元数据，覆盖65份材料、130个正常运行、230条目录映射，以及勘误、单位补证和非效果台账。它们不增加统计观测。
+
+|分片|固定manifest|保存运行|读取运行|
+|---|---|---|---|
+|native-effects-final-01|[固定资料清单](https://github.com/auguspp/Decision-OS-2/blob/0fcdb9aee56cd0e4d25f9ddcb0f464aba4cc6a8f/source-views/native-effects-final-01/714d92c6eb8f75eb7aee43259bcb1cbad9b1b33f3807d71e97a53b475daafff5/manifest.json)|[39033548955](https://github.com/auguspp/Decision-OS-2/actions/runs/39033548955)|[39033599782](https://github.com/auguspp/Decision-OS-2/actions/runs/39033599782)|
+|native-effects-final-02|[固定资料清单](https://github.com/auguspp/Decision-OS-2/blob/1c8b93157db20953348cdf3e752bf4c0c4d626b6/source-views/native-effects-final-02/ff4b0828bb4b402dae68eb5de95268a594bc8ee564dbefbac118560279fbf8b1/manifest.json)|[39033606182](https://github.com/auguspp/Decision-OS-2/actions/runs/39033606182)|[39033663638](https://github.com/auguspp/Decision-OS-2/actions/runs/39033663638)|
+|native-effects-final-03|[固定资料清单](https://github.com/auguspp/Decision-OS-2/blob/cfd52dea5a6b473f6197d8e1d3aadd8ccbcee558/source-views/native-effects-final-03/501e3dbbc6d9c6015fe4b6b90baf5a66cf27a3c4117c379fd02a23ea7c051b3e/manifest.json)|[39033669590](https://github.com/auguspp/Decision-OS-2/actions/runs/39033669590)|[39033730274](https://github.com/auguspp/Decision-OS-2/actions/runs/39033730274)|
+|native-effects-final-04|[固定资料清单](https://github.com/auguspp/Decision-OS-2/blob/349c656a33b22d988722f77e57802fb5e7c6bc0f/source-views/native-effects-final-04/6add9bd153f7353268d52060736d73c46eda4ed8d2b5b4324e7e7adcf0b8726a/manifest.json)|[39033736109](https://github.com/auguspp/Decision-OS-2/actions/runs/39033736109)|[39033796582](https://github.com/auguspp/Decision-OS-2/actions/runs/39033796582)|
+|native-effects-final-05|[固定资料清单](https://github.com/auguspp/Decision-OS-2/blob/3ee20a42a9d82517932b444e43b969342254e38e/source-views/native-effects-final-05/6615aec5d830832161d37b50665fd0287e7dbd0ba50525932f576929b808a534/manifest.json)|[39033803416](https://github.com/auguspp/Decision-OS-2/actions/runs/39033803416)|[39033859425](https://github.com/auguspp/Decision-OS-2/actions/runs/39033859425)|
+|native-effects-final-06|[固定资料清单](https://github.com/auguspp/Decision-OS-2/blob/9c4417ffb26a68c378fcd3f3eccf7adb9bad3a9c/source-views/native-effects-final-06/f101cb95239f5c79800554299737613537c90e85aa02294c4536ea4fbc6a6e82/manifest.json)|[39033865840](https://github.com/auguspp/Decision-OS-2/actions/runs/39033865840)|[39033918106](https://github.com/auguspp/Decision-OS-2/actions/runs/39033918106)|
+
+完整索引 SourceRef：
+
+```json
+[
+  {
+    "label": "native-effects-final-01",
+    "source_ref": {
+      "manifest": {
+        "commit": "0fcdb9aee56cd0e4d25f9ddcb0f464aba4cc6a8f",
+        "path": "source-views/native-effects-final-01/714d92c6eb8f75eb7aee43259bcb1cbad9b1b33f3807d71e97a53b475daafff5/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "1cf18b96f7a3aaf27c7386589708d04fd008f578ca039b08c9c085f826f8bdb1"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "put_run_id": "39033548955",
+    "read_run_id": "39033599782"
+  },
+  {
+    "label": "native-effects-final-02",
+    "source_ref": {
+      "manifest": {
+        "commit": "1c8b93157db20953348cdf3e752bf4c0c4d626b6",
+        "path": "source-views/native-effects-final-02/ff4b0828bb4b402dae68eb5de95268a594bc8ee564dbefbac118560279fbf8b1/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "6a28973e7adddadc8ccf25ebe214287e7a244b3e815f01f581650b4c3240b38e"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "put_run_id": "39033606182",
+    "read_run_id": "39033663638"
+  },
+  {
+    "label": "native-effects-final-03",
+    "source_ref": {
+      "manifest": {
+        "commit": "cfd52dea5a6b473f6197d8e1d3aadd8ccbcee558",
+        "path": "source-views/native-effects-final-03/501e3dbbc6d9c6015fe4b6b90baf5a66cf27a3c4117c379fd02a23ea7c051b3e/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "2c82e9872db11f1016974f32c02fd6cd9c3352b45a505cb1e46cddbb2834764d"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "put_run_id": "39033669590",
+    "read_run_id": "39033730274"
+  },
+  {
+    "label": "native-effects-final-04",
+    "source_ref": {
+      "manifest": {
+        "commit": "349c656a33b22d988722f77e57802fb5e7c6bc0f",
+        "path": "source-views/native-effects-final-04/6add9bd153f7353268d52060736d73c46eda4ed8d2b5b4324e7e7adcf0b8726a/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "c825d3a2abed9664fa3f4fd05ba412f9101e114a45f5ebc55c78402e93091522"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "put_run_id": "39033736109",
+    "read_run_id": "39033796582"
+  },
+  {
+    "label": "native-effects-final-05",
+    "source_ref": {
+      "manifest": {
+        "commit": "3ee20a42a9d82517932b444e43b969342254e38e",
+        "path": "source-views/native-effects-final-05/6615aec5d830832161d37b50665fd0287e7dbd0ba50525932f576929b808a534/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "29c462969fdfc6685a969db72174d3a5959d03ed1c6944f711970f8ffc884c3b"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "put_run_id": "39033803416",
+    "read_run_id": "39033859425"
+  },
+  {
+    "label": "native-effects-final-06",
+    "source_ref": {
+      "manifest": {
+        "commit": "9c4417ffb26a68c378fcd3f3eccf7adb9bad3a9c",
+        "path": "source-views/native-effects-final-06/f101cb95239f5c79800554299737613537c90e85aa02294c4536ea4fbc6a6e82/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "aeaccf73a3bd9c85ac015c05ffa7aa8495098b2533ef17f644327fef55fbe922"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "put_run_id": "39033865840",
+    "read_run_id": "39033918106"
+  }
+]
+```
+
+各片正文是同一套有类型的JSON表。每条 record 为 [type,id,present_column_indexes,values]；按本片 schemas[type] 将索引和值配对，还原对象。保留缺席字段与显式null的区别，不跨片猜补字段。material 记录给完整 source_ref、版本、表示摘要、put_run_id/read_run_id；对应 runtime_effect 记录给 operation、code_sha、expected_head、observed_head、submission_id 和归档/报告/载荷摘要；材料记录给验证状态与读回结果。按 type 和 id 定位记录，不能把目录资格状态当原生数据已取得。
+
+## 实际事实范围
+
+- 主线14份原始材料：统计局产量及PPI、EIA油/气库存、FAO指数、农业部批发及畜禽价格、长江航运指数、能源局用电、世界银行原表、温氏销售、神华经营及货物贸易。
+- 国际16片：652个系列、1302个原观测；从实际native返回还原的23472个原字段与冻结canonical完全相等。原季调状态、移动平均、估计/修订、历史前缀及单期贸易记录分别保留。
+- 农业reviewed7片：249条异质事实/状态，67个产品、44个组内family。230条有原响应字节和摘要支撑（共70份原事实文件），19条为网页摘录等级。原值及期间不变，22行更正出处/口径或补充单位条件。
+- 国内/国际网页/主线补充5片：51+12+25=88个异质事实对象。区间、对象和标量保持原类型；片内context不能跨片直接联表。
+- 原六个industry阅读包：126系列、252个观察，实际返回126个相邻期比较，0不可用输入、0公司关系，source_requests=0/writes=0。这个结果指读取已存快照，GitHub存储GET真实发生；其观察来自原始材料，不再加一遍。
+
+## 已确认勘误与未确认字段
+
+丝绸调查起始日原目录误记2026-07-21，原图证明正确为2026-07-27（结束日7月31日）。inventory-domestic-02 的既有固定文本及其冻结证据保持；必须联同 domestic-facts-02 和索引的 confirmed_errata 使用。旧目录字段是 /records/2/necessary_factual_samples/0/survey_fieldwork_period；对应新事实 fact-f5fcc87137c91d0e20ef496e 保留旧值与更正依据。字节一致不消除这项已知事实错误。
+
+农业单位补证包括两份欧盟工作簿、泰国同页横幅及欧盟糖价PDF，4份文件及16个精确字段关联已在效果索引保存。工作簿与API的舍入对应不等于相同高精度或相同发布版本。仍未确认的5项是EU olive oil产量/期末库存的单位缩放、protein crop价格分母、NOAA同一REX记录的重量及价值贸易方向。原值/代码可供检查，相关单位或方向尚不支持自动归一计算。
+
+数值/缺失、休市零哨兵、价格区间、累计/当期、实际/预测、原公布变化与复算变化分别保留。发行人销售或经营量不直接证明当期净暴露、利润或受益。
+
+## 重开方式
+
+普通资料使用现役 research-runtime.yml 的 read-source，payload直接为完整SourceRef，submission_id和expected_head留空。industry阅读包用industry-read，payload为reference、view=industry及public_sources_custody_confirmed=true。后续执行前按仓库AGENTS复核当时main与适用合同，使用已审code_sha。
+
+本次各次执行的code_sha、原意图定位和固定commit都在效果索引，不能以mutable latest替换原版本。读回证明保存的表示与本次输入相等；首次上线时间、发布者微观原始记录和持续更新能力仍须相应来源证据。
+
+## 核验与历史恢复
+
+最终65材料效果快照：5d2f46a695f68d845e283a90881f1aef2292937a06fb2341f8ec1edd7e1ad54e（718231 B），冻结时刻2026-10-17T12:29:09.912503+00:00。索引候选独立内部审计：3e5d309d5d079ee10d3e974451388d973052bb6e473fbb25990dde42491d2812（14567 B）。内部并行复核属于同一助手工作，不是独立人类签收。
+
+6案非效果与恢复台账区分2次原生代码保护、3次派发前中止和未发布的旧农业候选。9个成功后继仅在正常运行表计数；缺失的原工具响应或日志明确列出，未补造原件。Actions附件有保留期，完整规范资料和SourceRef存于records。#11整体的500+合格商品、自然连续更新、当前公司净暴露和后续研究/交付验收继续沿原事项处理。
+
+
+## 附：索引候选与实际读取的完整内部核验对象
+
+以下保存两个完整审计对象。文件 SHA 与大小标识原审计文件；本入口以 JSON 对象保存其内容。对象中的本地路径仅表示当时证据定位，临时下载文件不会因为出现路径而变成远端附件。固定 SourceRef 对应 records 中的规范资料；Actions 原附件依实际保留期提供。
+
+### 候选核验
+
+原文件 SHA-256：3e5d309d5d079ee10d3e974451388d973052bb6e473fbb25990dde42491d2812；14,567 B。
+
+```json
+{"candidate_or_frozen_files_modified":false,"completed_at":"2026-10-17T12:40:50.357308+00:00","counts":{"absent_schema_slots_preserved":1422,"actual_runtime_code_counts":{"050e2afb78320ec60f0042d18a247cfb46f7948a":98,"ce6610a07f859ec5fd3ce283f64f73800190036a":25,"ec051595d9dda1189a996515eb0d704b8a20a0f5":7},"actual_source_refs":65,"actual_successful_runs":130,"agri_existing_facts":249,"agri_original_fact_response_files":70,"agri_original_hashed_facts":230,"agri_prior_sugar_corrections_outside_pending_denominator":2,"agri_resolved_pending_unit_rows":14,"agri_routing_metadata_files":10,"agri_unit_field_links":16,"agri_unit_proof_files":4,"agri_unresolved_direction_fields":2,"agri_unresolved_unit_fields":3,"agri_web_only_facts":19,"directory_dispositions":{"facts_native_custody_and_read_verified":126,"numeric_sample_excluded_by_publication_gate":8,"qualification_only_no_adopted_fact":76,"same_upstream_observation_inherited":1,"samples_excluded_rights":3,"samples_excluded_rights_or_provenance":16},"directory_records":230,"embedded_independent_audits":4,"explicit_top_level_nulls":1,"group_records":{"agri":100,"domestic":64,"global":51,"root":15},"independent_upstream_total":null,"index_parts":6,"material_findings":0,"material_roles":{"derived_industry_packet":6,"qualification_catalog":14,"raw_fact":42,"user_directory":3},"maximum_full_workflow_envelope_bytes":55475,"new_original_numeric_observations_in_index":0,"non_effect_actual_guarded_failed_runs":2,"non_effect_cases":6,"non_effect_successors_counted_once_in_130":9,"prior_materials":65,"relationship_rows":57,"restored_scalar_leaves":4916,"restored_top_level_metadata_fields":4170,"run_operations":{"industry-read":6,"put-source":65,"read-source":59},"type_counts":{"coverage":230,"erratum":1,"independent_audit":4,"material":65,"non_effect_ledger":1,"qualification_asset":14,"runtime_effect":130,"summary":1,"unit_field_check":16,"unit_qualification":1,"unresolved_fields":1},"typed_records":464},"exact_metadata_restoration":{"all_464_typed_records_equal_expected_full_audit_projection":true,"decoded_typed_rows_sha256":"6a1684fe2b3e9ed19b994f8a363202523340917c3288ba3693ba0f36e378d9d8","presence_indexes_preserve_absent_versus_null":true,"schemas_are_local_to_each_part":true},"external_actions_performed":false,"findings":[],"inputs":[{"bytes":2601,"path":"global/frozen-final/index-candidate-manifest.json","sha256":"7add7698ea14915d35b59710828532c62c53c42c82f083e234d9e22c9e76d44e"},{"bytes":718231,"path":"global/frozen-final/native-effects-and-coverage.json","sha256":"5d2f46a695f68d845e283a90881f1aef2292937a06fb2341f8ec1edd7e1ad54e"},{"bytes":906,"path":"global/frozen-final/freeze-receipt.json","sha256":"561265cb84a3627ebaa477017a2aa69ba0cf7b8acd2f6b83b8617bed1743901e"},{"bytes":48109,"path":"global/build_native_effects_final.py","sha256":"fea7f857cb1103a64a97b3b73b3eb210268750442615bdf5e88e516e8caba0c3"}],"method":"Offline direct per-part typed-table decoding, exact full-audit metadata projection, canonical manifest/ref/run linkage, and corrected/unknown field navigation. Preparation code was read only, never imported or executed.","native_entry_audit":{"all_130_actual_report_refs_match_the_named_material":true,"all_65_materials_resolve_to_existing_local_exact_refs":true,"all_65_puts_have_matching_expected_and_observed_head":true,"consumer_boundaries":"59 read-source retained representations; 6 industry-read declared packets, at most 24 series each; no new source requests/writes.","read_source_upstream_authentication":false,"reads_do_not_require_an_unused_empty_expected_head_to_equal_current_branch_head":true,"refs_and_roles_digest_sha256":"b07af9cb30ab82ccfefd8bd2e576efad5ec8ef3bf16983d327fac1ddd4d10295","research_executed_or_human_acceptance_asserted":false,"run_binding_metadata_digest_sha256":"cfb077b64a5e86f570a8297e4831e69b3f26ec4b90c95e1201b8cb5e961be791"},"non_effect_navigation":{"actual_guarded_failed_runs":["39025123214","39027992319"],"case_evidence_gaps":{"NE-01":"Full plugin response and timestamp absent; saved summary retains error. No fabricated run, ZIP or time.","NE-02":"Failed-run metadata, full log and step response absent. Retained summary supplies run/job and outcome; successor ZIP independently verified.","NE-03":"Selected timestamped log lines and head assertion retained. Full failed-job log and raw branch responses absent; no reconstructed failed-run artifact.","NE-04":"Cannot independently reconstruct the first helper call's code/head values, raw response, request timestamp or precise candidate label from disk; leave them unspecified.","NE-05":"This entry qualifies old-candidate non-effects. Actual reviewed-source publication/readback is tracked by root's separate final effects index.","NE-06":"The original branch metadata response body was not saved; undefined is a parser input symptom, not evidence of HTTP 403, permissions denial or a server error class. Root reports a subsequent fresh branch GET succeeded; its original response is not reconstructed here."},"case_ids":["NE-01","NE-02","NE-03","NE-04","NE-05","NE-06"],"entire_ledger_exactly_equal":true,"ledger":{"bytes":19976,"path":"agri/non-effect-recovery-ledger.json","sha256":"f96ecddcf13afd2dd0cca28c33c744c787c30af43a593c5e22dc4af52e1ae551"},"no_missing_log_or_branch_response_reconstructed":true,"successful_run_ids_already_counted_once":["39024228164","39024869771","39025288067","39025292863","39028117676","39028241856","39030865686","39031013452","39031069930"]},"per_part":[{"absent_schema_slots":28,"complete_workflow_envelope_bytes":54331,"explicit_top_level_nulls":1,"label":"native-effects-final-01","payload_bytes":48391,"payload_sha256":"714d92c6eb8f75eb7aee43259bcb1cbad9b1b33f3807d71e97a53b475daafff5","present_top_level_fields":724,"scalar_leaves":1038,"type_counts":{"material":43,"summary":1},"typed_records":44},{"absent_schema_slots":120,"complete_workflow_envelope_bytes":55475,"explicit_top_level_nulls":0,"label":"native-effects-final-02","payload_bytes":50035,"payload_sha256":"ff4b0828bb4b402dae68eb5de95268a594bc8ee564dbefbac118560279fbf8b1","present_top_level_fields":837,"scalar_leaves":965,"type_counts":{"material":22,"runtime_effect":45},"typed_records":67},{"absent_schema_slots":0,"complete_workflow_envelope_bytes":55462,"explicit_top_level_nulls":0,"label":"native-effects-final-03","payload_bytes":50478,"payload_sha256":"501e3dbbc6d9c6015fe4b6b90baf5a66cf27a3c4117c379fd02a23ea7c051b3e","present_top_level_fields":960,"scalar_leaves":956,"type_counts":{"coverage":5,"runtime_effect":85},"typed_records":90},{"absent_schema_slots":1120,"complete_workflow_envelope_bytes":48720,"explicit_top_level_nulls":0,"label":"native-effects-final-04","payload_bytes":42696,"payload_sha256":"6add9bd153f7353268d52060736d73c46eda4ed8d2b5b4324e7e7adcf0b8726a","present_top_level_fields":1144,"scalar_leaves":887,"type_counts":{"coverage":225,"erratum":1,"unresolved_fields":1},"typed_records":227},{"absent_schema_slots":39,"complete_workflow_envelope_bytes":54749,"explicit_top_level_nulls":0,"label":"native-effects-final-05","payload_bytes":49329,"payload_sha256":"6615aec5d830832161d37b50665fd0287e7dbd0ba50525932f576929b808a534","present_top_level_fields":298,"scalar_leaves":780,"type_counts":{"non_effect_ledger":1,"qualification_asset":14,"unit_field_check":6,"unit_qualification":1},"typed_records":22},{"absent_schema_slots":115,"complete_workflow_envelope_bytes":18796,"explicit_top_level_nulls":0,"label":"native-effects-final-06","payload_bytes":16724,"payload_sha256":"f101cb95239f5c79800554299737613537c90e85aa02294c4536ea4fbc6a6e82","present_top_level_fields":207,"scalar_leaves":290,"type_counts":{"independent_audit":4,"unit_field_check":10},"typed_records":14}],"reviewer":"exhaust_domestic; independent of final-index builder and sole external writer","schema":"native-effects-final-independent-audit/1","scope_limits":["The six final index files are local candidates at the frozen snapshot, not yet indexed as their own native effects. Root records their later publication/readback separately; they are excluded from the 65/130 denominators.","This audit reused the already completed original-file, native-ZIP/member and full retained-data audits. It did not re-fetch any website, re-download any artifact, or rerun native consumers.","The 230 mixed product/family/route entries and 57 relationships are a browseable source survey, not 230 independent upstreams or a proof of universal source exhaustion.","42 raw factual materials, 14 qualification catalogues, 3 browse indexes and 6 derived consumer packets have different roles. Heterogeneous fact objects, physical CSV rows, observations and comparable series must not be added as one denominator.","Original-hashed in agricultural audit counts means a locally retained original-response identity; the underlying native_hashed_original field is inherited terminology. It is not a claim that the complete upstream original was publicly archived or newly authenticated by read-source.","Web-only facts keep empty original-body SHA/bytes/acquired-at fields; bootstrap HTTP 200 receipts do not establish missing unit/trade-direction definitions or data access.","Qualification-only routes, excluded commercial samples, dataset-specific rights and actual missing-log gaps remain explicit. Native storage and successful consumer operation do not supply unrestricted licensing, independent research execution, human acceptance or live monitoring."],"section_check_counts":{"agri_units":99,"coverage":1158,"fact_context_linkage":21,"frozen_identity":7,"full_metadata_projection":465,"independent_evidence":8,"native_linkage":1050,"non_effects":6,"publication_boundary":221,"silk_overlay":4,"typed_decode":516},"silk_navigation":{"affected_native_catalogue":"inventory-domestic-02","affected_native_pointer":"/records/2/necessary_factual_samples/0/survey_fieldwork_period","both_material_and_directory_link_correction":true,"corrected_fact_id":"fact-f5fcc87137c91d0e20ef496e","corrected_material":"domestic-facts-02","directory_record":"domestic-silk-association","erratum_id":"silk-fieldwork-start","old_date":"2026-07-21/2026-07-31","old_frozen_native_bytes_preserved":true,"original_jpeg_sha256":"1a6422f391b7f4edeb173bad606e3fe220fff1c62df83a20a81f1ca5677fe01d","verified_date":"2026-07-27/2026-07-31"},"state":"completed_no_material_findings","unit_navigation":{"field_links":[{"fact_id":"agf-f14fa586a598f01e4f6173eb","material":"agri-facts-reviewed-06","old_fact_id":"agf-1d2617b45984c83697663102","scope":"one of the 14 resolved pending-unit rows","unit":"thousand tonnes"},{"fact_id":"agf-f90621237331e05ace5f94d2","material":"agri-facts-reviewed-06","old_fact_id":"agf-28611c092e8a02467acb7512","scope":"one of the 14 resolved pending-unit rows","unit":"thousand hectares"},{"fact_id":"agf-216722a96af1b894a45fef8b","material":"agri-facts-reviewed-06","old_fact_id":"agf-509a6990fb8b4901ebe44457","scope":"one of the 14 resolved pending-unit rows","unit":"tonnes/hectare"},{"fact_id":"agf-2067f2152ef2f04be05a6b04","material":"agri-facts-reviewed-06","old_fact_id":"agf-05c0dbb651b8d0432d4c9738","scope":"one of the 14 resolved pending-unit rows","unit":"thousand tonnes"},{"fact_id":"agf-c264d14a945011d82cc9d97b","material":"agri-facts-reviewed-06","old_fact_id":"agf-f36e7b1881137657ef8a34c9","scope":"one of the 14 resolved pending-unit rows","unit":"thousand hectares"},{"fact_id":"agf-afaea9b2f085dda1144ac4f9","material":"agri-facts-reviewed-06","old_fact_id":"agf-e1159ecb92301452befc3bbc","scope":"one of the 14 resolved pending-unit rows","unit":"tonnes/hectare"},{"fact_id":"agf-532d05f34c301538fabc3784","material":"agri-facts-reviewed-06","old_fact_id":"agf-26eccfdf6358f78e0fd9d3ff","scope":"one of the 14 resolved pending-unit rows","unit":"thousand tonnes"},{"fact_id":"agf-4869ecf7124f976d973f4f5c","material":"agri-facts-reviewed-07","old_fact_id":"agf-31d9cc83eb2c91231e845239","scope":"one of the 14 resolved pending-unit rows","unit":"thousand hectares"},{"fact_id":"agf-9ff1b5754d435d4df5a6127b","material":"agri-facts-reviewed-07","old_fact_id":"agf-41972b6e49b64775d80b57eb","scope":"one of the 14 resolved pending-unit rows","unit":"tonnes/hectare"},{"fact_id":"agf-5e0b307449e119e18c83006e","material":"agri-facts-reviewed-07","old_fact_id":"agf-b15d6713b9a83ad8eeccd496","scope":"one of the 14 resolved pending-unit rows","unit":"thousand tonnes"},{"fact_id":"agf-cce698dbc29e36c0b257a36f","material":"agri-facts-reviewed-07","old_fact_id":"agf-5b5e04e9d12bf5dcf1e1b0ae","scope":"one of the 14 resolved pending-unit rows","unit":"thousand hectares"},{"fact_id":"agf-e88d0f8afe7a0c6362fe1fe0","material":"agri-facts-reviewed-07","old_fact_id":"agf-7fececf602e9910794f58396","scope":"one of the 14 resolved pending-unit rows","unit":"tonnes/hectare"},{"fact_id":"agf-afb54b2f8eafe0240b259eab","material":"agri-facts-reviewed-02","old_fact_id":"agf-2964dc275b12174a8132de34","scope":"one of the 14 resolved pending-unit rows","unit":"THB/kg"},{"fact_id":"agf-0740e2193ecc4fd5d12126b8","material":"agri-facts-reviewed-05","old_fact_id":"agf-5cee660964f4ae24335a85e3","scope":"prior sugar currency correction outside the 17 pending-unit denominator","unit":"EUR/tonne"},{"fact_id":"agf-f761c4cca067de4aac475dc3","material":"agri-facts-reviewed-02","old_fact_id":"agf-b2f42ad63be8d9bf8e4a33fc","scope":"one of the 14 resolved pending-unit rows","unit":"THB/kg"},{"fact_id":"agf-75a112528ce4405d9bd8e1f6","material":"agri-facts-reviewed-04","old_fact_id":"agf-b531b7fe3fd54ff80934f6fe","scope":"prior sugar currency correction outside the 17 pending-unit denominator","unit":"EUR/tonne"}],"qualification_file":{"bytes":30497,"path":"agri/agri-final-unit-qualification.json","sha256":"ac653c99b6647cee10f3a84437133662b3e61e196e572b7988bd6dcee6e4534c"},"unknown_fields":[{"fact_id":"agf-143ba5e05ba42a8086b18133","field":"trade_direction","material":"agri-facts-reviewed-03"},{"fact_id":"agf-08de7a6942300a7f6e2c0267","field":"trade_direction","material":"agri-facts-reviewed-03"},{"fact_id":"agf-2d56e6ee1f733dd78c47210f","field":"unit","material":"agri-facts-reviewed-06"},{"fact_id":"agf-86c18065462de393c7f14574","field":"unit","material":"agri-facts-reviewed-06"},{"fact_id":"agf-78577ee38e7b1247f8a78503","field":"unit","material":"agri-facts-reviewed-07"}],"value_and_vintage_limits":"No original statistical values added. Workbooks qualify units/status only with two-decimal agreement and no identical-vintage certification. Thai quantity remains kg. Sugar PDF corrects attribution outside the original 17 pending-unit rows."}}
+```
+
+### 六片实际原生还原核验
+
+原文件 SHA-256：2c13d206667da3c0db03fffd4feed6a4e3606c2d32ff0413d44aeb4eec28d475；11,460 B。实际读回还原464条元数据，保留4,170个顶层字段、4,916个标量叶、1个显式null及1,422个缺省schema槽位，与冻结投影相等。
+
+```json
+{"absent_fields_distinct_from_explicit_null":true,"absent_schema_slots_preserved":1422,"actual_native_projection_sha256":"1f17ffd326590c1bd41578decc28439d1bbfcb1bea9a50664bf612142807293e","all_read_inputs_unchanged_during_audit":true,"all_records_and_nested_values_equal_frozen_projection":true,"auditor":"exhaust_agri","boundary":"Verifies only the six already-downloaded final index read-source returns and their retained text/manifest/receipt evidence. The 464 metadata records match the frozen final projection. It does not reauthenticate upstream observations, rerun 65 prior materials, establish source rights, count the index recursively, or claim extra statistical observations. original_verified remains false.","canonical_projection_sha256":"1f17ffd326590c1bd41578decc28439d1bbfcb1bea9a50664bf612142807293e","checked_at":"2026-10-17T12:48:21.911602+00:00","complete_native_text_equals_candidate_and_retained_representation":true,"each_part_uses_its_own_schema":true,"explicit_top_level_nulls_preserved":1,"frozen_and_checker_inputs":{"agri/audit_native_catalogs.py":{"bytes":12442,"sha256":"778c81a9ab004ed25d42f8623119d495927f7fe250a4c69bd92dfc3338c35da1"},"agri/audit_native_effects_final.py":{"bytes":18383,"sha256":"ee087d0817d392cb48544a0ab10c10c8b276be0cdfabf1accc4f4eed66aebf5f"},"domestic/native-effects-final-independent-audit.json":{"bytes":14567,"sha256":"3e5d309d5d079ee10d3e974451388d973052bb6e473fbb25990dde42491d2812"},"global/build_native_effects_final.py":{"bytes":48109,"sha256":"fea7f857cb1103a64a97b3b73b3eb210268750442615bdf5e88e516e8caba0c3"},"global/frozen-final/freeze-receipt.json":{"bytes":906,"sha256":"561265cb84a3627ebaa477017a2aa69ba0cf7b8acd2f6b83b8617bed1743901e"},"global/frozen-final/index-candidate-manifest.json":{"bytes":2601,"sha256":"7add7698ea14915d35b59710828532c62c53c42c82f083e234d9e22c9e76d44e"},"global/frozen-final/native-effects-and-coverage.json":{"bytes":718231,"sha256":"5d2f46a695f68d845e283a90881f1aef2292937a06fb2341f8ec1edd7e1ad54e"}},"indexed_prior_materials":65,"indexed_prior_successful_runtime_effects":130,"metadata_records":464,"native_order_equals_frozen_candidates":true,"native_read_runs":[39033599782,39033663638,39033730274,39033796582,39033859425,39033918106],"native_rows_in_frozen_order_sha256":"6a1684fe2b3e9ed19b994f8a363202523340917c3288ba3693ba0f36e378d9d8","network_runtime_github_actions_by_auditor":0,"new_index_read_runs_are_separate_from_prior_indexed_effects":true,"no_duplicate_record_ids_within_type":true,"non_effect_ledger_and_missing_original_log_gaps_preserved":true,"ordered_digest_matches_prior_independent_candidate_audit":true,"original_statistical_observations_added_by_this_index":0,"part_audits":[{"artifact_id":12101610540,"artifact_sha256":"e7a8c6711c1d808d8ea4ea55e8e96077e3cd8100545bc29adc5429d23e804612","availability":"stored-representation","code_sha":"050e2afb78320ec60f0042d18a247cfb46f7948a","exact_record_data_match_to_frozen_projection":true,"index_records":44,"label":"native-effects-final-01","native_data_equals_entire_candidate_text":true,"original_verified":false,"presence":{"absent_schema_slots":28,"explicit_null_top_level_fields":1,"present_top_level_fields":724},"record_types":{"material":43,"summary":1},"report_sha256":"b2c95f1e3aa8e8b6d33ae2554220f1affdc2604c2a9de552b60bb1104e44dd20","representation_bytes":43083,"representation_sha256":"e5a65332b5357708d56ad56663425a215ed306d7724cd464c7e8e11bf135f9a5","retained_retrieved_manifest_and_content_equal_native":true,"run":39033599782,"schema_widths":{"material":17,"summary":21},"source_input_version":"714d92c6eb8f75eb7aee43259bcb1cbad9b1b33f3807d71e97a53b475daafff5","source_ref":{"manifest":{"commit":"0fcdb9aee56cd0e4d25f9ddcb0f464aba4cc6a8f","path":"source-views/native-effects-final-01/714d92c6eb8f75eb7aee43259bcb1cbad9b1b33f3807d71e97a53b475daafff5/manifest.json","repository":"auguspp/Decision-OS-2","sha256":"1cf18b96f7a3aaf27c7386589708d04fd008f578ca039b08c9c085f826f8bdb1"},"selection":{"columns":[],"end":null,"kind":"all","start":null}}},{"artifact_id":12101660452,"artifact_sha256":"1ff5333cc0825fd8a966dce137547bad9ffbbc283df822ccf0cda10fdc0dcd2d","availability":"stored-representation","code_sha":"050e2afb78320ec60f0042d18a247cfb46f7948a","exact_record_data_match_to_frozen_projection":true,"index_records":67,"label":"native-effects-final-02","native_data_equals_entire_candidate_text":true,"original_verified":false,"presence":{"absent_schema_slots":120,"explicit_null_top_level_fields":0,"present_top_level_fields":837},"record_types":{"material":22,"runtime_effect":45},"report_sha256":"dec451acf54f574799c339fa3aee6764b7f72b1faa2e80728559386906fd3ea5","representation_bytes":44977,"representation_sha256":"4fca0de04a7f8b5a2c078ff5a29118847c33fdd95fa5d76c7cd9a122fefd43d8","retained_retrieved_manifest_and_content_equal_native":true,"run":39033663638,"schema_widths":{"material":21,"runtime_effect":11},"source_input_version":"ff4b0828bb4b402dae68eb5de95268a594bc8ee564dbefbac118560279fbf8b1","source_ref":{"manifest":{"commit":"1c8b93157db20953348cdf3e752bf4c0c4d626b6","path":"source-views/native-effects-final-02/ff4b0828bb4b402dae68eb5de95268a594bc8ee564dbefbac118560279fbf8b1/manifest.json","repository":"auguspp/Decision-OS-2","sha256":"6a28973e7adddadc8ccf25ebe214287e7a244b3e815f01f581650b4c3240b38e"},"selection":{"columns":[],"end":null,"kind":"all","start":null}}},{"artifact_id":12101491658,"artifact_sha256":"2361a83cf5e886f0a6a0dc0d5497f9b0007f24216386702a582b12c1c41a951e","availability":"stored-representation","code_sha":"050e2afb78320ec60f0042d18a247cfb46f7948a","exact_record_data_match_to_frozen_projection":true,"index_records":90,"label":"native-effects-final-03","native_data_equals_entire_candidate_text":true,"original_verified":false,"presence":{"absent_schema_slots":0,"explicit_null_top_level_fields":0,"present_top_level_fields":960},"record_types":{"coverage":5,"runtime_effect":85},"report_sha256":"f36c63a1f6e5a0bfa16004fcfe029309aec1020d6c7f6409087a15296035a456","representation_bytes":45648,"representation_sha256":"2f9821451176f22cb8d334b3c4de88d04d5188b8883ba698677316341430e324","retained_retrieved_manifest_and_content_equal_native":true,"run":39033730274,"schema_widths":{"coverage":5,"runtime_effect":11},"source_input_version":"501e3dbbc6d9c6015fe4b6b90baf5a66cf27a3c4117c379fd02a23ea7c051b3e","source_ref":{"manifest":{"commit":"cfd52dea5a6b473f6197d8e1d3aadd8ccbcee558","path":"source-views/native-effects-final-03/501e3dbbc6d9c6015fe4b6b90baf5a66cf27a3c4117c379fd02a23ea7c051b3e/manifest.json","repository":"auguspp/Decision-OS-2","sha256":"2c82e9872db11f1016974f32c02fd6cd9c3352b45a505cb1e46cddbb2834764d"},"selection":{"columns":[],"end":null,"kind":"all","start":null}}},{"artifact_id":12101491761,"artifact_sha256":"109cb83407c02e804b606ddff663a2d1dd185788132b11fc32b1e04b7710896d","availability":"stored-representation","code_sha":"050e2afb78320ec60f0042d18a247cfb46f7948a","exact_record_data_match_to_frozen_projection":true,"index_records":227,"label":"native-effects-final-04","native_data_equals_entire_candidate_text":true,"original_verified":false,"presence":{"absent_schema_slots":1120,"explicit_null_top_level_fields":0,"present_top_level_fields":1144},"record_types":{"coverage":225,"erratum":1,"unresolved_fields":1},"report_sha256":"9caf5f70df13af00a029bfe1b30dd19348b8c4a45d05a1a8a8167b14a3476b89","representation_bytes":37346,"representation_sha256":"1e191e1dc72310750e046524f1c71fe1d604b915271cd80058d4d17f76bfd002","retained_retrieved_manifest_and_content_equal_native":true,"run":39033796582,"schema_widths":{"coverage":10,"erratum":10,"unresolved_fields":4},"source_input_version":"6add9bd153f7353268d52060736d73c46eda4ed8d2b5b4324e7e7adcf0b8726a","source_ref":{"manifest":{"commit":"349c656a33b22d988722f77e57802fb5e7c6bc0f","path":"source-views/native-effects-final-04/6add9bd153f7353268d52060736d73c46eda4ed8d2b5b4324e7e7adcf0b8726a/manifest.json","repository":"auguspp/Decision-OS-2","sha256":"c825d3a2abed9664fa3f4fd05ba412f9101e114a45f5ebc55c78402e93091522"},"selection":{"columns":[],"end":null,"kind":"all","start":null}}},{"artifact_id":12101054076,"artifact_sha256":"17efa60a2fd7bb3df0c5a42b7e704fcbced9e02a7044094de91bfcc409e4918a","availability":"stored-representation","code_sha":"050e2afb78320ec60f0042d18a247cfb46f7948a","exact_record_data_match_to_frozen_projection":true,"index_records":22,"label":"native-effects-final-05","native_data_equals_entire_candidate_text":true,"original_verified":false,"presence":{"absent_schema_slots":39,"explicit_null_top_level_fields":0,"present_top_level_fields":298},"record_types":{"non_effect_ledger":1,"qualification_asset":14,"unit_field_check":6,"unit_qualification":1},"report_sha256":"52ec6d992c77cacf985378ecccde4dd2b6010f62da1b16acfc1d6d81432df291","representation_bytes":44281,"representation_sha256":"022622e101b5c76258c73a5bc9d01c134bb2bf6206fec85b4c1545e38e1a178f","retained_retrieved_manifest_and_content_equal_native":true,"run":39033859425,"schema_widths":{"non_effect_ledger":5,"qualification_asset":14,"unit_field_check":21,"unit_qualification":10},"source_input_version":"6615aec5d830832161d37b50665fd0287e7dbd0ba50525932f576929b808a534","source_ref":{"manifest":{"commit":"3ee20a42a9d82517932b444e43b969342254e38e","path":"source-views/native-effects-final-05/6615aec5d830832161d37b50665fd0287e7dbd0ba50525932f576929b808a534/manifest.json","repository":"auguspp/Decision-OS-2","sha256":"29c462969fdfc6685a969db72174d3a5959d03ed1c6944f711970f8ffc884c3b"},"selection":{"columns":[],"end":null,"kind":"all","start":null}}},{"artifact_id":12101621674,"artifact_sha256":"03119a604d304d611e22d7794bac72a9ada42cb4e98a6d2493851aa5d644f671","availability":"stored-representation","code_sha":"050e2afb78320ec60f0042d18a247cfb46f7948a","exact_record_data_match_to_frozen_projection":true,"index_records":14,"label":"native-effects-final-06","native_data_equals_entire_candidate_text":true,"original_verified":false,"presence":{"absent_schema_slots":115,"explicit_null_top_level_fields":0,"present_top_level_fields":207},"record_types":{"independent_audit":4,"unit_field_check":10},"report_sha256":"8ac10f89749d1613ac06051cbeaa1657d88c468ec6415e4a8609d64ffcfdc97e","representation_bytes":13350,"representation_sha256":"2b7215d96a9efebcdcee22ec357cb31b1e65b134172619a9595587f2bb533c09","retained_retrieved_manifest_and_content_equal_native":true,"run":39033918106,"schema_widths":{"independent_audit":8,"unit_field_check":29},"source_input_version":"f101cb95239f5c79800554299737613537c90e85aa02294c4536ea4fbc6a6e82","source_ref":{"manifest":{"commit":"9c4417ffb26a68c378fcd3f3eccf7adb9bad3a9c","path":"source-views/native-effects-final-06/f101cb95239f5c79800554299737613537c90e85aa02294c4536ea4fbc6a6e82/manifest.json","repository":"auguspp/Decision-OS-2","sha256":"aeaccf73a3bd9c85ac015c05ffa7aa8495098b2533ef17f644327fef55fbe922"},"selection":{"columns":[],"end":null,"kind":"all","start":null}}}],"parts":6,"prior_65_source_validations_reexecuted":0,"record_types":{"coverage":230,"erratum":1,"independent_audit":4,"material":65,"non_effect_ledger":1,"qualification_asset":14,"runtime_effect":130,"summary":1,"unit_field_check":16,"unit_qualification":1,"unresolved_fields":1},"scalar_leaves_compared":4916,"schema":"native-effects-final-independent-restoration/1","silk_erratum_and_agri_unknowns_and_unit_evidence_links_preserved":true,"state":"passed","top_level_metadata_fields_compared":4170,"upstream_original_reacquisitions":0}
+```

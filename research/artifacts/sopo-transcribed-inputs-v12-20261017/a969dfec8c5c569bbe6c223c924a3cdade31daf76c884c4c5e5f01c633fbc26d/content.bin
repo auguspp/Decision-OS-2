@@ -1,0 +1,133 @@
+{
+  "as_of": "2026-10-16",
+  "prepared_date": "2026-10-17",
+  "time_zone": "Asia/Singapore",
+  "source_status": "Public issuer text/table search extracts, not downloaded original PDF; existing Relay input bytes retained separately.",
+  "cash_notes": {
+    "report_date": "2026-06-30",
+    "unit": "CNY ten-thousand (万元)",
+    "source_id": "W4",
+    "other_monetary_total": "12176.49",
+    "banks": [
+      {
+        "bank": "民生银行",
+        "balance": "5436.49",
+        "restricted_component": "2390.00",
+        "description": "Only declared acceptance-bill guarantee portion, NOT the entire account balance"
+      },
+      {
+        "bank": "苏商银行",
+        "balance": "1211.42",
+        "restricted_component": null,
+        "description": "Declared unrestricted; arithmetic restriction sum uses only expressly restricted components, null is not missing amount inferred as zero"
+      },
+      {
+        "bank": "江苏银行",
+        "balance": "5082.98",
+        "restricted_component": "80.00",
+        "description": "Only declared wage-guarantee portion"
+      },
+      {
+        "bank": "工商银行",
+        "balance": "445.60",
+        "restricted_component": "445.60",
+        "description": "Entire declared balance is acceptance-bill guarantee"
+      }
+    ],
+    "assertion_scope": "At 2026-06-30 issuer states no other restricted monetary funds outside acceptance-bill and wage guarantees. Not independent bank confirmation.",
+    "rounding": "Bank table is rounded to 0.01万元 (100 CNY); derived total must remain approximate."
+  },
+  "q1_product": {
+    "report_period": "2026-01-01/2026-03-31",
+    "source_id": "W5",
+    "audited": false,
+    "rows": [
+      {
+        "product": "醋酸",
+        "sales_wan_t": "28.66",
+        "revenue_wan_cny": "64980.90",
+        "unit_sale_cny_t": "2267.30",
+        "unit_cost_cny_t": "2010.36",
+        "reported_unit_gross_cny_t": "256.95",
+        "reported_gross_pct": "11.33",
+        "prior_year_unit_gross_cny_t": "298.33"
+      },
+      {
+        "product": "醋酸乙酯",
+        "sales_wan_t": "6.38",
+        "revenue_wan_cny": "30249.35",
+        "unit_sale_cny_t": "4741.28",
+        "unit_cost_cny_t": "4437.85",
+        "reported_unit_gross_cny_t": "303.43",
+        "reported_gross_pct": "6.40",
+        "prior_year_unit_gross_cny_t": "99.14"
+      }
+    ]
+  },
+  "q2_mixed_products": {
+    "report_period": "2026-04-01/2026-06-30",
+    "source_id": "W6",
+    "audited": false,
+    "rows": [
+      {
+        "product": "醋酸及衍生品",
+        "production_t": "431092.81",
+        "sold_t": "367578.95",
+        "revenue_wan_cny": "124845.23"
+      },
+      {
+        "product": "甲醇",
+        "production_t": "236051.34",
+        "sold_t": "43771.90",
+        "revenue_wan_cny": "9986.76"
+      }
+    ],
+    "notes": "Issuer states some intermediate acetic products and some methanol are self-consumed. Production less sales is NOT an inventory roll-forward or an exact self-use measurement.",
+    "published_pure_acetic_ex_tax_price_range": [
+      "2212",
+      "3774"
+    ]
+  },
+  "receivable_ratio_note": {
+    "source_id": "W5A",
+    "report_date": "2026-06-30",
+    "reported_notes_plus_financing_wan_cny": "65082.31",
+    "reported_annualized_revenue_ratio_pct": "9.49",
+    "prior_year_end_ratio_pct": "10.28",
+    "ratio_definition": "June 30 ratio uses annualized half-year revenue; year-end ratio uses annual revenue. Not turnover days or cash-conversion rate."
+  },
+  "regulatory_version_note": {
+    "source_id": "W8",
+    "document_no": "〔2026〕63号",
+    "decision_date": "2026-06-17",
+    "correction_announcement_date": "2026-04-18",
+    "financial_periods": [
+      "2022",
+      "2023",
+      "2024"
+    ],
+    "scopes": [
+      "consolidated",
+      "parent"
+    ],
+    "affected_items": [
+      "revenue",
+      "operating cost",
+      "R&D expense",
+      "income tax expense"
+    ],
+    "measure": "warning letter",
+    "not_established": "Does not assert 2025/2026 values are wrong, current fraud, or any new 2026 quarter restatement."
+  },
+  "project_status": {
+    "source_id": "W7",
+    "document_date": "2026-09",
+    "publication_date": "2026-09-21",
+    "phase1": "civil work completed, equipment installation; mechanical completion planned for end-2026",
+    "dmc": "civil-construction stage",
+    "current_cash_return": "not-established",
+    "funding_result": "not-verified",
+    "future_payment_schedule": "not-verified",
+    "forecast_gap_1831_million_from_secondary": "not-adopted-without-complete-current-original-bridge"
+  }
+}

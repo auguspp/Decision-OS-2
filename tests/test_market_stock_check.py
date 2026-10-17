@@ -154,7 +154,7 @@ class MarketStockCheckTests(unittest.TestCase):
 
     def test_workflow_adds_choice_without_new_permission_or_entrypoint(self):
         text = (ROOT_DIR/'.github/workflows/market-source-check.yml').read_text()
-        self.assertIn('options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members]', text)
+        self.assertIn('options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage]', text)
         self.assertIn('default: sample', text)
         self.assertIn('decision_kernel.interfaces.market_source_check_cli', text)
         self.assertIn('contents: read', text)

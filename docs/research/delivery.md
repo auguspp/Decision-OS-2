@@ -67,7 +67,7 @@ decision-os store --binding readonly-binding.json open-delivery --ref research-r
 decision-os store --binding readonly-binding.json read-artifact --ref artifact-ref.json
 ```
 
-仓内 config/store-binding.json 仍为只读，不修改它来自动提权；本地 `--path` 仍仅限合成测试。`put-artifact --input` 的对象为 `{artifact,rights_confirmed,rights_basis}`，支持预先保管获准文件。read-artifact 返回已校验 base64；消费者自行决定是否保存及如何打开，不能直接把不可信 name 当本地路径。
+仓内 config/store-binding.json 仍为只读，不修改它来自动提权；本地 `--path` 仍仅限合成测试。`put-artifact --input` 的对象为 `{artifact,rights_confirmed,rights_basis}`，支持预先保管获准文件。CLI在取得保存reference后再用新只读reader核验；该后置核验失败时仍输出原reference、`readback.bytes_verified=false`和失败代码，并以exit2退出。尚未取得保存回执的异常仍按原错误类别处理；未知写入效果按原意图对账。read-artifact 返回已校验 base64；消费者自行决定是否保存及如何打开，不能直接把不可信 name 当本地路径。
 
 原 research-runtime.yml 提供 deliver、reconcile-delivery、verify-delivery、open-delivery、put-artifact、reconcile-artifact、read-artifact。写操作只有 deliver/put-artifact 加原 put-source/checkpoint；验证、阅读和对账都在只读 job，不携带写权限。既有 code_sha、原意图、expected_head 及公开产物约束保持。所有 inputs 和 Actions 产物都可能公开，编码不等于加密。
 
@@ -79,9 +79,9 @@ decision-os store --binding readonly-binding.json read-artifact --ref artifact-r
 
 成功 checkpoint 的 reference 不因随后核验失败而消失。返回保存回执、独立 delivery_verification 和独立 numerical_audit。`verified-declared-inventory` 仅表示声明的适用项均有可读版本；missing/rights-excluded/unsupported 为 partial，读取损坏/权限失败为 failed，没有清单为 not-declared。CLI/宿主对非完整清单非零退出但保留 JSON 与已保存回执；不存在“绿色表示整篇Full已完成”。对账仅重建已存结果，不重建文件内容。
 
-保存和随后fresh-reader在同一宿主调用内共用512次API预算；新reader的对象及祖先证明缓存独立，不继承writer缓存，也不重置请求数。GitHubStore有界复用已验证的确切提交祖先关系，减少同一清单的重复compare，每次仍读取实际仓库权限和当前分支。32项清单上限不保证任意来源数、前驱深度或容量组合都能在预算内完成。
+保存和随后fresh-reader在同一次CLI命令或宿主调用内共用512次API预算；新reader的对象及祖先证明缓存独立，不继承writer缓存，也不重置请求数。GitHubStore有界复用已验证的确切提交祖先关系，减少同一清单的重复compare，每次仍读取实际仓库权限和当前分支。32项清单上限不保证任意来源数、前驱深度或容量组合都能在预算内完成。
 
-若已取得明确的published修订回执、只是随后读回耗尽预算，可在原授权下用该确切reference单独调用只读`verify-delivery`；不为补核验重交deliver。核对原输入、发布阶段和实际记录后再决定是否还需写入。独立核验全部retained项成功且errors为空时，声明的missing/rights-excluded/unsupported仍使结果保持partial及非零退出，不能据工作流失败误称原件未保管，也不能为追求绿灯重跑或抹去缺口。
+若已取得明确的published修订回执、只是随后读回耗尽预算，可在原授权下用该确切reference单独调用只读`verify-delivery`；已取得文件保存回执时可同样单独调用`read-artifact`。新明确调用有自己的预算，不为补核验重交写操作。核对原输入、发布阶段和实际记录后再决定是否还需写入。独立核验全部retained项成功且errors为空时，声明的missing/rights-excluded/unsupported仍使结果保持partial及非零退出，不能据工作流失败误称原件未保管，也不能为追求绿灯重跑或抹去缺口。
 
 Full 首次交付、成功重放和 `reconcile-delivery` 都返回绑定原确切研究版本的 `source_use_acceptance` 待核入口。即使 current 已前进，旧意图回执仍指向原版本；保存与读回不会把来源使用状态升级为通过。Quick 不增加 Full 专属要求。
 

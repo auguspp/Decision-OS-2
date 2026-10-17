@@ -4,7 +4,7 @@ from pathlib import Path
 
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.research_delivery import ResearchDelivery, verify_fresh
-from decision_kernel.domain.records import BlobRef, checked_text, require
+from decision_kernel.domain.records import BlobRef, RecordError, checked_text, require
 from decision_kernel.domain.research_artifacts import ArtifactInput, artifact_reference
 
 COMMANDS = ("deliver-research", "verify-delivery", "open-delivery", "put-artifact", "read-artifact")
@@ -32,7 +32,11 @@ def execute(args, store, load, fresh_reader):
                 and payload["rights_confirmed"] is True, "ARTIFACT_RIGHTS_NOT_CONFIRMED")
         checked_text(payload["rights_basis"], limit=4096)
         ref = ResearchArtifacts(store).put(args.submission_id, ArtifactInput.from_dict(payload["artifact"]))
-        verified = ResearchArtifacts(fresh_reader()).read(ref, include_data=False)
+        try:
+            verified = ResearchArtifacts(fresh_reader()).read(ref, include_data=False)
+        except RecordError:
+            verified = {"status": "failed", "error": "FRESH_ARTIFACT_READBACK_FAILED",
+                        "bytes_verified": False, "content_assessment": "not-performed", "executed": False}
         return {"reference": asdict(ref), "readback": verified}
     if args.store_command == "read-artifact":
         return ResearchArtifacts(store).read(artifact_reference(load(args.ref)))

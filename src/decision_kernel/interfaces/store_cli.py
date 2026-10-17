@@ -89,7 +89,7 @@ def execute(args: argparse.Namespace) -> int:
             if args.store_command in delivery_commands.COMMANDS + odds_commands.COMMANDS:
                 def fresh_reader():
                     return VersionedStore(GitStore(args.path) if args.binding is None else
-                        GitHubStore(replace(binding, write_enabled=False), GitHubAPI.from_environment()))
+                        GitHubStore(replace(binding, write_enabled=False), backend.api))
                 handler = odds_commands if args.store_command in odds_commands.COMMANDS else delivery_commands
                 result = handler.execute(args, store, _load, fresh_reader)
             elif args.store_command in research_commands.COMMANDS:
@@ -115,6 +115,8 @@ def execute(args: argparse.Namespace) -> int:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         if args.store_command in odds_commands.WRITE_COMMANDS:
             return 0 if result["readback"]["status"] == "verified" else 2
+        if args.store_command == "put-artifact":
+            return 0 if result["readback"].get("bytes_verified") is True else 2
         if args.store_command in ("deliver-research", "verify-delivery"):
             status = result.get("delivery_verification", result).get("status")
             return 0 if status == "verified-declared-inventory" else 2

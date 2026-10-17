@@ -259,6 +259,8 @@ class SourceUseAudit:
         Each selected snapshot must still have a complete fixed cursor chain. A
         newer failed/unrooted scan cannot borrow completeness from an older one.
         Same-cursor retry results use native run start order, not caller list order.
+        A new root may change pagination; only older, unreachable pages retire to
+        history. Reachable old pages and newer orphan attempts still constrain it.
         """
         from datetime import datetime
         def stamp(page):
@@ -280,6 +282,19 @@ class SourceUseAudit:
             # stay unproven rather than borrowing earlier pages from another tree.
             roots = [p for p in current if p["input_cursor"] is None]
             epoch = max(map(stamp, roots or current))
+            if roots:
+                cursor, reachable = encoded(None), set()
+                while cursor in cursors and cursor not in reachable:
+                    reachable.add(cursor)
+                    successor = cursors[cursor]["next_cursor"]
+                    if successor is None:
+                        break
+                    cursor = encoded(successor)
+                # Changing page size can supersede an old route at this same
+                # immutable snapshot. Never drop a required old tail, or hide a
+                # later orphan/failure merely because the root does not reach it.
+                current = [p for cursor, p in cursors.items()
+                           if cursor in reachable or stamp(p) >= epoch]
             if key[0] not in selected or epoch > selected[key[0]][0]:
                 selected[key[0]] = (epoch,current)
             history.extend({"run_id":p["receipt"]["run_id"], "run_attempt":p["receipt"]["run_attempt"],

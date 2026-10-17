@@ -59,6 +59,17 @@ jobs:
           path: ${{ runner.temp }}/dos2-ashare-data/result.json
           if-no-files-found: warn
           retention-days: 7
+  rejected-sync:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true || inputs.public_rights_confirmed != true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Fail without source access when public redistribution rights are not established
+        run: |
+          echo "::error::ASHARE_PUBLIC_RIGHTS_REQUIRED_OR_ACCESS_NOT_CONFIRMED"
+          exit 1
   sync:
     if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && inputs.access_and_custody_confirmed == true && inputs.public_rights_confirmed == true
     runs-on: ubuntu-latest

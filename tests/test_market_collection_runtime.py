@@ -501,7 +501,12 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert inputs["operation"]["options"] == ["status", "sync"]
     assert inputs["access_and_custody_confirmed"]["default"] == "false"
     assert inputs["public_rights_confirmed"]["default"] == "false"
-    assert set(flow["jobs"]) == {"sync", "status"}
+    assert set(flow["jobs"]) == {"sync", "status", "rejected-sync"}
+    rejected = flow["jobs"]["rejected-sync"]
+    assert rejected["permissions"] == {"contents": "read"}
+    assert rejected["if"].count("!= true") == 2
+    assert len(rejected["steps"]) == 1 and "exit 1" in rejected["steps"][0]["run"]
+    assert "secrets." not in str(rejected) and "actions/checkout" not in str(rejected)
     assert flow["jobs"]["sync"]["permissions"] == {"contents": "write"}
     assert flow["jobs"]["status"]["permissions"] == {"contents": "read"}
     assert "inputs.public_rights_confirmed == true" in flow["jobs"]["sync"]["if"]

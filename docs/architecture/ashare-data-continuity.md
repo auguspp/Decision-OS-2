@@ -62,7 +62,7 @@ python -m decision_kernel.interfaces.market_collection_cli read \
 
 GitHub Actions 的 `decision-os-ashare-data` 仅手动 `main` 运行 `status` 或 `sync`，填写精确 `code_sha` 与 selection；`status` 只读，**不需要来源密钥或公开授权声明**。如果尚无市场集合，返回 `ASHARE_COLLECTION_NOT_RETAINED`，并不表示空数据已经通过验收。
 
-`sync` 每次 1..32 个明确有限单元。操作人必须分别确认 **原来源访问及保管范围** `access_and_custody_confirmed` 和 **所选全部来源行可公开再分发的独立法律/许可依据** `public_rights_confirmed`。只有后者已经由证据确认时才可勾选；同意使用公开 `records`、购买接口访问权、知道密钥、或资料来自公开信息，都不是许可依据。两个确认任一缺失，workflow 不进入 sync job，入口自身也在任何来源 HTTP 和 Store 写入之前拒绝。不能为取得绿灯而绕过该检查。
+`sync` 每次 1..32 个明确有限单元。操作人必须分别确认 **原来源访问及保管范围** `access_and_custody_confirmed` 和 **所选全部来源行可公开再分发的独立法律/许可依据** `public_rights_confirmed`。只有后者已经由证据确认时才可勾选；同意使用公开 `records`、购买接口访问权、知道密钥、或资料来自公开信息，都不是许可依据。两个确认任一缺失，workflow 会执行**无源凭据的拒绝作业并明确失败**，不进入 sync job；入口自身也在任何来源 HTTP 和 Store 写入之前拒绝。不能为取得绿灯而绕过该检查。
 
 通过许可核查后，直接再次显式调度 `sync`，原断点、分页、失败预算和原始 SourceRef 保持。不会循环定时或后台重试，也不会因跳到新 generation 恢复耗尽预算。
 

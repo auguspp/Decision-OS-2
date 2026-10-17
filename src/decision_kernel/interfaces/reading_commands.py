@@ -8,7 +8,7 @@ OPERATION = "reading-room"
 COMMAND = "research-room"
 
 
-def preflight(operation, payload):
+def preflight(operation, payload, *, public=True):
     if operation != OPERATION:
         return
     require(isinstance(payload, dict) and "plan" in payload and set(payload) <= {
@@ -16,6 +16,9 @@ def preflight(operation, payload):
         "public_material_custody_confirmed", "public_sources_custody_confirmed"},
         "ROOM_PAYLOAD_INVALID")
     plan = plan_input(payload["plan"])
+    require(type(public) is bool, "ROOM_EXPORT_MODE_INVALID")
+    if not public:
+        return  # Shape checks also apply to private or local export.
     require(payload.get("public_research_custody_confirmed") is True, "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
     require(plan["agenda"] is None or payload.get("public_feedback_custody_confirmed") is True,
             "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
@@ -31,8 +34,7 @@ def preflight(operation, payload):
 
 
 def perform(store, payload, *, public=True, market_registry=None):
-    if public:
-        preflight(OPERATION, payload)
+    preflight(OPERATION, payload, public=public)
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
     reads = _SourceReads(store.read_source)
     result = ReadingRoom(store, source_reader=reads, market_registry=market_registry).build(

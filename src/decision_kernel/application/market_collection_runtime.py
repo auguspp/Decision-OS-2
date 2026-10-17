@@ -15,6 +15,7 @@ from decision_kernel.application.market_collection_reading import (
 from decision_kernel.application.market_custody import market_read_scope
 from decision_kernel.application.market_capacity import market_capacity
 from decision_kernel.domain.records import RecordError, digest, encoded, identifier, require
+from decision_kernel.infrastructure.github_store import MAX_REQUESTS, GitHubRateLimits
 
 MAX_WORK_UNITS = 32
 SOURCE_ADMISSION_API_REQUESTS = 240
@@ -70,7 +71,16 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
             progress(deepcopy(receipt))
 
     report()
+    api = None
     for number in range(1, max_work_units + 1):
+        previous_limits = getattr(api, "rate_limits", None)
+        if isinstance(previous_limits, GitHubRateLimits) and not previous_limits.admits(MAX_REQUESTS):
+            # Stop before constructing another API/writer. An explicitly bounded
+            # unit does not renew the native repository's shared hourly quota.
+            receipt.update(status="paused", reason_code="ASHARE_REMOTE_RATE_LIMIT",
+                           store_rate_limits=previous_limits.receipt())
+            report()
+            break
         store, fresh, api = open_unit(operation == "sync")
         reader = fresh()
         with market_read_scope(reader) as grouped:
@@ -110,6 +120,18 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
             break
         before = None if collection is None else digest(encoded(collection["units"]))
         completed_requests = receipt["source_requests"]
+        native_rate_pause = False
+
+        def quota_available():
+            limits = getattr(api, "rate_limits", None)
+            return not isinstance(limits, GitHubRateLimits) or limits.admits(
+                max(0, MAX_REQUESTS - api._requests))
+
+        if not quota_available():
+            receipt.update(status="paused", reason_code="ASHARE_REMOTE_RATE_LIMIT",
+                           store_rate_limits=api.rate_limits.receipt())
+            report()
+            break
 
         def update(value):
             receipt["latest"] = value
@@ -120,6 +142,10 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
         # No API is recreated by this admission callback. The successful plan,
         # attempts, pages, pause and final collection must all fit this same unit.
         def pause():
+            nonlocal native_rate_pause
+            if not quota_available():
+                native_rate_pause = True
+                return "STORAGE_BUDGET"
             return "STORAGE_BUDGET" if api is not None and api._requests >= SOURCE_ADMISSION_API_REQUESTS else None
 
         try:
@@ -150,7 +176,7 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
             receipt["status"] = "complete"
             # This is the normal exact reader, within the same completed unit's
             # API budget, with no source credential or HTTP dependency.
-            if api is None or api._requests <= 448:
+            if (api is None or api._requests <= 448) and quota_available():
                 reading = read_collection_version(reference, registry, fresh(), read_as_of=now.isoformat())
                 receipt["health"] = health_receipt(reading)
                 receipt["work_units"][-1]["store_api_requests"] = getattr(api, "_requests", None)
@@ -160,7 +186,12 @@ def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work
             receipt.update(status="blocked", reason_code="ASHARE_NO_PROGRESS")
         else:
             receipt["status"] = "partial"
+        limits = getattr(api, "rate_limits", None)
+        if isinstance(limits, GitHubRateLimits):
+            receipt["store_rate_limits"] = limits.receipt()
+        if native_rate_pause and receipt["status"] == "partial":
+            receipt.update(status="paused", reason_code="ASHARE_REMOTE_RATE_LIMIT")
         report()
-        if receipt["status"] in {"blocked", "complete"}:
+        if receipt["status"] in {"blocked", "complete", "paused"}:
             break
     return {"receipt": receipt, "reference": reference, "reading": reading if operation == "read" else None}

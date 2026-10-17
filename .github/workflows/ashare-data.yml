@@ -47,7 +47,7 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Read the existing public records collection without source access
+      - name: Read the existing records collection with native privacy verification and no source access
         env:
           DECISION_OS_MARKET_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"

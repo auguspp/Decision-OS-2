@@ -16,7 +16,7 @@ from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.git_store import GitStore
-from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubRateLimits, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.interfaces.store_cli import _load
 
@@ -62,9 +62,12 @@ def _verified_private_upgrade(binding, token):
 
 
 def _open_remote(binding, token):
+    rate_limits = GitHubRateLimits()
     def open_unit(write):
         require(not write or binding.write_enabled, "REMOTE_READ_ONLY")
         api = GitHubAPI(token)
+        # Finite per-unit counters are separate from GitHub's repository quota.
+        api.rate_limits = rate_limits
         readonly = replace(binding, write_enabled=False)
         store = VersionedStore(GitHubStore(binding if write else readonly, api))
         def fresh():
@@ -135,6 +138,10 @@ def run_runtime(event, env, out, *, execute=run_collection):
         saved.update(status="blocked", reason_code=_reason(exc))
         _save_receipt(receipt_path, saved)
         return 2
+    finally:
+        # This is the same allowlisted engineering receipt as the artifact.
+        # Native job logs remain diagnosable when an artifact cannot be fetched.
+        print(encoded(_load(receipt_path)).decode(), end="")
 
 
 def main(argv=None):

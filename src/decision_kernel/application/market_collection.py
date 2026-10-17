@@ -269,6 +269,7 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
     """
     from decision_kernel.application.market_custody import (
         authorize_market_custody, fresh_market_reader, retain_market_query, restore_market_query,
+        market_read_scope,
     )
     from decision_kernel.application.market_collection_custody import (
         retain_market_checkpoint, restore_market_checkpoint,
@@ -289,17 +290,20 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
                              public_rights_confirmed=public_rights_confirmed)
     reader = fresh_market_reader(store, fresh_reader)
     previous_ref = asdict(previous_ref) if isinstance(previous_ref, SourceRef) else previous_ref
-    previous = None if previous_ref is None else restore_market_collection(previous_ref, registry, reader)["collection"]
-    clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
-    at = clock(); source_time(at)
-    collection = _new_collection(plan, previous, previous_ref, attempt_id, at, registry)
-    chain = inspect_market_chain(reader, registry, collection_id=plan["collection_id"])
-    current = chain["reference"]
-    if current is not None:
-        require(same_reference(previous_ref, current), "ASHARE_COLLECTION_STALE_REFERENCE")
-    if previous is not None and previous["plan"]["generation"] != plan["generation"]:
-        require(latest_market_reference(reader, registry, collection_id=plan["collection_id"],
-                generation=plan["generation"]) is None, "ASHARE_GENERATION_ALREADY_EXISTS")
+    # Restore and reconcile against one independently pinned pre-write view.
+    # The scope must close (including its live binding check) before any write.
+    with market_read_scope(reader) as grouped:
+        previous = None if previous_ref is None else restore_market_collection(previous_ref, registry, grouped)["collection"]
+        clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
+        at = clock(); source_time(at)
+        collection = _new_collection(plan, previous, previous_ref, attempt_id, at, registry)
+        chain = inspect_market_chain(grouped, registry, collection_id=plan["collection_id"])
+        current = chain["reference"]
+        if current is not None:
+            require(same_reference(previous_ref, current), "ASHARE_COLLECTION_STALE_REFERENCE")
+        if previous is not None and previous["plan"]["generation"] != plan["generation"]:
+            require(latest_market_reference(grouped, registry, collection_id=plan["collection_id"],
+                    generation=plan["generation"]) is None, "ASHARE_GENERATION_ALREADY_EXISTS")
     cursor_capacity = market_cursor_capacity(node_count=chain["node_count"],
                                              unique_body_bytes=chain["unique_body_bytes"])
     require(cursor_capacity["admit_work_unit"], "ASHARE_CURSOR_CAPACITY")
@@ -338,10 +342,10 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         reference = saved["reference"]
         emit()
 
-    def restore_unit(slot):
+    def restore_unit(slot, reader):
         unit = collection["units"][slot]
         require(unit["status"] == "complete" and unit["query"] is not None, "ASHARE_QUERY_NOT_RETAINED")
-        result = restore_market_query(unit["query"], registry, fresh_market_reader(store, fresh_reader))["result"]
+        result = restore_market_query(unit["query"], registry, reader)["result"]
         use, _ = unit_request(collection["plan"], slot, registry)
         _qualified(result, use, collection["plan"], registry)
         return result
@@ -354,11 +358,12 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         if not all(collection["units"]["calendar:" + v]["status"] == "complete" for v in EXCHANGES):
             return
         dates = set()
-        for venue in EXCHANGES:
-            result = restore_unit("calendar:" + venue)
-            dates.update(d.replace("-", "") for d in qualified_trade_calendar(result,
-                registry=registry, exchange=venue, start=p["start"], end=p["calendar_end"])
-                if _date(p["start"]) <= date.fromisoformat(d) <= _date(p["end"]))
+        with market_read_scope(fresh_market_reader(store, fresh_reader)) as calendars:
+            for venue in EXCHANGES:
+                result = restore_unit("calendar:" + venue, calendars)
+                dates.update(d.replace("-", "") for d in qualified_trade_calendar(result,
+                    registry=registry, exchange=venue, start=p["start"], end=p["calendar_end"])
+                    if _date(p["start"]) <= date.fromisoformat(d) <= _date(p["end"]))
         days = sorted(dates)
         require(not p["sessions"] or p["sessions"] == days, "ASHARE_DERIVED_SESSIONS_CHANGED")
         calendars_checked = True
@@ -415,19 +420,22 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
             cp_id = checkpoint_id(collection["plan"], slot)
             cp_ref = unit["checkpoint"]
             state = None
-            if cp_ref is not None:
-                restored = restore_market_checkpoint(cp_ref, registry, reader)
-                cp_id, state = restored["checkpoint_id"], restored["state"]
-            newer = latest_market_reference(reader, registry, checkpoint_id=cp_id)
-            if latest_checkpoint is not None:
-                offered = latest_checkpoint(cp_id)
-                require_checkpoint_descendant(offered, cp_ref, registry, reader)
-                require(same_reference(offered, newer), "ASHARE_CHECKPOINT_ROLLBACK")
-            if newer is not None:
-                require_checkpoint_descendant(newer, cp_ref, registry, reader)
-                restored = restore_market_checkpoint(newer, registry, reader)
-                require(restored["checkpoint_id"] == cp_id, "ASHARE_CHECKPOINT_OWNER_CHANGED")
-                cp_ref, state = restored["reference"], restored["state"]
+            # A fresh scope can see checkpoints published after the initial
+            # root; retain no pinned snapshot across the writes below.
+            with market_read_scope(reader) as checkpoints:
+                if cp_ref is not None:
+                    restored = restore_market_checkpoint(cp_ref, registry, checkpoints)
+                    cp_id, state = restored["checkpoint_id"], restored["state"]
+                newer = latest_market_reference(checkpoints, registry, checkpoint_id=cp_id)
+                if latest_checkpoint is not None:
+                    offered = latest_checkpoint(cp_id)
+                    require_checkpoint_descendant(offered, cp_ref, registry, checkpoints)
+                    require(same_reference(offered, newer), "ASHARE_CHECKPOINT_ROLLBACK")
+                if newer is not None:
+                    require_checkpoint_descendant(newer, cp_ref, registry, checkpoints)
+                    restored = restore_market_checkpoint(newer, registry, checkpoints)
+                    require(restored["checkpoint_id"] == cp_id, "ASHARE_CHECKPOINT_OWNER_CHANGED")
+                    cp_ref, state = restored["reference"], restored["state"]
             unit.update(status="in-progress", reason_code=None, checkpoint=cp_ref)
 
             def checkpoint_writer(value):

@@ -1,0 +1,7 @@
+company_id,security_code,period_start,period_end,row_key,product_label,segment_label,currency,unit,revenue,cost,is_elimination,revenue_pages,cost_pages,mapping_page,currency_page
+company-muyuan,002714.SZ,2026-01-01,2026-06-30,pig,生猪,养殖分部,CNY,CNY,52430296318.87,54795342077.43,false,19;180,180,179,87
+company-muyuan,002714.SZ,2026-01-01,2026-06-30,meat,屠宰、肉食产品,屠宰、肉食分部,CNY,CNY,22061248684.20,21124800426.76,false,19;180,180,179,87
+company-muyuan,002714.SZ,2026-01-01,2026-06-30,feed-materials,饲料原料,贸易分部,CNY,CNY,4319430543.58,4290206790.32,false,19;180,180,179,87
+company-muyuan,002714.SZ,2026-01-01,2026-06-30,other,其他,其他分部,CNY,CNY,1639750264.40,1488161425.46,false,19;180,180,179,87
+company-muyuan,002714.SZ,2026-01-01,2026-06-30,elimination,减：养殖与屠宰、肉食之间销售抵消,分部间抵销,CNY,CNY,-21040419426.46,-21352113349.49,true,19;180,180,179,87
+company-muyuan,002714.SZ,2026-01-01,2026-06-30,consolidated,合并,合并,CNY,CNY,59410306384.59,60346397370.48,false,19;63;180,19;63;180,179,87

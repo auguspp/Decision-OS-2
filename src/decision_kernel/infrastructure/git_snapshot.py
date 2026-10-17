@@ -1,6 +1,7 @@
 """Read-only recovery of an exact GitHub store snapshot, using native Git bundles."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -131,10 +132,9 @@ def bundle_from_bare(root: Path, binding: GitHubBinding, snapshot: str, output: 
     return mirror_audit
 
 
-def verify_bundle(bundle: Path, binding: GitHubBinding, snapshot: str) -> dict:
-    """Restore without GitHub or credentials, then follow the original version references."""
-    from decision_kernel.application.store_audit import audit_store
-    from decision_kernel.application.versioned_store import VersionedStore
+@contextmanager
+def restored_bundle(bundle: Path, binding: GitHubBinding, snapshot: str):
+    """Yield the original read-only snapshot from an empty, offline temporary restore."""
     require(bundle.is_file() and 0 < bundle.stat().st_size <= MAX_BUNDLE_BYTES, "BUNDLE_SIZE_LIMIT")
     with TemporaryDirectory(prefix="dos2-restore-") as directory:
         empty, restored = Path(directory) / "empty.git", Path(directory) / "restored.git"
@@ -147,6 +147,14 @@ def verify_bundle(bundle: Path, binding: GitHubBinding, snapshot: str) -> dict:
             str(bundle.resolve()), str(restored))
         git("--git-dir=" + str(restored), "fsck", "--full", "--strict", "--no-reflogs")
         reader = GitSnapshot(restored, replace(binding, write_enabled=False), snapshot)
+        yield reader
+
+
+def verify_bundle(bundle: Path, binding: GitHubBinding, snapshot: str) -> dict:
+    """Restore without GitHub or credentials, then follow all original references."""
+    from decision_kernel.application.store_audit import audit_store
+    from decision_kernel.application.versioned_store import VersionedStore
+    with restored_bundle(bundle, binding, snapshot) as reader:
         return audit_store(VersionedStore(reader), snapshot)
 
 

@@ -142,3 +142,6 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
 
     from test_market_room import exercise_installed_market_room
     exercise_installed_market_room(outside, python, env, store)
+
+    from test_recovery_commands import exercise_installed_recovery
+    exercise_installed_recovery(outside, python, env, store)

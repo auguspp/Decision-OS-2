@@ -1,4 +1,4 @@
-"""Explicit storage operation, separate from CI and from Quick/Full execution."""
+"""Manual storage operation, separate from CI and from Quick/Full execution."""
 from __future__ import annotations
 
 import argparse
@@ -43,7 +43,7 @@ def guide_source(repository: str, code_sha: str, text: str) -> SourceInput:
 
 def run_operation(binding: GitHubBinding, *, api: GitHubAPI, operation: str,
                   expected: str, code_sha: str, guide: str, output: Path,
-                  exporter=export_public_snapshot) -> dict:
+                  exporter=export_public_snapshot, code_root: Path | None = None) -> dict:
     """The trusted host supplies configuration. Payload/role strings are not credentials."""
     require(operation in ("backup", "retain-guide"), "UNSUPPORTED_STORE_OPERATION")
     require(binding.visibility == "public" and not binding.write_enabled, "PUBLIC_READ_ONLY_CONFIG_REQUIRED")
@@ -106,10 +106,15 @@ def run_operation(binding: GitHubBinding, *, api: GitHubAPI, operation: str,
         # exact bytes again before this operator reports completion.
         restored = verify_bundle(bundle, binding, snapshot)
         require(restored == mirror, "RESTORED_REFERENCES_MISMATCH")
-        report.update(status="completed", restored_audit=restored,
+        report.update(status="bundle-verified", restored_audit=restored,
                       bundle={"name": bundle.name, "size": bundle.stat().st_size,
                               "sha256": digest(bundle.read_bytes()), "self_contained": True},
                       finished_at=datetime.now(timezone.utc).isoformat())
+        checkpoint()
+        if code_root is not None:
+            from decision_kernel.infrastructure.reader_archive import archive_reader
+            report["reader"] = archive_reader(code_root, code_sha, output / "reader-source.tar", binding=binding)
+        report.update(status="completed", finished_at=datetime.now(timezone.utc).isoformat())
         checkpoint()
         return report
     except (RecordError, OSError) as error:
@@ -135,8 +140,15 @@ def main(argv=None) -> int:
     restore.add_argument("--bundle", type=Path, required=True)
     restore.add_argument("--binding", type=Path, required=True)
     restore.add_argument("--snapshot", required=True)
+    from decision_kernel.interfaces.recovery_commands import configure
+    configure(commands)
     args = parser.parse_args(argv)
     try:
+        if args.command == "recover-room":
+            from decision_kernel.interfaces.recovery_commands import recover_room
+            result = recover_room(args)
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0 if result["status"] == "completed" else 2
         if args.command == "verify-bundle":
             binding = GitHubBinding.from_dict(_load(args.binding))
             result = verify_bundle(args.bundle, binding, args.snapshot)
@@ -154,7 +166,7 @@ def main(argv=None) -> int:
             require(len(raw) <= MAX_BYTES, "GUIDE_SIZE_LIMIT")
             result = run_operation(binding, api=GitHubAPI.from_environment(), operation=args.operation,
                                    expected=args.expected_head, code_sha=code_sha,
-                                   guide=raw.decode("utf-8"), output=args.out)
+                                   guide=raw.decode("utf-8"), output=args.out, code_root=Path.cwd())
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (RecordError, OSError, UnicodeError) as error:

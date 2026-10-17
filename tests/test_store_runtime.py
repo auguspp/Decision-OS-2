@@ -182,3 +182,21 @@ def test_bundle_corruption_after_export_cannot_be_reported_as_backup(public_api,
     report = json.loads((tmp_path / "damaged/report.json").read_text())
     assert report["status"] == "failed" and "restored_audit" not in report
     assert report["snapshot"] == before and report["write"] == "not-requested"
+
+
+def test_backup_preserves_verified_bundle_if_reader_archive_export_fails(public_api, tmp_path, monkeypatch):
+    from decision_kernel.infrastructure import reader_archive
+    def fail(*_, **__):
+        raise RecordError("READER_CODE_HEAD_MISMATCH")
+    monkeypatch.setattr(reader_archive, "archive_reader", fail)
+    out = tmp_path / "reader-failed"
+    binding = replace(public_api.binding, write_enabled=False)
+    with pytest.raises(RecordError, match="READER_CODE_HEAD_MISMATCH"):
+        run_operation(binding, api=public_api, operation="backup", expected=public_api.git.head(),
+                      code_sha=SHA, guide=GUIDE, output=out, code_root=tmp_path,
+                      exporter=lambda b, s, o: bundle_from_bare(public_api.git.root, b, s, o))
+    report = json.loads((out / "report.json").read_bytes())
+    assert report["status"] == "failed" and report["error"] == "READER_CODE_HEAD_MISMATCH"
+    assert report["bundle"]["self_contained"] is True and report["restored_audit"]["status"] == "verified"
+    assert report["write"] == "not-requested" and public_api.writes == 0
+    assert "reader" not in report

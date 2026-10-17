@@ -34,7 +34,7 @@ def compare(relay=None, ftshare=None, **kw):
 
 
 class SecondarySourceTests(unittest.TestCase):
-    def test_one_real_contract_path_normalizes_explicit_lots_only(self):
+    def test_synthetic_ohlcv_normalizes_explicit_lots_only(self):
         out = compare()
         self.assertEqual(out['paired_count'], 1)
         self.assertEqual(out['counts']['PRICE_EQUAL'], 1)
@@ -51,6 +51,22 @@ class SecondarySourceTests(unittest.TestCase):
         self.assertEqual(out['counts']['PRICE_DIFFERENCE'], 1)
         self.assertEqual(out['details'][0]['price_fields_differ'], ['close'])
         self.assertNotIn('10.10000001', json.dumps(out))
+
+    def test_current_close_only_relay_and_full_ftshare_compare_close_without_invention(self):
+        relay = capture('TUSHARE_RELAY')
+        for field in ('open', 'high', 'low', 'volume', 'volume_unit'):
+            relay['rows'][0].pop(field)
+        out = compare(relay=relay)
+        self.assertEqual(out['counts']['PRICE_EQUAL'], 1)
+        self.assertEqual(out['details'][0]['fields_compared'], ['close'])
+        self.assertEqual(out['details'][0]['volume_comparison'], 'NOT_ASSESSED')
+        self.assertEqual(out['ftshare_backup_admission'], 'NOT_ESTABLISHED')
+
+    def test_partial_ohlcv_cannot_silently_enter_close_only_mode(self):
+        right = capture('FTSHARE')
+        right['rows'][0].pop('high')
+        with self.assertRaises(MarketInputError):
+            compare(ftshare=right)
 
     def test_date_only_overlap_never_becomes_qualified_market(self):
         left, right = capture('TUSHARE_RELAY'), capture('FTSHARE')

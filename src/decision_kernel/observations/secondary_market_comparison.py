@@ -15,8 +15,8 @@ from .market_daily import MarketInputError, _price, trade_day
 
 PROVIDERS = ("TUSHARE_RELAY", "FTSHARE")
 PRICE_FIELDS = ("open", "high", "low", "close")
-ROW_FIELDS = frozenset((*PRICE_FIELDS, "symbol", "trade_date", "volume", "volume_unit",
-                        "currency", "adjustment", "trade_status"))
+BASE_ROW_FIELDS = frozenset(("symbol", "trade_date", "close", "currency", "adjustment", "trade_status"))
+EXTRA_ROW_FIELDS = frozenset(("open", "high", "low", "volume", "volume_unit"))
 CAPTURE_FIELDS = frozenset(("provider", "source_ref", "acquired_at", "session", "rows"))
 REF_FIELDS = frozenset(("repository", "commit", "path", "sha256"))
 MAX_ROWS = 32
@@ -64,7 +64,7 @@ def _capture(value: object, provider: str, session: str) -> dict[str, dict]:
         _reject("ROWS_BOUND")
     found: dict[str, dict] = {}
     for row in rows:
-        if not isinstance(row, Mapping) or set(row) != ROW_FIELDS:
+        if not isinstance(row, Mapping) or set(row) not in (BASE_ROW_FIELDS, BASE_ROW_FIELDS | EXTRA_ROW_FIELDS):
             _reject("ROW_FIELDS")
         symbol = row["symbol"]
         if not isinstance(symbol, str) or not re.fullmatch(r"[0-9]{6}\.(?:SH|SZ)", symbol):
@@ -81,37 +81,41 @@ def _capture(value: object, provider: str, session: str) -> dict[str, dict]:
             _reject("RAW_CNY_ONLY")
         if row["trade_status"] not in ("TRADING", "SUSPENDED", "UNKNOWN"):
             _reject("TRADE_STATUS")
-        if row["volume_unit"] != ("LOTS_100_SHARES" if provider == "TUSHARE_RELAY" else "SHARES"):
-            _reject("VOLUME_UNIT")
+        expanded = set(row) == BASE_ROW_FIELDS | EXTRA_ROW_FIELDS
         numbers = {}
-        for field in PRICE_FIELDS:
-            # No binary-float coercion: historical provider decimal strings remain exact.
+        fields = PRICE_FIELDS if expanded else ("close",)
+        for field in fields:
+            # No binary-float coercion: retain each original provider decimal.
             if not isinstance(row[field], str):
                 _reject("PRICE_TYPE")
             try:
                 numbers[field] = _price(row[field])
             except MarketInputError:
                 _reject("PRICE_INVALID")
-        if not (numbers["low"] <= min(numbers["open"], numbers["close"])
-                <= max(numbers["open"], numbers["close"]) <= numbers["high"]):
-            _reject("OHLC_INVALID")
-        raw_vol = row["volume"]
-        if not isinstance(raw_vol, str) or len(raw_vol) > 128:
-            _reject("VOLUME_INVALID")
-        try:
-            volume = Decimal(raw_vol)
-        except (ArithmeticError, ValueError):
-            _reject("VOLUME_INVALID")
-        if not volume.is_finite() or volume < 0 or volume.adjusted() > 99:
-            _reject("VOLUME_INVALID")
-        normalized_volume = volume * (100 if provider == "TUSHARE_RELAY" else 1)
+        normalized_volume = None
+        if expanded:
+            if row["volume_unit"] != ("LOTS_100_SHARES" if provider == "TUSHARE_RELAY" else "SHARES"):
+                _reject("VOLUME_UNIT")
+            if not (numbers["low"] <= min(numbers["open"], numbers["close"])
+                    <= max(numbers["open"], numbers["close"]) <= numbers["high"]):
+                _reject("OHLC_INVALID")
+            raw_vol = row["volume"]
+            if not isinstance(raw_vol, str) or len(raw_vol) > 128:
+                _reject("VOLUME_INVALID")
+            try:
+                volume = Decimal(raw_vol)
+            except (ArithmeticError, ValueError):
+                _reject("VOLUME_INVALID")
+            if not volume.is_finite() or volume < 0 or volume.adjusted() > 99:
+                _reject("VOLUME_INVALID")
+            normalized_volume = volume * (100 if provider == "TUSHARE_RELAY" else 1)
         found[symbol] = {"prices": numbers, "volume_shares": normalized_volume,
                          "trade_status": row["trade_status"]}
     return found
 
 
 def compare_retained_raw_market(*, relay: object, ftshare: object, session: str) -> dict:
-    """Compare at most 32 explicit original OHLC pairs; no data or price in output.
+    """Compare at most 32 original close pairs, optionally full OHLCV; no prices in output.
 
     Never uses a provider's claimed 5/20/60 returns or adjusts/fills corporate actions.
     Missing rows remain missing, and even exact agreement grants no daily admission.
@@ -130,12 +134,17 @@ def compare_retained_raw_market(*, relay: object, ftshare: object, session: str)
         a, b = primary[symbol], secondary[symbol]
         if a["trade_status"] != "TRADING" or b["trade_status"] != "TRADING":
             details.append({"symbol": symbol, "status": "NON_TRADING_OR_UNKNOWN",
-                            "price_fields_differ": [], "volume_comparison": "NOT_COMPARABLE"})
+                            "fields_compared": [], "price_fields_differ": [],
+                            "volume_comparison": "NOT_ASSESSED"})
             continue
-        different = [field for field in PRICE_FIELDS if a["prices"][field] != b["prices"][field]]
+        comparable = [field for field in PRICE_FIELDS
+                      if field in a["prices"] and field in b["prices"]]
+        different = [field for field in comparable if a["prices"][field] != b["prices"][field]]
+        volume = ("NOT_ASSESSED" if a["volume_shares"] is None or b["volume_shares"] is None
+                  else "EQUAL" if a["volume_shares"] == b["volume_shares"] else "DIFFERENCE")
         details.append({"symbol": symbol, "status": "PRICE_DIFFERENCE" if different else "PRICE_EQUAL",
-                        "price_fields_differ": different,
-                        "volume_comparison": "EQUAL" if a["volume_shares"] == b["volume_shares"] else "DIFFERENCE"})
+                        "fields_compared": comparable, "price_fields_differ": different,
+                        "volume_comparison": volume})
     counts = {code: sum(x["status"] == code for x in details)
               for code in ("PRICE_EQUAL", "PRICE_DIFFERENCE", "NON_TRADING_OR_UNKNOWN")}
     return {"schema": "secondary-market-raw-comparison-v1", "session": session,

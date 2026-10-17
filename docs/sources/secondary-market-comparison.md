@@ -16,7 +16,7 @@
 
     python -m decision_kernel.interfaces.secondary_market_comparison_cli --relay path/to/relay.json --ftshare path/to/ftshare.json --session 2026-09-30
 
-每端对象必须包含 provider/source_ref/acquired_at/session/rows；locator 的 repository/commit/path/sha256 **只检查格式，不做 GitHub 权限/原件认证**。来源版本和取得时间必须由调用者沿现役 SourceRef、原数据/返回证明先核，单凭这些字段不能自签 source_authentication。每行包含 symbol/trade_date/open/high/low/close/volume/volume_unit/currency/adjustment/trade_status；只能同日、SH/SZ、CNY、NONE 原价、严格 OHLC 和字符串小数。Relay 的来源单位 LOTS_100_SHARES 和 FTShare 的 SHARES 必须先由其原合同证明，比较器只在明确声明后归一成交量。交易状态 UNKNOWN / SUSPENDED 仅保留身份，不通过价格比较。未上市、过期、缺因子、公司行动证据不能通过填1或推断恢复。
+每端对象必须包含 provider/source_ref/acquired_at/session/rows；locator 的 repository/commit/path/sha256 **只检查格式，不做 GitHub 权限/原件认证**。来源版本和取得时间必须由调用者沿现役 SourceRef、原数据/返回证明先核，单凭这些字段不能自签 source_authentication。每行基础字段为 symbol/trade_date/close/currency/adjustment/trade_status；已证明存在完整 OHLCV 时可**整组**提供 open/high/low/volume/volume_unit，不能提供残缺 OHLCV 然后假装 close-only。因为现有 OS2 日分区正常只要求 close，基础诊断只比较相同市场日的原收盘价，不虚构其余字段；只有两侧均完整提供时才比较 OHLC/成交量，并逐项报告 fields_compared。只能同日、SH/SZ、CNY、NONE 原价、Decimal 字符串；扩展读数还要有严格 OHLC 和合法成交量。Relay 的来源单位 LOTS_100_SHARES 和 FTShare 的 SHARES 必须先由其原合同证明，比较器只在明确声明后归一成交量。交易状态 UNKNOWN / SUSPENDED 仅保留身份，不通过价格比较。未上市、过期、缺因子、公司行动证据不能通过填1或推断恢复。
 
 比较结果仅给出证券和不同 OHLC 字段名、覆盖数/差异数，无源价格/原Body/凭据/SourceRef 文本。无可比配对 CLI 以退出码2返回 NO_COMPARABLE_PAIRS，成功仍明确 common_upstream_independence=NOT_ESTABLISHED、ftshare_backup_admission=NOT_ESTABLISHED、market_canonical_changed=false。两家值相等不能证明真正上游独立、PIT 或合法备用准入。
 

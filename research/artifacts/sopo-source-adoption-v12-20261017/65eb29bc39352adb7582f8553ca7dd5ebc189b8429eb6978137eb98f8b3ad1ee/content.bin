@@ -1,0 +1,44 @@
+[
+  {
+    "question_id": "discovery",
+    "new_sources": [
+      "W5",
+      "W6"
+    ],
+    "use": "维持原无提示发现来源，不计新样本；用实际经营文本判断原价格线索是否有对象。",
+    "native_sourceref": "not-created",
+    "record_type": "local-author-adoption-not-public-native-acceptance"
+  },
+  {
+    "question_id": "mechanism",
+    "new_sources": [
+      "W5",
+      "W6",
+      "W7"
+    ],
+    "use": "区分产品与内供、计划与实际产出，不由调查报价直接得利润弹性。",
+    "native_sourceref": "not-created",
+    "record_type": "local-author-adoption-not-public-native-acceptance"
+  },
+  {
+    "question_id": "challenge",
+    "new_sources": [
+      "W4",
+      "W5A",
+      "W8"
+    ],
+    "use": "现金限制、比率分母与历史版本分别核验，修订研究门槛。",
+    "native_sourceref": "not-created",
+    "record_type": "local-author-adoption-not-public-native-acceptance"
+  },
+  {
+    "question_id": "next-evidence",
+    "new_sources": [
+      "W7",
+      "W8"
+    ],
+    "use": "设实证重开条件与阶段停止理由；不继续无差别抓取或自动Full。",
+    "native_sourceref": "not-created",
+    "record_type": "local-author-adoption-not-public-native-acceptance"
+  }
+]

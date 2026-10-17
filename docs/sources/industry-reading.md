@@ -15,6 +15,9 @@ SourceRef。它不采集、不保存、不刷新来源，不执行研究或通�
 主营构成的收入、成本、负数抵销及同期间财表代数对账，见
 [Relay 主营构成阅读](main-business.md)。它消费已有捕获，不从业务标签自动创建采购角色。
 
+畜禽、鸡蛋和配合饲料的采集日价格及公布同比/环比核对，见
+[畜禽饲料周价](livestock-weekly.md)，不把采集日值当周均价或把公布基数当独立观察。
+
 ## 使用入口
 
 先通过既有 `put-source` 保存获准资料，再保存引用这些资料的阅读包；不新增写入通道。
@@ -42,7 +45,7 @@ python -m decision_kernel.interfaces.industry_cli --binding config/store-binding
 {"reference": "替换为实际完整 SourceRef 对象", "view": "vehicle-flows", "company_id": "company-example", "public_sources_custody_confirmed": true}
 ```
 
-`view` 必须显式选 `industry`、`operating-cycle` 或 `vehicle-flows`。
+`view` 必须显式选 `industry`、`operating-cycle`、`vehicle-flows` 或 `livestock-weekly`。
 `subject_id/company_id` 可都省略，但不可同时非空；经营周期不支持公司过滤，
 应改用原 `industry` 或 `vehicle-flows`，不能把宏观总量映射成个股暴露。
 完整原根、行/段引用、期间、限制、比较拒绝和整包分母均由原读取器返回，

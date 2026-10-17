@@ -90,8 +90,10 @@ from decision_kernel.interfaces.research_review_page import JS as REVIEW_JS
 
 from decision_kernel.interfaces.reading_industry_page import CSS as INDUSTRY_CSS, JS as INDUSTRY_JS
 
-CSS += INDUSTRY_CSS
-JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS
+from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS as MARKET_JS
+
+CSS += INDUSTRY_CSS + MARKET_CSS
+JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS
 
 
 def render_page(model):
@@ -108,12 +110,13 @@ def render_page(model):
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0 / READING ROOM</p><h1>研究、议程与简报</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
+<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#market">A股双视图</a><a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <div class="workspace" id="research"><aside class="panel"><h2>本页研究</h2><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>
 <p id="count" aria-live="polite"></p><div id="cases"></div><div class="actions"><button id="next">导出下一页请求</button><button id="refresh">导出刷新目录请求</button></div></aside>
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>
+<section class="panel" id="market"><h2>A 股市场、原价与复权</h2><div id="market-content"></div></section>
 <section class="panel" id="industry"><h2>产业观察与公司经营角色</h2><div id="industry-content"></div></section>
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
 <section class="panel" id="review"><h2>原问题复核与修订段落采用</h2><div id="review-content"></div></section>

@@ -18,6 +18,8 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 固定产业包使用可选 `industry` 计划，见[产业阅读面板](reading-industry.md)。沿原三种产业读取器，另核来源公开确认；本地筛选保留整包分母，不推断当前净受益或研究/Brief采用。
 
+已保管 A 股原价/复权使用可选 `market` 计划，见[市场双视图](reading-market.md)。计数回执不是行情输入；来源公开单独确认，分页固定原根，工程成功不代签真实行情保管或采用。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。
@@ -54,10 +56,10 @@ decision-os store --path /tmp/existing-synthetic.git research-room \
 
 目录权限/快照错误沿原owner失败，不能返回空目录冒称成功；单份研究、议程或简报失败显示missing/unavailable/invalid，只限制相依面板。读取正文不刷新来源资格或研究经济质量。重要未决项、挑战、来源分页和原读取请求保留；源缺失时可保留研究正文，但无法重建的简报不获得采用认证。
 
-原Catalogue卡片和Reader源页限额不变。本页单研究正文1MiB、正文总展示2MiB；议程/简报面板768KiB、可选材料面板2MiB、可选产业结果2MiB、完整模型6MiB、HTML8MiB。超限对象整项显示not-included并保留原引用/读取通路，不截断、改写或删除原研究。过大整页或无法再次验证访问则明确失败。原8MiB结果、60KiB输入、512存储请求均不提高、不重置；Brief来源复用原 `_SourceReads`，统计仅代表新闻部分。全局请求预算耗尽可能阻止最终权限复核，不能伪称局部成功。
+原Catalogue卡片和Reader源页限额不变。本页单研究正文1MiB、正文总展示2MiB；议程/简报面板768KiB、可选材料面板2MiB、可选产业结果2MiB、可选市场结果2MiB、完整模型6MiB、HTML8MiB。超限对象整项显示not-included并保留原引用/读取通路，不截断、改写或删除原研究。过大整页或无法再次验证访问则明确失败。原8MiB结果、60KiB输入、512存储请求均不提高、不重置；Brief来源复用原 `_SourceReads`，统计仅代表新闻部分。全局请求预算耗尽可能阻止最终权限复核，不能伪称局部成功。
 
 沿原新闻页评估过的标准 DOM/textContent、JSON HTML边界转义、CSP脚本/样式摘要与标准库；这是有界固定离线投影，不需要React、CMS、模板执行器或第三方服务。来源与原文中的脚本、HTML和指令只是文本。无外部字体、自动网络、localStorage、表单或用户选择表。
 
 专属测试覆盖版本精确关联、固定分页、空库/坏案/缺源、组件故障、容量、反馈权利和页面封装；真实临时Git/原宿主/原唯一cold-wheel验证同时打开已存研究、议程和Brief及独立进程恢复。页面交互与真实获准材料采用另留原生回执，合成成功不签实质Review、研究质量或用户接受。实际未完成验证不能靠本说明代签。
 
-退役时用普通PR退出本只读路由、页面和专属消费者；保留原Reader、Catalogue、Agenda、Brief、Artifact/SourceRef和历史读取。市场统一展示、产业新资料及Brief采用、实际用户更正与Review、独立长期灾备及生产运行仍有各自责任，不因统一入口完成而关闭 #13。
+退役时用普通PR退出本只读路由、页面和专属消费者；保留原Reader、Catalogue、Agenda、Brief、Artifact/SourceRef和历史读取。其他市场家族与真实行情采用、产业新资料及Brief采用、实际用户更正与Review、独立长期灾备及生产运行仍有各自责任，不因统一入口完成而关闭 #13。

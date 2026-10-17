@@ -26,7 +26,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -46,6 +46,9 @@ def plan_input(value):
     if value.get("industry") is not None:
         from decision_kernel.application.reading_industry import industry_plan
         result["industry"] = industry_plan(value["industry"])
+    if value.get("market") is not None:
+        from decision_kernel.application.reading_market import market_plan
+        result["market"] = market_plan(value["market"])
     return result
 
 
@@ -88,8 +91,9 @@ def brief_relation(reference, brief):
 
 
 class ReadingRoom:
-    def __init__(self, store, *, source_reader=None):
+    def __init__(self, store, *, source_reader=None, market_registry=None):
         self.store = store
+        self.market_registry = market_registry
         self.source_reader = source_reader or store.read_source
 
     def _catalogue(self, args):
@@ -119,11 +123,12 @@ class ReadingRoom:
                 "kind": payload["kind"], "body": body, "body_sha256": digest(body.encode("utf-8")),
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
-    def build(self, value, *, feedback_export=True, material_export=True, industry_export=True):
+    def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
         require(not plan.get("industry") or industry_export, "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED")
+        require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         refs = [c["reference"] for c in catalogue["items"] if c["status"] == "readable"]
@@ -209,6 +214,17 @@ class ReadingRoom:
                             **_failure(error)}
             result["industry"] = industry
             partial = partial or industry["status"] != "readable" or industry.get("view", {}).get("status") == "partial"
+        if plan.get("market"):
+            from decision_kernel.application.reading_market import open_market
+            from decision_kernel.observations.market_daily import MarketInputError
+            try:
+                market = open_market(self.store, plan["market"], registry=self.market_registry)
+            except (RecordError, MarketInputError, KeyError, TypeError) as error:
+                market = {"reference": plan["market"]["reference"], "plan": plan["market"],
+                          "open_request": {"operation": "read-source", "payload": {
+                              "reference": deepcopy(plan["market"]["reference"])}}, **_failure(error)}
+            result["market"] = market
+            partial = partial or market["status"] != "readable" or market.get("partial", False)
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

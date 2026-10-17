@@ -10,6 +10,7 @@ import sys
 from decision_kernel.application.industry_reading import read_industry
 from decision_kernel.application.industry_operations import read_industry_operations
 from decision_kernel.application.vehicle_flows import read_vehicle_flows
+from decision_kernel.application.livestock_weekly import read_livestock_weekly
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef
 from decision_kernel.infrastructure.git_store import GitStore
@@ -27,6 +28,7 @@ def main(argv=None):
     query.add_argument("--subject-id")
     query.add_argument("--company-id")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--livestock-weekly", action="store_true", help="Read collection-day livestock prices and published comparisons")
     mode.add_argument("--vehicle-flows", action="store_true", help="Read vehicle channels separately; no inferred inventory")
     mode.add_argument("--operating-cycle", action="store_true", help="Read retained revenue/profit/stocks; never infer monthly flows")
     args = parser.parse_args(argv)
@@ -37,7 +39,7 @@ def main(argv=None):
         else:
             binding = replace(GitHubBinding.from_dict(_load(args.binding)), write_enabled=False)
             backend = GitHubStore(binding, GitHubAPI.from_environment())
-        reader = read_vehicle_flows if args.vehicle_flows else read_industry_operations if args.operating_cycle else read_industry
+        reader = read_livestock_weekly if args.livestock_weekly else read_vehicle_flows if args.vehicle_flows else read_industry_operations if args.operating_cycle else read_industry
         result = reader(reference, VersionedStore(backend),
                                subject_id=args.subject_id, company_id=args.company_id)
     except RecordError as exc:

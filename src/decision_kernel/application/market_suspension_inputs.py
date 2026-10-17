@@ -50,23 +50,26 @@ def session_suspensions(result, registry, day):
             _require(isinstance(code, str) and re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', code), 'SUSPENSION_IDENTITY')
             _require(_day(row.get('trade_date')) == iso, 'SUSPENSION_DATE')
             groups[code].append((row, {'page': page_no, 'row': row_no}))
-    entries = {}
-    for code, group in sorted(groups.items()):
-        row = group[0][0]
-        event, timing = row.get('suspend_type'), _timing(row.get('suspend_timing'))
-        if len(group) != 1:
-            state, reason = 'quarantined', 'MULTIPLE_SUSPENSION_RECORDS_NOT_ORDERED'
-        elif event not in ('S', 'R') or timing == 'invalid':
-            state, reason = 'quarantined', 'SUSPENSION_TYPE_OR_TIMING_INVALID'
-        else:
-            state = 'resumption' if event == 'R' else 'intraday-suspension' if timing == 'intraday-window' else 'suspension-no-window'
-            reason = None
-        entries[code] = {'status': state, 'reason_code': reason,
-            'source_row_count': len(group), 'source_rows': [p for _, p in group],
-            'all_day_confirmed': False}
+    entries = {code: _suspension_group(group) for code, group in sorted(groups.items())}
     return {'entries': entries, 'row_count': view['row_count'], 'lineage': _lineage(view),
         'quarantined_count': sum(e['status'] == 'quarantined' for e in entries.values()),
         'outside_sh_sz_count': sum(c.endswith('.BJ') for c in entries)}
+
+
+def _suspension_group(group):
+    """One identity/day's original row witnesses; shared by day and period readers."""
+    row = group[0][0]
+    event, timing = row.get('suspend_type'), _timing(row.get('suspend_timing'))
+    if len(group) != 1:
+        state, reason = 'quarantined', 'MULTIPLE_SUSPENSION_RECORDS_NOT_ORDERED'
+    elif event not in ('S', 'R') or timing == 'invalid':
+        state, reason = 'quarantined', 'SUSPENSION_TYPE_OR_TIMING_INVALID'
+    else:
+        state = 'resumption' if event == 'R' else 'intraday-suspension' if timing == 'intraday-window' else 'suspension-no-window'
+        reason = None
+    return {'status': state, 'reason_code': reason,
+        'source_row_count': len(group), 'source_rows': [p for _, p in group],
+        'all_day_confirmed': False}
 
 
 def _explanation(entry, evidence):

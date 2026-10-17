@@ -269,7 +269,7 @@ def read_three_market_surfaces(*, surfaces: Mapping[str, dict], registry: RelayR
         try:
             value = surfaces[kind]
             required = STOCK_REQUIRED if kind == "stock" else GROUP_REQUIRED
-            optional = {"horizons", "reference_policy"} if kind == "stock" else {"horizons", "benchmark", "reference_policy"}
+            optional = {"horizons", "reference_policy", "suspension_results"} if kind == "stock" else {"horizons", "benchmark", "reference_policy"}
             _require(isinstance(value, dict) and required <= value.keys()
                      and value.keys() <= required | optional, "SURFACE_INPUT_INVALID")
             if kind == "stock":

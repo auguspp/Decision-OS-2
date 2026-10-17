@@ -71,6 +71,8 @@ def _map_results(payload, transform):
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
+        if kind == "stock":
+            extras |= {"suspension_results"}
         if kind == "session":
             extras |= {"suspension_result"}
         if kind in ("stock", "sector", "concept", "session"):
@@ -79,7 +81,7 @@ def _map_results(payload, transform):
         for field in ("calendar_result", "catalog_result", "rate_result", "suspension_result"):
             if field in value:
                 value[field] = transform(value[field], prefix + [field])
-        for field in ("stock_results", "master_results", "factor_results", "member_results", "index_results", "calendar_results", "session_results"):
+        for field in ("stock_results", "master_results", "factor_results", "member_results", "index_results", "calendar_results", "session_results", "suspension_results"):
             if field not in value:
                 continue
             mapping = value[field]

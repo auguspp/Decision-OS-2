@@ -224,7 +224,8 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
                                 horizons: tuple[int, ...] = (5, 20, 60),
                                 offset: int = 0, limit: int = 50,
                                 entity_id: str | None = None,
-                                reference_policy: str = "strict") -> dict:
+                                reference_policy: str = "strict",
+                                suspension_results: Mapping[str, dict] | None = None) -> dict:
     """Read companion raw/qfq surfaces with one master-derived, undropped scope.
 
     Strict is the unchanged default. Explicit isolate-identified preserves all
@@ -290,6 +291,14 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
                 state["adjustment"] = {"status": "rejected", "reason_code": str(exc)}
         state["within_reported_listing_at_end"] = _within_listing(hi, reference)
         qualifications[code] = state
+    explanations = None
+    if suspension_results is not None:
+        from decision_kernel.application.market_history_suspensions import explain_history_quotes
+        _require(isinstance(suspension_results, Mapping) and set(suspension_results) <= set(declared),
+                 "UNDECLARED_STOCK")
+        explanations = explain_history_quotes(references, raw, qualifications, suspension_results,
+            inspected_codes=set(stock_results) | set(factor_results) | set(suspension_results),
+            registry=registry, start=start, end=end, sessions=sessions)
     calendar_source = _lineage(calendar_view)
     common = {"kind": "stock", "as_of": hi, "declared_entities": declared, "market_sessions": sessions,
         "calendar_version": calendar_source["view_sha256"], "universe_version": master["version"],
@@ -304,6 +313,8 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
             code = entry["entity_id"]
             entry["security_reference"] = references[code]
             entry["qualification"] = qualifications[code]
+            if explanations is not None:
+                entry["history_quote_explanation"] = explanations["entries"].get(code, {"status": "not-supplied"})
             entry["price_lineage"] = price_sources.get(code)
             entry["factor_lineage"] = factor_sources.get(code) if convention == "qfq" else None
         surfaces[convention] = surface
@@ -312,7 +323,9 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
     counts["adjustment"] = {status: sum(q["adjustment"]["status"] == status for q in qualifications.values())
                             for status in ("computed", "factor-gaps", "missing-anchor-factor", "no-prices",
                                            "rejected", "inputs-unavailable")}
-    return {"schema": "relay-security-stock-view-v1", "scope_count": len(declared),
+    return {**({"history_quote_explanations": {k: v for k, v in explanations.items() if k != "entries"}}
+               if explanations is not None else {}),
+        "schema": "relay-security-stock-view-v1", "scope_count": len(declared),
         "master": {k: v for k, v in master.items() if k != "securities"},
         "calendar_lineage": calendar_source, "qualification_counts": counts,
         "normalization": NORMALIZATION, **surfaces, "qualification_limits": [

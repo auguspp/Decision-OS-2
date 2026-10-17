@@ -22,7 +22,7 @@ from decision_kernel.interfaces.store_cli import _load
 
 REGISTRY = Path("docs/sources/relay-registry.json")
 MARKET_TOKEN_ENV = "DECISION_OS_MARKET_STORE_TOKEN"
-BINDING_ENV = "DECISION_OS_MARKET_BINDING_JSON"  # Reject overrides of canonical public records.
+BINDING_ENV = "DECISION_OS_MARKET_BINDING_JSON"  # Reject overrides of canonical records.
 RECORDS_BINDING_FILE = Path("config/store-binding.json")
 
 
@@ -42,7 +42,7 @@ def _parse(raw, limit=6000):
 
 
 def _records_runtime_binding(operation):
-    """Use the existing, read-only public records contract as the sole run target.
+    """Use the existing public-origin records contract as the sole run target.
 
     Write capability is derived only for a separately authorized sync, not
     persisted in the trusted binding or provided by an event/source payload.
@@ -50,8 +50,15 @@ def _records_runtime_binding(operation):
     binding = GitHubBinding.from_dict(_load(RECORDS_BINDING_FILE))
     require(binding.repository == "auguspp/Decision-OS-2" and binding.repository_id == 1420041744
             and binding.branch == "records" and binding.visibility == "public"
+            and binding.private_upgrade_allowed is True
             and binding.write_enabled is False, "ASHARE_RECORDS_BINDING_MISMATCH")
     return replace(binding, write_enabled=operation == "sync")
+
+ 
+def _verified_private_upgrade(binding, token):
+    """Check actual privacy through the authenticated, immutable-origin store."""
+    reader = GitHubStore(replace(binding, write_enabled=False), GitHubAPI(token))
+    return reader.live_visibility() == "private"
 
 
 def _open_remote(binding, token):
@@ -73,7 +80,7 @@ def _save_receipt(path, value):
 
 
 def run_runtime(event, env, out, *, execute=run_collection):
-    """Main-only host for existing public records; fail closed on source rights."""
+    """Main-only host for existing records; native privacy governs source rights."""
     require(env.get("GITHUB_REPOSITORY") == "auguspp/Decision-OS-2"
             and env.get("GITHUB_REF") == "refs/heads/main"
             and env.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "ASHARE_MANUAL_MAIN_ONLY")
@@ -106,9 +113,13 @@ def run_runtime(event, env, out, *, execute=run_collection):
         "supplier_rows_in_receipt": False, "private_locations_in_receipt": False})
     try:
         require(not env.get(BINDING_ENV), "ASHARE_RUNTIME_BINDING_OVERRIDE_FORBIDDEN")
-        require(operation != "sync" or public_rights, "ASHARE_PUBLIC_RIGHTS_REQUIRED")
         binding = _records_runtime_binding(operation)
         require(bool(env.get(MARKET_TOKEN_ENV)), "ASHARE_STORE_TOKEN_REQUIRED")
+        # Private upgrade is native-verified before executing ANY source code.
+        # A public runtime still requires redistribution permission.
+        if operation == "sync" and not public_rights:
+            require(_verified_private_upgrade(binding, env[MARKET_TOKEN_ENV]),
+                    "ASHARE_PUBLIC_RIGHTS_REQUIRED")
         attempt = "run-" + str(env.get("GITHUB_RUN_ID", "")) + "-" + str(env.get("GITHUB_RUN_ATTEMPT", ""))
         result = execute(operation=operation, plan=plan, registry=registry,
             open_unit=_open_remote(binding, env[MARKET_TOKEN_ENV]), attempt_id=attempt,

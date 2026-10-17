@@ -1,6 +1,6 @@
 # 沪深 A 股日数据：持续保管、增量更新与正常读取
 
-责任：#10，来源和保管分别复用 #12 与 #6 的原合同。这个入口把一次检查变成可接续的数据链：保存已经成功取得的页，按交易日保留全市场分区，正常读取明确版本，在下次显式更新时只补必要查询。实际生产启用与真实供应商可用性仍以原任务中的运行和保管回执为准。现有 records 为公开分支，原始供应商数据的公开再分发权须逐来源单独核定。
+责任：#10，来源和保管分别复用 #12 与 #6 的原合同。这个入口把一次检查变成可接续的数据链：保存已经成功取得的页，按交易日保留全市场分区，正常读取明确版本，在下次显式更新时只补必要查询。实际生产启用与真实供应商可用性仍以原任务中的运行和保管回执为准。当前 records 仍为公开分支；已准备仅限同仓升私的单向兼容，未改变 GitHub 可见性。公开时原始供应商数据的再分发权须逐来源单独核定。
 
 ## 数据范围与“可用”的含义
 
@@ -33,7 +33,7 @@ raw/qfq 沿现有窗口算法计算 5/20/60 个交易日结果。前复权沿原
 
 ## 日常操作：沿用现有 records
 
-**唯一保管目标是本仓已经存在的公共 `records` 分支**。`config/store-binding.json` 是可信只读配置（现有仓库 ID、分支、anchor、store_id 与公开可见性），绝不把 `write_enabled` 永久修改为 true。运行时的写入能力仅由受信的、显式授权 sync 分支临时授予。无需创建 `Decision-OS-2-data`，也不需要第二种保管平台或新的市场仓。
+**唯一保管目标是本仓已经存在的 `records` 分支**（当前仍 public，未来可同仓整体切为 private）。`config/store-binding.json` 是可信只读配置（现有仓库 ID、分支、anchor、store_id、建仓时的公开标记及原生核查的实时可见性），绝不把 `write_enabled` 永久修改为 true。运行时的写入能力仅由受信的、显式授权 sync 分支临时授予。无需创建 `Decision-OS-2-data`，也不需要第二种保管平台或新的市场仓。
 
 先编写有界选择文件，例如：
 
@@ -62,17 +62,17 @@ python -m decision_kernel.interfaces.market_collection_cli read \
 
 GitHub Actions 的 `decision-os-ashare-data` 仅手动 `main` 运行 `status` 或 `sync`，填写精确 `code_sha` 与 selection；`status` 只读，**不需要来源密钥或公开授权声明**。如果尚无市场集合，返回 `ASHARE_COLLECTION_NOT_RETAINED`，并不表示空数据已经通过验收。
 
-`sync` 每次 1..32 个明确有限单元。操作人必须分别确认 **原来源访问及保管范围** `access_and_custody_confirmed` 和 **所选全部来源行可公开再分发的独立法律/许可依据** `public_rights_confirmed`。只有后者已经由证据确认时才可勾选；同意使用公开 `records`、购买接口访问权、知道密钥、或资料来自公开信息，都不是许可依据。两个确认任一缺失，workflow 会执行**无源凭据的拒绝作业并明确失败**，不进入 sync job；入口自身也在任何来源 HTTP 和 Store 写入之前拒绝。不能为取得绿灯而绕过该检查。
+`sync` 每次 1..32 个明确有限单元。操作人必须确认 **原来源访问及保管范围** `access_and_custody_confirmed`；当 GitHub API 验证仓库仍为 **public** 时，还必须确认 **所选全部来源行可公开再分发的独立法律/许可依据** `public_rights_confirmed`。实际仓库整体切为 private 后可以不勾选公开权利，但仍需要范围内合法保管权与来源使用许可。只有后者已经由证据确认时才可勾选；同意使用公开 `records`、购买接口访问权、知道密钥、或资料来自公开信息，都不是许可依据。授权未满足时，workflow 执行**无源凭据的拒绝作业并明确失败**，不进入 sync job；工作流的 GitHub 事件私有标记仅用于保守路由，入口自身重新通过 GitHub API 核真实可见性，在任何来源 HTTP 和 Store 写入之前拒绝假私有。不能为取得绿灯而绕过该检查。
 
 通过许可核查后，直接再次显式调度 `sync`，原断点、分页、失败预算和原始 SourceRef 保持。不会循环定时或后台重试，也不会因跳到新 generation 恢复耗尽预算。
 
 ## 手动托管运行与资料权利
 
-新 `.github/workflows/ashare-data.yml` 分别运行：`status` 获得 `contents:read`、无 Relay 密钥；`sync` 仅在两项声明显式成立时获得 `contents:write` 和既有 `TUSHARE_PROXY_API_KEY`。二者使用受信 `config/store-binding.json` 确认同一公共 `records`；GitHub 作业令牌直接传给原 `GitHubStore`，**无需新增数据仓、私有绑定 Secret 或专用市场 Store Token**。注意 `contents:write` 在 GitHub 平台层面是仓库权限而不是分支级隔离；唯一分支目标由应用绑定/anchor、CAS 和单一 writer 约束，不宣传它具有更强的平台强制隔离。
+新 `.github/workflows/ashare-data.yml` 分别运行：`status` 获得 `contents:read`、无 Relay 密钥；`sync` 仅在来源范围授权且（公开再分发授权成立，或事件中仓库为私有）时进入，获得 `contents:write` 和既有 `TUSHARE_PROXY_API_KEY`；入口在源调用前再次用 GitHub 原生 API 核当前可见性。二者使用受信 `config/store-binding.json` 确认同一历史公开建仓的 `records`；GitHub 作业令牌直接传给原 `GitHubStore`，**无需新增数据仓、私有绑定 Secret 或专用市场 Store Token**。注意 `contents:write` 在 GitHub 平台层面是仓库权限而不是分支级隔离；唯一分支目标由应用绑定/anchor、CAS 和单一 writer 约束，不宣传它具有更强的平台强制隔离。
 
 公开 Actions 的 `result.json` 仍仅可包含操作、计数、日期、状态与代码/run 身份，不能包含任意来源行、证券名称、价格、SourceRef、Token 或原供应商错误正文。这个回执公开不等于已把数据集合保管成功；仅原 `records` 上可独立读回的 exact 引用才证明保管。
 
-**来源许可仍是单独的真实阻塞。** Tushare 当前《数据服务协议》在 https://tushare.pro/document/1?doc_id=405 明确描述个人、不可转让、非商业的许可；不能从中推定可以将原始行情大批量公开到 GitHub。用户已经选择公开分支，不等于取得 Tushare 的再分发权。未取得具体适用许可前，此入口只允许 `status`，禁止真实 `sync`；可以另行保管已获准公开的原创研究成果与非敏感工程回执，但不能用计数回执冒充恢复了供应商源行。
+**公开目的地仍单独需要再分发许可。** 当前代码准备允许整体 private 后在原合法保管与来源许可下使用，并不代表私有仓豁免 Tushare 的用途、商业或长期保管限制。 Tushare 当前《数据服务协议》在 https://tushare.pro/document/1?doc_id=405 明确描述个人、不可转让、非商业的许可；不能从中推定可以将原始行情大批量公开到 GitHub。用户已经选择公开分支，不等于取得 Tushare 的再分发权。未取得具体适用许可前，此入口只允许 `status`，禁止真实 `sync`；可以另行保管已获准公开的原创研究成果与非敏感工程回执，但不能用计数回执冒充恢复了供应商源行。
 
 旧 `market-custody`、research 和其他工作流继续使用它们原有的绑定与授权；本组不会为市场数据修改它们，也不会将其他私有材料迁入公开分支。首次合法回填的验收仍须分别记录原来源、exact 集合、跨进程只读恢复、真实分母和 raw/qfq 窗口/时效，不以工程 CI 代签。
 

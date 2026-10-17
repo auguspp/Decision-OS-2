@@ -338,7 +338,9 @@ def test_runtime_main_configuration_gate_precedes_all_source_and_store_execution
     elif change == "ref": env["GITHUB_REF"] = "refs/heads/feature"
     elif change == "event": env["GITHUB_EVENT_NAME"] = "push"
     elif change == "sha": event["inputs"]["code_sha"] = "f" * 40
-    elif change == "rights": event["inputs"]["public_rights_confirmed"] = False
+    elif change == "rights":
+        event["inputs"]["public_rights_confirmed"] = False
+        monkeypatch.setattr(cli, "_verified_private_upgrade", lambda binding, token: False)
     elif change == "authorization": event["inputs"]["access_and_custody_confirmed"] = False
     elif change == "units": event["inputs"]["work_units"] = "33"
     elif change == "selection": event["inputs"]["selection"] = json.dumps({**selection(), "sessions": [END]})
@@ -396,7 +398,8 @@ def test_records_runtime_binds_existing_public_target_with_separate_read_and_wri
         assert cli.run_runtime(event, env, out, execute=stub_execute) == 0
         binding, token = observed[0]
         assert binding.repository == "auguspp/Decision-OS-2" and binding.branch == "records"
-        assert binding.visibility == "public" and binding.write_enabled is (operation == "sync")
+        assert binding.visibility == "public" and binding.private_upgrade_allowed
+        assert binding.write_enabled is (operation == "sync")
         assert token == STORE_TOKEN and observed[1]["public_rights_confirmed"] is (operation == "sync")
         assert json.loads((out / "result.json").read_text())["source_requests"] == 0
 
@@ -504,12 +507,14 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert set(flow["jobs"]) == {"sync", "status", "rejected-sync"}
     rejected = flow["jobs"]["rejected-sync"]
     assert rejected["permissions"] == {"contents": "read"}
-    assert rejected["if"].count("!= true") == 2
+    assert rejected["if"].count("!= true") == 3
+    assert "github.event.repository.private" in rejected["if"]
     assert len(rejected["steps"]) == 1 and "exit 1" in rejected["steps"][0]["run"]
     assert "secrets." not in str(rejected) and "actions/checkout" not in str(rejected)
     assert flow["jobs"]["sync"]["permissions"] == {"contents": "write"}
     assert flow["jobs"]["status"]["permissions"] == {"contents": "read"}
     assert "inputs.public_rights_confirmed == true" in flow["jobs"]["sync"]["if"]
+    assert "github.event.repository.private == true" in flow["jobs"]["sync"]["if"]
     for operation in ("sync", "status"):
         steps = flow["jobs"][operation]["steps"]
         runtime = next(step for step in steps if "python -m decision_kernel.interfaces.market_collection_cli runtime" in step.get("run", ""))
@@ -519,3 +524,43 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
         upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
         assert upload["with"]["path"] == "${{ runner.temp }}/dos2-ashare-data/result.json"
         assert upload["if"] == "always()"
+
+ 
+def test_runtime_private_upgrade_without_public_rights_still_requires_live_verification(tmp_path, monkeypatch):
+    monkeypatch.chdir(ROOT_DIR)
+    event, env = runtime_input(tmp_path)
+    event["inputs"]["public_rights_confirmed"] = False
+    observed = []
+
+    def no_public_rights(binding, token):
+        assert binding.private_upgrade_allowed and binding.write_enabled
+        observed.append("verified-private")
+        return True
+
+    def stub_execute(**kwargs):
+        assert observed == ["verified-private"]
+        assert kwargs["public_rights_confirmed"] is False
+        assert kwargs["custody_authorized"] is True
+        return {"receipt": {"status": "complete", "source_requests": 0,
+            "supplier_rows_in_receipt": False}, "reference": None, "reading": None}
+
+    monkeypatch.setattr(cli, "_verified_private_upgrade", no_public_rights)
+    monkeypatch.setattr(cli, "_open_remote", lambda binding, token: lambda write: None)
+    assert cli.run_runtime(event, env, tmp_path / "private-verified", execute=stub_execute) == 0
+    receipt = json.loads((tmp_path / "private-verified" / "result.json").read_text())
+    assert receipt["source_requests"] == 0
+
+
+def test_runtime_public_repo_with_no_rights_blocks_before_execution(tmp_path, monkeypatch):
+    monkeypatch.chdir(ROOT_DIR)
+    event, env = runtime_input(tmp_path)
+    event["inputs"]["public_rights_confirmed"] = False
+    monkeypatch.setattr(cli, "_verified_private_upgrade", lambda binding, token: False)
+
+    def forbidden(**kwargs):
+        raise AssertionError("public supplier data must not be fetched")
+
+    assert cli.run_runtime(event, env, tmp_path / "public-rejected", execute=forbidden) == 2
+    saved = json.loads((tmp_path / "public-rejected" / "result.json").read_text())
+    assert saved["reason_code"] == "ASHARE_PUBLIC_RIGHTS_REQUIRED"
+    assert saved["source_requests"] == 0

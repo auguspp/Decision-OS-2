@@ -5,5 +5,6 @@
   "anchor": "06588c36e5a9ac6010e0ca858a95ef7519ee8e45",
   "store_id": "decision-os-runtime",
   "visibility": "public",
-  "write_enabled": false
+  "write_enabled": false,
+  "private_upgrade_allowed": true
 }

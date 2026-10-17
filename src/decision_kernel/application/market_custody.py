@@ -158,7 +158,8 @@ def authorize_market_custody(store, *, custody_authorized=False, public_rights_c
             "MARKET_CUSTODY_AUTHORIZATION_INVALID")
     binding = getattr(store.backend, "binding", None)
     if binding is not None:
-        visibility = getattr(binding, "visibility", None)
+        live = getattr(store.backend, "live_visibility", None)
+        visibility = live() if callable(live) else getattr(binding, "visibility", None)
         require(visibility in ("private", "public"), "MARKET_CUSTODY_BINDING_REQUIRED")
         if visibility == "public":
             require(public_rights_confirmed, "MARKET_CUSTODY_PUBLIC_RIGHTS_REQUIRED")

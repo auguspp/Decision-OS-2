@@ -5,9 +5,13 @@ on:
       operation:
         description: 'Explicit public records operation; no research or source acquisition'
         type: choice
-        options: [backup, retain-guide]
+        options: [backup, retain-guide, health]
         default: backup
         required: true
+      backup_run_id:
+        description: 'Health only: exact completed backup run; empty means not inspected'
+        type: string
+        required: false
       expected_head:
         description: 'Exact records commit read before dispatch; reuse original run for reconciliation'
         type: string
@@ -17,6 +21,38 @@ concurrency:
   group: dos2-store-runtime-${{ github.repository }}
   cancel-in-progress: false
 jobs:
+  health:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'health'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Inspect native delivery metadata without source access or restart
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_EXPECTED_HEAD: ${{ inputs.expected_head }}
+          DOS2_BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+        run: |
+          extra=()
+          if [ -n "$DOS2_BACKUP_RUN_ID" ]; then extra+=(--backup-run-id "$DOS2_BACKUP_RUN_ID"); fi
+          python -m decision_kernel.interfaces.store_runtime operate --operation health --expected-head "$DOS2_EXPECTED_HEAD" "${extra[@]}" --out "$RUNNER_TEMP/dos2-health"
+      - name: Preserve the explicit inspection, including unknown outcomes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-health-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-health/
+          if-no-files-found: error
+          retention-days: 30
   backup:
     if: github.ref == 'refs/heads/main' && inputs.operation == 'backup'
     runs-on: ubuntu-latest

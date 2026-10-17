@@ -133,8 +133,9 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Explicit storage operations; no research, schedules or notifications")
     commands = parser.add_subparsers(dest="command", required=True)
     operate = commands.add_parser("operate", help="trusted main-only manual Actions runtime")
-    operate.add_argument("--operation", choices=("backup", "retain-guide"), required=True)
+    operate.add_argument("--operation", choices=("backup", "retain-guide", "health"), required=True)
     operate.add_argument("--expected-head", required=True)
+    operate.add_argument("--backup-run-id", type=int, help="health-only: explicit backup run to inspect")
     operate.add_argument("--out", type=Path, required=True)
     restore = commands.add_parser("verify-bundle", help="offline restoration using original immutable references")
     restore.add_argument("--bundle", type=Path, required=True)
@@ -142,8 +143,16 @@ def main(argv=None) -> int:
     restore.add_argument("--snapshot", required=True)
     from decision_kernel.interfaces.recovery_commands import configure
     configure(commands)
+    from decision_kernel.interfaces.runtime_health_commands import configure as health_configure
+    health_configure(commands)
     args = parser.parse_args(argv)
     try:
+        if args.command == "runtime-health":
+            from decision_kernel.interfaces.runtime_health_commands import execute as health
+            result = health(GitHubBinding.from_dict(_load(args.binding)), GitHubAPI.from_environment(),
+                            args.out, as_of=args.as_of, expected_head=args.expected_head, backup_run_id=args.backup_run_id)
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0 if result["status"] == "metadata-ok" else 2
         if args.command == "recover-room":
             from decision_kernel.interfaces.recovery_commands import recover_room
             result = recover_room(args)
@@ -159,6 +168,14 @@ def main(argv=None) -> int:
             require(binding.repository == os.environ.get("GITHUB_REPOSITORY"), "RUNTIME_REPOSITORY_MISMATCH")
             code_sha = os.environ.get("GITHUB_SHA", "")
             require(bool(SHA.fullmatch(code_sha)), "INVALID_CODE_SHA")
+            if args.operation == "health":
+                from decision_kernel.interfaces.runtime_health_commands import execute as health
+                run_id, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
+                require(run_id.isdecimal() and attempt.isdecimal(), "HEALTH_HOST_IDENTITY_REQUIRED")
+                result = health(binding, GitHubAPI.from_environment(), args.out, expected_head=args.expected_head,
+                                backup_run_id=args.backup_run_id, self_run={"id": int(run_id), "run_attempt": int(attempt)})
+                print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+                return 0 if result["status"] == "metadata-ok" else 2
             path = Path(GUIDE)
             require(path.is_file() and not path.is_symlink(), "CHECKED_IN_GUIDE_REQUIRED")
             with path.open("rb") as handle:

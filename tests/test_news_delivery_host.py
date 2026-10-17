@@ -145,3 +145,6 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
 
     from test_recovery_commands import exercise_installed_recovery
     exercise_installed_recovery(outside, python, env, store)
+
+    from test_runtime_health import exercise_installed_runtime_health
+    exercise_installed_runtime_health(outside, python, env, store)

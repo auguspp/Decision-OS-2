@@ -119,7 +119,10 @@ def test_workflow_only_manual_and_split_least_privilege_job_tokens():
     assert flow["permissions"] == {}
     assert flow["concurrency"]["cancel-in-progress"] == "false"
     for name, job in flow["jobs"].items():
-        assert job["permissions"] == {"contents": "write" if name == "retain-guide" else "read"}
+        permissions = {"contents": "write" if name == "retain-guide" else "read"}
+        if name == "health":
+            permissions["actions"] = "read"
+        assert job["permissions"] == permissions
         assert "refs/heads/main" in job["if"]
         assert "DECISION_OS_STORE_TOKEN" not in job.get("env", {})
         for step in job["steps"]:

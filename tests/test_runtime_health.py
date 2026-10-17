@@ -1,0 +1,334 @@
+"""Native-shaped metadata fixtures; no source collection, mutation or timer."""
+from copy import deepcopy
+from dataclasses import asdict, replace
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from decision_kernel.application import runtime_health as h
+from decision_kernel.domain.records import RecordError, StoreUnavailable, encoded
+from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding
+from decision_kernel.interfaces import runtime_health_commands as command
+
+ROOT = Path(__file__).resolve().parents[1]
+BINDING = GitHubBinding.from_dict(json.loads((ROOT / 'config/store-binding.json').read_text()))
+NOW = '2026-10-17T10:00:00Z'
+STAMP = '2026-10-17T09:00:00Z'
+OLD = '2026-10-16T09:00:00Z'
+SHA = 'a' * 40
+
+
+def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, status='completed'):
+    return {'id': ident, 'workflow_id': wid, 'run_attempt': attempt, 'head_sha': SHA,
+            'head_branch': 'main', 'path': '.github/workflows/' + filename,
+            'head_repository': {'full_name': BINDING.repository, 'id': BINDING.repository_id},
+            'event': 'workflow_dispatch', 'status': status, 'conclusion': conclusion,
+            'created_at': stamp, 'run_started_at': stamp, 'updated_at': stamp,
+            'display_title': 'PRIVATE_SENTINEL', 'actor': {'login': 'PRIVATE_SENTINEL'}}
+
+
+def fixture(*, failure=False, self_run=False):
+    values = {'': {'id': BINDING.repository_id, 'full_name': BINDING.repository, 'private': False}}
+    for name in ('main', BINDING.branch):
+        values['/git/ref/heads/' + name] = {'ref': 'refs/heads/' + name, 'object': {'type': 'commit', 'sha': SHA}}
+    for wid, (filename, prefix) in enumerate(h.WORKFLOWS.items(), 1):
+        base = '/actions/workflows/' + filename
+        values[base] = {'id': wid, 'path': '.github/workflows/' + filename, 'state': 'active'}
+        rows = [run(wid, filename, wid * 100 + 2, 'failure' if failure else 'success'),
+                run(wid, filename, wid * 100 + 1, stamp=OLD)]
+        if self_run and wid == 1:
+            rows.insert(0, run(wid, filename, 999, None, status='in_progress'))
+        values[base + '/runs?branch=main&per_page=20'] = {'total_count': len(rows), 'workflow_runs': rows}
+        for r in rows:
+            operation = 'health' if r['id'] == 999 else {'store-runtime.yml': 'backup', 'research-runtime.yml': 'read', 'news-rolling.yml': 'build'}[filename]
+            add_details(values, r, operation, prefix)
+    return values
+
+
+def add_details(values, r, operation, prefix):
+    ident = r['id']; attempt = r['run_attempt']
+    values[f'/actions/runs/{ident}'] = r
+    values[f'/actions/runs/{ident}/attempts/{attempt}/jobs?per_page=100'] = {'total_count': 1, 'jobs': [
+        {'id': ident * 10, 'name': operation, 'run_id': ident, 'run_attempt': attempt,
+         'head_sha': SHA, 'status': r['status'], 'conclusion': r['conclusion']}]}
+    prefix = 'dos2-health' if operation == 'health' else prefix
+    values[f'/actions/runs/{ident}/artifacts?per_page=100'] = {'total_count': 1, 'artifacts': [
+        {'id': ident * 100, 'name': f'{prefix}-{ident}-{attempt}', 'workflow_run': {'id': ident, 'head_sha': SHA},
+         'expired': False, 'created_at': r['created_at'], 'expires_at': '2026-11-16T09:00:00Z',
+         'size_in_bytes': 123, 'digest': 'sha256:' + 'b' * 64,
+         'archive_download_url': 'https://PRIVATE_SENTINEL.invalid/signed?token=SECRET'}]}
+
+
+class API:
+    def __init__(self, values=None):
+        self.values = fixture() if values is None else values
+        self.calls = []
+        self.mutate = None
+
+    def request(self, method, path, payload=None):
+        assert method == 'GET' and payload is None
+        assert path.startswith('/repos/' + BINDING.repository)
+        relative = path[len('/repos/' + BINDING.repository):]
+        self.calls.append(relative)
+        if self.mutate:
+            changed = self.mutate(relative, self.calls)
+            if changed is not None:
+                return changed
+        return deepcopy(self.values[relative])
+
+
+def test_latest_failure_is_not_replaced_by_old_success_and_bytes_not_certified():
+    api = API(fixture(failure=True)); report = h.inspect_runtime(BINDING, api, as_of=NOW, backup_run_id=101)
+    assert report['status'] == 'needs-attention'
+    assert report['native_reads'] == len(api.calls) == 40
+    for p in report['workflows']:
+        assert p['latest']['run']['conclusion'] == 'failure'
+        assert p['last_visible_success']['run']['conclusion'] == 'success'
+        assert p['latest']['run']['id'] > p['last_visible_success']['run']['id']
+        assert p['latest']['artifact_bytes_verified'] is False
+    assert report['specified_backup']['observed_operation'] == 'backup'
+    assert report['specified_backup']['status'] == 'inspected'
+    assert 'PRIVATE_SENTINEL' not in encoded(report).decode()
+    assert 'SECRET' not in command.markdown(report)
+
+
+def test_actual_self_only_is_excluded_and_explicit_backup_is_separate():
+    api = API(fixture(self_run=True))
+    report = h.inspect_runtime(BINDING, api, as_of=NOW, self_run={'id': 999, 'run_attempt': 1}, backup_run_id=101)
+    p = report['workflows'][0]
+    assert p['latest']['run']['id'] == 102 and p['excluded_self'][0]['id'] == 999
+    assert p['observed_active'] == [] and report['excluded_inspection']['id'] == 999
+    assert report['specified_backup']['run']['id'] == 101
+    assert '当前巡检自身' in command.markdown(report)
+
+
+def test_green_health_run_cannot_be_called_a_backup():
+    values = fixture(); r = values['/actions/runs/102']
+    add_details(values, r, 'health', 'dos2-store')
+    report = h.inspect_runtime(BINDING, API(values), as_of=NOW, backup_run_id=102)
+    assert report['workflows'][0]['latest']['observed_operation'] == 'health'
+    assert report['workflows'][0]['latest']['artifact']['name'] == 'dos2-health-102-1'
+    assert report['specified_backup'] == {'status': 'unknown', 'error': 'HEALTH_NOT_SUCCESSFUL_BACKUP'}
+    assert report['status'] == 'needs-attention'
+
+
+@pytest.mark.parametrize('conclusion', ['failure','cancelled','timed_out','action_required','neutral','skipped','stale'])
+def test_non_success_native_result_never_health(conclusion):
+    values = fixture(); values['/actions/runs/102']['conclusion'] = conclusion
+    values['/actions/runs/102/attempts/1/jobs?per_page=100']['jobs'][0]['conclusion'] = conclusion
+    report = h.inspect_runtime(BINDING, API(values), as_of=NOW)
+    assert report['workflows'][0]['status'] == 'needs-attention'
+    assert report['workflows'][0]['last_visible_success']['run']['id'] == 101
+
+
+@pytest.mark.parametrize('state', sorted(h.ACTIVE))
+def test_in_progress_is_not_a_successful_zero_result(state):
+    values = fixture(); r = values['/actions/runs/102']; r.update(status=state, conclusion=None)
+    add_details(values,r,'backup','dos2-store')
+    p = h.inspect_runtime(BINDING, API(values), as_of=NOW)['workflows'][0]
+    assert p['status'] == 'in-progress' and p['observed_active'][0]['id'] == 102
+
+
+@pytest.mark.parametrize('expired,expiry,want', [(True,'2026-11-16T09:00:00Z','expired'),
+    (False,NOW,'expired'),(False,'2026-10-18T10:00:00Z','expiring')])
+def test_retention_never_trusts_expired_false_alone(expired, expiry, want):
+    values = fixture(); a = values['/actions/runs/102/artifacts?per_page=100']['artifacts'][0]
+    a.update(expired=expired,expires_at=expiry)
+    report = h.inspect_runtime(BINDING, API(values), as_of=NOW, backup_run_id=102)
+    assert report['workflows'][0]['latest']['artifact_state'] == want
+    assert report['specified_backup']['artifact_state'] == want
+    assert report['status'] == 'needs-attention'
+
+
+def test_empty_history_is_not_run_disabled_is_not_unconfigured():
+    values = fixture(); key='/actions/workflows/store-runtime.yml'
+    values[key+'/runs?branch=main&per_page=20']={'total_count':0,'workflow_runs':[]}
+    result=h.inspect_runtime(BINDING,API(values),as_of=NOW)
+    assert result['workflows'][0]['status']=='not-run'
+    values[key]['state']='disabled_manually'
+    assert h.inspect_runtime(BINDING,API(values),as_of=NOW)['workflows'][0]['status']=='disabled'
+    assert result['automatic_schedule']=='not-established-by-workflow-active-state'
+
+
+@pytest.mark.parametrize('where', ['workflow','run','repository','job','artifact','list','duplicate','job-page'])
+def test_foreign_or_incomplete_metadata_is_not_fabricated(where):
+    values=fixture(); key='/actions/workflows/store-runtime.yml'
+    if where=='workflow': values[key]['path']='.github/workflows/foreign.yml'
+    if where=='run': values['/actions/runs/102']['workflow_id']=999
+    if where=='repository': values['/actions/runs/102']['head_repository']['id']=123
+    if where=='job': values['/actions/runs/102/attempts/1/jobs?per_page=100']['jobs'][0]['run_attempt']=2
+    if where=='artifact': values['/actions/runs/102/artifacts?per_page=100']['artifacts'][0]['workflow_run']['head_sha']='c'*40
+    if where=='list': values[key+'/runs?branch=main&per_page=20']['total_count']=4
+    if where=='duplicate': values[key+'/runs?branch=main&per_page=20']['workflow_runs'][1]['id']=102
+    if where=='job-page':
+        v=values['/actions/runs/102/attempts/1/jobs?per_page=100'];v['jobs']=[{**v['jobs'][0],'id':i+1} for i in range(100)];v['total_count']=101
+    report=h.inspect_runtime(BINDING,API(values),as_of=NOW)
+    assert report['workflows'][0]['status']=='unknown'
+    assert report['workflows'][1]['status']=='metadata-ok'
+    assert report['status']=='needs-attention'
+
+
+def test_attempt_changes_during_read_do_not_mix_artifacts():
+    api=API()
+    def mutate(path,calls):
+        if path=='/actions/runs/102':
+            return {**deepcopy(api.values[path]),'run_attempt':2}
+    api.mutate=mutate
+    p=h.inspect_runtime(BINDING,api,as_of=NOW)['workflows'][0]
+    assert p['status']=='changed-during-inspection'
+    assert p['latest']['run']['run_attempt']==1
+
+
+def test_newer_run_arrives_before_final_listing_is_not_ignored():
+    api=API();key='/actions/workflows/store-runtime.yml/runs?branch=main&per_page=20'
+    def mutate(path,calls):
+        if path==key and calls.count(key)==2:
+            return {'total_count':3,'workflow_runs':[run(1,'store-runtime.yml',103),*deepcopy(api.values[key]['workflow_runs'])]}
+    api.mutate=mutate
+    assert h.inspect_runtime(BINDING,api,as_of=NOW)['workflows'][0]['status']=='changed-during-inspection'
+
+
+def test_last_attempt_time_not_run_id_controls_order_within_declared_window():
+    values=fixture();r=values['/actions/runs/101'];r['run_started_at']=r['updated_at']='2026-10-17T09:59:00Z'
+    r['run_attempt']=2;r['conclusion']='failure';add_details(values,r,'backup','dos2-store')
+    p=h.inspect_runtime(BINDING,API(values),as_of=NOW)['workflows'][0]
+    assert p['latest']['run']['id']==101 and p['last_visible_success']['run']['id']==102
+    assert p['status']=='needs-attention'
+
+
+def test_truncated_history_does_not_claim_global_no_writer_or_last_business_success():
+    values=fixture();key='/actions/workflows/store-runtime.yml/runs?branch=main&per_page=20'
+    values[key]={'total_count':25,'workflow_runs':[run(1,'store-runtime.yml',102),run(1,'store-runtime.yml',101,stamp=OLD),
+        *[run(1,'store-runtime.yml',i,stamp='2026-10-15T09:00:00Z') for i in range(1,19)]]}
+    p=h.inspect_runtime(BINDING,API(values),as_of=NOW)['workflows'][0]
+    assert p['recent_scope']=={'limit':20,'returned':20,'total':25,'complete_history':False}
+
+
+@pytest.mark.parametrize('field,value', [('as_of','2026-10-17'),('backup_run_id',True),('expected_head','latest'),('self_run',{'id':1,'run_attempt':False})])
+def test_invalid_control_input_before_native_io(field,value):
+    api=API()
+    with pytest.raises(RecordError):h.inspect_runtime(BINDING,api,**{field:value})
+    assert api.calls==[]
+
+
+def test_write_binding_and_shared_api_exhaustion_rejected():
+    api=API()
+    with pytest.raises(RecordError):h.inspect_runtime(replace(BINDING,write_enabled=True),api,as_of=NOW)
+    assert api.calls==[]
+    native=GitHubAPI('synthetic-only');native._requests=512
+    with pytest.raises(StoreUnavailable,match='REMOTE_REQUEST_LIMIT'):h.inspect_runtime(BINDING,native,as_of=NOW)
+    assert native._requests==513
+
+
+def test_final_permission_failure_stops_and_leaves_only_unknown_receipt(tmp_path):
+    api=API()
+    def mutate(path,calls):
+        if path=='' and calls.count('')==2:raise StoreUnavailable('REMOTE_NOT_AUTHORIZED')
+    api.mutate=mutate
+    with pytest.raises(RecordError,match='REMOTE_NOT_AUTHORIZED'):
+        command.execute(BINDING,api,tmp_path/'out',as_of=NOW)
+    receipt=json.loads((tmp_path/'out/health.json').read_bytes())
+    assert receipt['status']=='unknown' and 'workflows' not in receipt
+    assert not (tmp_path/'out/health.md').exists()
+    assert api.calls[-1]==''
+
+
+def test_unavailable_workflow_stops_not_marked_never_run():
+    api=API()
+    def mutate(path,calls):
+        if 'workflows/store-runtime' in path:raise StoreUnavailable('REMOTE_NOT_FOUND_OR_NOT_AUTHORIZED')
+    api.mutate=mutate
+    with pytest.raises(StoreUnavailable):h.inspect_runtime(BINDING,api,as_of=NOW)
+    assert len(api.calls)==4
+
+
+def test_heads_change_and_expected_snapshot_are_not_ignored():
+    api=API();key='/git/ref/heads/'+BINDING.branch
+    def mutate(path,calls):
+        if path==key and calls.count(key)==2:return {'ref':'refs/heads/'+BINDING.branch,'object':{'type':'commit','sha':'d'*40}}
+    api.mutate=mutate
+    assert h.inspect_runtime(BINDING,api,as_of=NOW)['heads_changed_or_unexpected']
+    assert h.inspect_runtime(BINDING,API(),as_of=NOW,expected_head='d'*40)['heads_changed_or_unexpected']
+
+
+def test_future_run_and_resource_bounds_are_explicit(monkeypatch):
+    with pytest.raises(RecordError,match='FUTURE_RUN'):h.inspect_runtime(BINDING,API(),as_of='2026-10-14T00:00:00Z')
+    monkeypatch.setattr(h,'MAX_METADATA_BYTES',100)
+    with pytest.raises(RecordError,match='METADATA_BOUND'):h.inspect_runtime(BINDING,API(),as_of=NOW)
+
+
+def test_missing_current_artifact_not_replaced_by_old_attempt():
+    values=fixture();a=values['/actions/runs/102/artifacts?per_page=100']['artifacts'][0];a['name']='dos2-store-102-0'
+    p=h.inspect_runtime(BINDING,API(values),as_of=NOW)['workflows'][0]
+    assert p['latest']['artifact_state']=='not-found' and p['status']=='needs-attention'
+
+
+def test_markup_is_literal_and_existing_output_not_overwritten(tmp_path):
+    values=fixture();j=values['/actions/runs/202/attempts/1/jobs?per_page=100']['jobs'][0]
+    j['name']='<script>fetch("secret")</script>|![x](https://evil.invalid)'
+    report=command.execute(BINDING,API(values),tmp_path/'out',as_of=NOW)
+    md=(tmp_path/'out/health.md').read_text(); assert '<script>' not in md and '![' not in md
+    assert encoded(report)==(tmp_path/'out/health.json').read_bytes()
+    api=API()
+    with pytest.raises(RecordError,match='NEW_OUTPUT'):command.execute(BINDING,api,tmp_path/'out',as_of=NOW)
+    assert api.calls==[]
+
+
+def test_real_host_route_reads_only_metadata_and_original_backup_jobs_are_unchanged(tmp_path,monkeypatch):
+    import yaml
+    from decision_kernel.interfaces import store_runtime
+    source=yaml.safe_load((ROOT/'.github/workflows/store-runtime.yml').read_text())
+    trigger=source.get('on',source.get(True))
+    assert set(trigger)=={'workflow_dispatch'}
+    assert source['jobs']['health']['permissions']=={'contents':'read','actions':'read'}
+    assert source['jobs']['backup']['permissions']=={'contents':'read'}
+    assert source['jobs']['retain-guide']['permissions']=={'contents':'write'}
+    monkeypatch.chdir(ROOT)
+    for key,value in {'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main',
+        'GITHUB_REPOSITORY':BINDING.repository,'GITHUB_SHA':SHA,'GITHUB_RUN_ID':'999','GITHUB_RUN_ATTEMPT':'1'}.items():monkeypatch.setenv(key,value)
+    with patch.object(store_runtime.GitHubAPI,'from_environment',return_value=API(fixture(self_run=True))):
+        assert store_runtime.main(['operate','--operation','health','--expected-head',SHA,'--backup-run-id','101','--out',str(tmp_path/'host')])==0
+    doc=json.loads((tmp_path/'host/health.json').read_bytes())
+    assert doc['dispatches']==doc['writes']==0 and doc['specified_backup']['observed_operation']=='backup'
+
+
+def exercise_installed_runtime_health(outside, python, env, store):
+    """Extend the original ONE wheel; no new installation or business fixture."""
+    import subprocess
+    from decision_kernel.infrastructure.git_store import GitStore
+    head = GitStore(store).head()
+    values=fixture(failure=True)
+    (outside/'health-native-input.json').write_bytes(encoded(values))
+    (outside/'health-binding.json').write_bytes(encoded(asdict(BINDING)))
+    script=r'''
+import json,sys
+from pathlib import Path
+from unittest.mock import patch
+from decision_kernel.interfaces import store_runtime
+values=json.loads(Path('health-native-input.json').read_bytes())
+class API:
+ def request(self,method,path,payload=None):
+  assert method=='GET' and payload is None
+  return values[path[len('/repos/auguspp/Decision-OS-2'):]]
+with patch.object(store_runtime.GitHubAPI,'from_environment',return_value=API()):
+ code=store_runtime.main(['runtime-health','--binding','health-binding.json','--as-of','2026-10-17T10:00:00Z','--backup-run-id','101','--out',sys.argv[1]])
+assert code==2
+r=json.loads(Path(sys.argv[1],'health.json').read_bytes())
+assert r['workflows'][0]['latest']['run']['conclusion']=='failure'
+assert r['specified_backup']['observed_operation']=='backup'
+assert r['writes']==r['dispatches']==0
+'''
+    for name in ('health-first','health-fresh'):
+        completed=subprocess.run([str(python),'-I','-c',script,name],cwd=outside,env=env,capture_output=True,text=True)
+        assert completed.returncode==0,completed.stderr
+    assert (outside/'health-first/health.json').read_bytes()==(outside/'health-fresh/health.json').read_bytes()
+    assert GitStore(store).head() == head
+
+
+def test_a_backup_run_cannot_be_hidden_as_the_inspector():
+    report=h.inspect_runtime(BINDING,API(),as_of=NOW,self_run={"id":102,"run_attempt":1})
+    assert report["excluded_inspection"] is None
+    assert report["workflows"][0]["error"]=="HEALTH_SELF_NOT_INSPECTION"
+    assert report["status"]=="needs-attention"

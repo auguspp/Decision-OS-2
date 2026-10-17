@@ -1,0 +1,195 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'sha256-UvG7JR3vH2jtAeJ4GgAaoRKrB6V0IeA15sUtLkIS7Yk='; base-uri 'none'; form-action 'none'"><title>短剧越来越常见之后，谁得到收益？</title><style>
+:root{color-scheme:light;--ink:#172f42;--muted:#526675;--line:#d9e1e3;--accent:#126456;--paper:#ffffff;--wash:#f2f5f4}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--wash);color:var(--ink);font:17px/1.85 -apple-system,BlinkMacSystemFont,"Noto Sans CJK SC","Microsoft YaHei",sans-serif}
+.top{border-top:7px solid var(--accent);max-width:1180px;margin:0 auto;padding:36px 54px 22px;display:flex;justify-content:space-between;color:var(--muted);font-size:13px;letter-spacing:.08em}
+main{max-width:1180px;margin:0 auto 64px;padding:4px 54px 58px;background:var(--paper);border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px}
+h1{font-size:40px;line-height:1.35;font-weight:750;letter-spacing:-.025em;margin:24px 0 28px;max-width:930px}
+h2{font-size:24px;line-height:1.5;margin:42px 0 18px;padding-top:22px;border-top:1px solid var(--line)}p{margin:14px 0}strong{font-weight:720}main>p:first-of-type{font-size:20px;line-height:1.75;border-left:4px solid var(--accent);background:#edf5f1;padding:22px 26px;border-radius:0 6px 6px 0}
+blockquote{margin:22px 0;padding:16px 24px;background:#f4f6f7;border-left:3px solid #849ea7;color:#344d5d;font-size:18px}blockquote p{margin:0}
+.table-scroll{overflow-x:auto;margin:22px 0;border:1px solid var(--line);border-radius:7px}table{border-collapse:collapse;width:100%;font-size:15.5px;line-height:1.75}th,td{padding:16px 17px;vertical-align:top;text-align:left;border-bottom:1px solid var(--line)}th{background:#eaf0ef;color:#183c35;font-weight:700}tr:last-child td{border-bottom:0}tr:nth-child(even) td{background:#fafbfb}td:first-child{min-width:155px;font-weight:600}table a{white-space:nowrap}
+a{color:#1b6686;text-decoration:none;border-bottom:1px solid #a8c7d3}a:hover{color:#104355;border-color:#104355}ul{padding-left:22px}li{margin:11px 0}li p{margin:5px 0}code{font-size:.9em;overflow-wrap:anywhere}footer{max-width:1180px;margin:-35px auto 30px;padding:0 54px;color:var(--muted);font-size:13px}
+@media(max-width:720px){body{font-size:16px;line-height:1.8}.top{padding:22px 20px 18px;display:block}.top span{display:block;margin:3px 0}main{margin-bottom:45px;padding:4px 20px 32px;border-radius:0}h1{font-size:29px;line-height:1.45;margin:18px 0}h2{font-size:21px;margin-top:32px}main>p:first-of-type{font-size:18px;padding:17px 18px}.table-scroll{margin:18px 0}table{min-width:710px;font-size:14.5px}th,td{padding:12px 13px}footer{padding:0 20px}blockquote{padding:14px 17px}}
+@media print{body{background:white;font-size:11pt}.top,main,footer{max-width:none;border:0;padding:0;margin:0}h1{font-size:25pt}h2{font-size:16pt;break-after:avoid}tr,blockquote{break-inside:avoid}.table-scroll{overflow:visible;border-radius:0}table{min-width:0;font-size:9pt}a{color:inherit}main>p:first-of-type{font-size:13pt}}
+</style></head><body><div class="top"><span>生活观察研究 · QUICK</span><span>2026年10月17日 · 版本1.0</span></div><main><h1>短剧越来越常见之后，谁得到收益？</h1>
+<p><strong>判断：这条生活观察足以启动研究。已核资料更支持把问题放在“观看强度、变现与收益归属”，尚不足以推出全国新增用户仍在迅猛扩张，或某只相关股票值得买入。</strong></p>
+<p>研究截至2026年10月17日。本稿完成一次有界 Quick：国内微短剧需求与经济机制为主，使用三家上市主体作归属核验；海外仅用于区分其经营和参股路径。公司财务采用已取得的2026年半年报。没有评价现价、估值或投资回报。</p>
+<h2>1. 从你的原观察出发</h2>
+<blockquote>
+<p>身边看短剧的人越来越多了，基本上我身边所有的人都在看短剧，甚至打车的时候还有很多师傅在边开车边看短剧</p>
+</blockquote>
+<p>这是用户在2026年10月17日提供的真实生活观察；收到时间登记为17:32（UTC+08:00），并非观察开始时间。已知范围是身边的人与打车接触到的司机。城市、人数、观察起止、平台、是否付费和观看时长均未提供。输入转录随报告保留，未把它登记成独立的全国调查。</p>
+<p>它提出了三个可区分的解释：更多人开始看；已有观众看得更频繁；接触人群、推荐入口或观看场景的变化使行为更容易被注意到。免费分发可能降低观看门槛，但这些资料不能判定哪一项造成了你的具体观察。行车观看这一场景不作为正向商业指标。</p>
+<h2>2. 人数与时长：已核事实指向什么</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>实际统计时点及公布值</th>
+<th>能支持的判断与限制</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>CNNIC微短剧用户规模及使用率</td>
+<td>2024年12月：6.62亿、占网民59.7%；2025年12月：6.64亿、占网民59.0%</td>
+<td>两个公布点接近，没有显示全国用户数迅猛扩张；不能据此宣称统计显著停滞，也不能否认2026年的局部或后续变化。<a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.cn/NMediaFile/2025/0428/MAIN17458061595875K4FP1NEUO.pdf">S1</a> <a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.net.cn/NMediaFile/2026/0304/MAIN1772588317069TUXN3827X8.pdf">S2</a></td>
+</tr>
+<tr>
+<td>白皮书微短剧App人均单日时长</td>
+<td>原图2025年1月95.7分钟，8月120.5分钟，较1月25.9%</td>
+<td>对App使用强度提高有正向支持。120.5是8月端点；不是1—8月均值，更不是全体网民或全国人口的日均时长。<a target="_blank" rel="noopener noreferrer" href="https://imgtopics.gmw.cn/site2/20251111/10bf488307a42a7d2c5e02.pdf">S3</a></td>
+</tr>
+<tr>
+<td>2026年发布报告的另一时长观察</td>
+<td>2025年12月129分钟</td>
+<td>这是2026年发布的2025年数据。未核到与前一图同面板、同分母的证明，单独列示，不拼接增速。<a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.cn/n4/2026/0417/c326-11590.html">S4</a></td>
+</tr>
+</tbody></table></div>
+<p>CNNIC的使用率分母分别是当期11.08亿与11.25亿网民；不是全国人口或短视频用户。两期公开的基础调查设计均为大陆31省区市、6岁以上固话/手机双框电话调查与加权。微短剧专项问题的回溯窗没有定位，因此不能把“网民过去半年上过网”的定义转写成“微短剧半年活跃用户”。<a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.cn/NMediaFile/2025/0428/MAIN17458061595875K4FP1NEUO.pdf">S1</a> <a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.net.cn/NMediaFile/2026/0304/MAIN1772588317069TUXN3827X8.pdf">S2</a></p>
+<p>本轮还核对了CNNIC最新可读目录并有界寻找2026年同系列更新，未定位到可核的更新点。这里明确使用2024、2025年末历史值，不把6.64亿标为2026年10月现值。App时长与CNNIC人数的分母不同，二者相乘不能得到可靠的全国总观看时长。</p>
+<p><strong>研究方向因此改变：优先检验已经很大的用户基础之上，使用频率、观看场景和商业模式如何变化。</strong>这是由反证推动的问题重构，不是对用户观察真假的裁判。</p>
+<h2>3. 从观看到收入，还要跨过哪些环节</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>变现方式</th>
+<th>收入如何形成</th>
+<th>需要继续区分的经济变量</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>免费观看、广告变现</td>
+<td>可售广告展示、实际填充和广告价格形成广告收入，再依合同分配</td>
+<td>观看时长不等于有效广告展示；还要看广告单价、填充、投流费用、内容成本和分成</td>
+</tr>
+<tr>
+<td>用户付费</td>
+<td>付费人数与实际人均付费形成流水，经退款、渠道及合同规则形成净收入</td>
+<td>下载、播放、付费人数、消费流水和会计收入不同；会员确认期与现金到账期也可能不同</td>
+</tr>
+<tr>
+<td>IP、版权授权与制作发行</td>
+<td>IP/剧本授权、制作服务、成片发行及约定分账</td>
+<td>一次授权与长期分成、最低保证与浮动收益、制作投入及账期需要逐项核对</td>
+</tr>
+</tbody></table></div>
+<p>以上是分析机制，不是对任何平台参数的估计。白皮书对2025年全年免费微短剧市场规模占比给出的66.3%是当时的<strong>预估值</strong>；不能改成免费用户占比、2026年份额或已经实现的广告收入，也不能凭一个预测点计算免费模式的同比增量。<a target="_blank" rel="noopener noreferrer" href="https://imgtopics.gmw.cn/site2/20251111/10bf488307a42a7d2c5e02.pdf">S3</a></p>
+<p>投资上需要的顺序是：可变现的注意力形成净收入，净收入扣除全成本并转成现金，最后按实际权益与会计关系归到上市公司及普通股股东。任一环节不成立，观看热度都可能无法形成预期股东收益。这是需要证据连接的机制链，当前没有用未经核验的参数作预测。</p>
+<h2>4. 产业链：收入、风险与议价权</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>环节</th>
+<th>可能获得的经济利益</th>
+<th>主要投入或风险</th>
+<th>能判断议价能力的证据</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>IP及剧本</td>
+<td>授权费、最低保证、后续分账</td>
+<td>创作成本、权利完整性、单一内容成败</td>
+<td>可核版权、系列复用、真实授权及续约条款</td>
+</tr>
+<tr>
+<td>制作</td>
+<td>制作费、项目利润、分账权</td>
+<td>拍摄和制作投入、超支、返工、失败项目</td>
+<td>包含失败项目的全成本损益，而非仅爆款样本</td>
+</tr>
+<tr>
+<td>发行与流量平台</td>
+<td>广告/付费收入、发行服务收益或分成</td>
+<td>获客、技术运营、内容采购和渠道成本</td>
+<td>留存、自然流量、完整合同、可归属净收入与回款</td>
+</tr>
+<tr>
+<td>支付及分销渠道</td>
+<td>服务费、渠道分成</td>
+<td>服务和结算成本、退款争议</td>
+<td>实际费率、结算周期及净额确认方式</td>
+</tr>
+</tbody></table></div>
+<p>官方短剧创作者中心列明编剧、导演、演员和版权方等合作角色，收益指向各自合同；首页没有给出全行业统一分账比例。<a target="_blank" rel="noopener noreferrer" href="https://www.shortdramas.com/">S5</a> 因而本轮不宣称哪个环节必然拿走最多利润。上述风险和议价指标是待验证的分析框架。同一笔消费可能形成产业链多个企业的收入，不能把各层营业额简单相加当成终端市场规模。</p>
+<h2>5. 三家上市主体：经营路径真实，利润归属仍需拆开</h2>
+<p>下表金额为人民币亿元，期间均为2026年1—6月；“相关收入”的业务口径各异，不用于规模或质量排名。利润和经营现金均为集团口径；单位换算原数和复算随稿保存。</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>上市主体</th>
+<th>披露的相关业务收入</th>
+<th>集团归母／权益持有人应占利润</th>
+<th>集团经营现金流净额</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>中文在线 300364.SZ</td>
+<td>4.1126：短剧及IP衍生品</td>
+<td>−0.4300</td>
+<td>+1.2680</td>
+</tr>
+<tr>
+<td>掌阅科技 603533.SH</td>
+<td>11.8510：短剧等衍生业务</td>
+<td>−0.5014</td>
+<td>−1.1653</td>
+</tr>
+<tr>
+<td>阅文集团 0772.HK</td>
+<td>超过4.3：短剧及AI漫剧</td>
+<td>+1.3538</td>
+<td>+2.8937</td>
+</tr>
+</tbody></table></div>
+<p>来源：中文在线半年报第8、21—22页<a target="_blank" rel="noopener noreferrer" href="https://static.cninfo.com.cn/finalpage/2026-08-26/1225504423.PDF">S6</a>；掌阅第6、9—12页<a target="_blank" rel="noopener noreferrer" href="https://static.cninfo.com.cn/finalpage/2026-08-27/1225510832.PDF">S7</a>；阅文纸页14、42、47（PDF15、43、48）<a target="_blank" rel="noopener noreferrer" href="https://ir-1253177085.cos.ap-hongkong.myqcloud.com/investment/20260916/6aaa5bfcd5e29.pdf">S8</a>。这些是半年披露；不当作年度审计结论。集团现金为正或为负，都没有单独识别短剧现金贡献。</p>
+<p><strong>中文在线：先拆自营与参股。</strong>FlareFlow位于全资链条；CMS为间接持股49.24%、采用权益法核算的参股公司。CMS官网将ReelShort列为产品之一，同时还有其他产品。中文在线半年报中的CMS财务只包括2026年1—3月，不含4—6月，且不是单产品数据。不能把CMS或ReelShort的全部收入并入上市公司，也不能把账面投资收益视为同额现金分红。<a target="_blank" rel="noopener noreferrer" href="https://static.cninfo.com.cn/finalpage/2026-08-26/1225504423.PDF">S6</a> <a target="_blank" rel="noopener noreferrer" href="https://cn.crazymaplestudios.com/">S9</a></p>
+<p><strong>掌阅：相关收入增长与集团盈利分开。</strong>“短剧等衍生业务”同比增长41.45%、贡献收入66.44%，但集团仍有归母亏损和经营现金净流出。这足以打断“相关收入增长就保证集团赚钱”的推断；并不能反过来证明短剧分部自身亏损。公司未分离短剧独立净利润、现金和完整投流回收期，不能用集团推广费减混合短剧收入造出分部利润。<a target="_blank" rel="noopener noreferrer" href="https://static.cninfo.com.cn/finalpage/2026-08-27/1225510832.PDF">S7</a></p>
+<p><strong>阅文：同时看新增和替代。</strong>超过4.3亿元是短剧与AI漫剧合计。中报只列在线业务与版权运营及其他两大分部，共同销售、营销和行政费用不分配到分部；大分部毛利率和集团利润率都不是短剧利润率。管理层还提到部分分发转向短剧/AI漫剧，后续须看原阅读业务被替代后的净增量，不能把全部新业务收入当净新增。<a target="_blank" rel="noopener noreferrer" href="https://ir-1253177085.cos.ap-hongkong.myqcloud.com/investment/20260916/6aaa5bfcd5e29.pdf">S8</a></p>
+<p>三家存在真实业务或投资收益路径，但没有一份披露把纯国内真人短剧的收入、完整成本、净现金和普通股股东收益全部隔离出来。用户未提供观看平台，也无法把身边的某次观看映射到其中任何一家。</p>
+<h2>6. 哪些证据会使这项研究值得继续</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>后续问题</th>
+<th>有辨别力的新增证据</th>
+<th>可能改变的判断</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>新增观众还是使用变强</td>
+<td>同口径的2026年用户、频率与时长数据，或时期、平台和样本范围清楚的新观察</td>
+<td>判断增长来自人数、强度还是接触结构</td>
+</tr>
+<tr>
+<td>免费热度能否兑现</td>
+<td>实际广告净收入、付费留存、分成后收入、包含获客及内容投入的回收资料</td>
+<td>判断高观看是否形成可持续现金</td>
+</tr>
+<tr>
+<td>哪家上市公司真正受益</td>
+<td>业务与法律实体的完整映射、全成本及抵销、归属比例、现金回款；CMS需同期完整资料</td>
+<td>将行业线索缩到有经济归属证据的主体</td>
+</tr>
+<tr>
+<td>是否值得投资</td>
+<td>在上述连接成立后，另行明确估值和价格研究目标</td>
+<td>评价经营改善是否已被价格反映；本稿尚未作此评价</td>
+</tr>
+</tbody></table></div>
+<p><strong>本版停止判断：五个原问题已在有界Quick范围内回答，最强反证已改变结论。</strong>当前不能识别的拆分和未来统计保留为重开条件；未把它们改写成已知事实，也未承诺自动开展下一轮研究。这里完成的是生活观察到研究的判断，不是买卖决定。</p>
+<h2>7. 研究与材料说明</h2>
+<p>本次既有内容池按同一固定快照，以用户原主题词“短剧”连续查询两页，共扫描56个来源版本，返回0个匹配且游标结束。因此这些外部资料是本案首次分析与采用，不包装成今天新发生的新闻。该查询只说明这个快照和主题词的结果，不是穷尽所有资料。已评估现役接口适配，本版以公开原件核验五题；没有执行Relay，不声明其采用或系统Full来源使用通过。</p>
+<p>保管清单包括本次原创HTML报告、用户输入转录、数字与单位复算文件，以及下列9份必要事实摘录。第三方原PDF、整页及原信息图不进入公开交付；有原件摘要也不代表原件已保管。来源真实性、经济判断与人类接受不能由文件可读性代签。</p>
+<h2>来源与定位</h2>
+<ul>
+<li><strong>S1</strong> CNNIC第55次报告，发布2025-01-17；统计2024-12。PDF第7、45页，方法第61—63页。<a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.cn/NMediaFile/2025/0428/MAIN17458061595875K4FP1NEUO.pdf">原PDF</a>。</li>
+<li><strong>S2</strong> CNNIC第57次报告，发布2026-02-05；统计2025-12。PDF第9、40页，方法第73—74页。<a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.net.cn/NMediaFile/2026/0304/MAIN1772588317069TUXN3827X8.pdf">原PDF</a>。文件路径日期不替代报告发布日期。</li>
+<li><strong>S3</strong> 协会《微短剧行业发展白皮书（2025）》主要发现，发布2025-11-11；原PDF第4、10、14页。App时长图脚为QuestMobile；免费份额是全年预估。<a target="_blank" rel="noopener noreferrer" href="https://imgtopics.gmw.cn/site2/20251111/10bf488307a42a7d2c5e02.pdf">原PDF</a>。</li>
+<li><strong>S4</strong> CNNIC发布的2026网络视听报告主要发现，网页2026-04-17，报告发布2026-04-15；第六项统计期2025-12。<a target="_blank" rel="noopener noreferrer" href="https://www.cnnic.cn/n4/2026/0417/c326-11590.html">官方原文</a>。完整报告方法附录本次未取得。</li>
+<li><strong>S5</strong> 抖音集团短剧创作者中心，2026-10-17读取；未标网页发布日期。<a target="_blank" rel="noopener noreferrer" href="https://www.shortdramas.com/">官方页面</a>。</li>
+<li><strong>S6</strong> 中文在线2026半年报，发布2026-08-26；PDF第5—6、8、21—22、26、157、159页。CMS财务仅2026Q1。<a target="_blank" rel="noopener noreferrer" href="https://static.cninfo.com.cn/finalpage/2026-08-26/1225504423.PDF">原PDF</a>。</li>
+<li><strong>S7</strong> 掌阅科技2026半年报，发布2026-08-27；PDF第6、9—12、193页。<a target="_blank" rel="noopener noreferrer" href="https://static.cninfo.com.cn/finalpage/2026-08-27/1225510832.PDF">原PDF</a>。</li>
+<li><strong>S8</strong> 阅文2026中报，发布2026-09-16；纸页12、14、42、47、55分别为PDF13、15、43、48、56。<a target="_blank" rel="noopener noreferrer" href="https://ir-1253177085.cos.ap-hongkong.myqcloud.com/investment/20260916/6aaa5bfcd5e29.pdf">原PDF</a>。与公司2026-08-11中期业绩稿交叉核对相关披露。</li>
+<li><strong>S9</strong> Crazy Maple Studio官网，2026-10-17读取，主营业务板块。<a target="_blank" rel="noopener noreferrer" href="https://cn.crazymaplestudios.com/">官方页面</a>。</li>
+</ul>
+<p>所有材料均于2026年10月17日本次实际读取；“取得日期”“披露日期”“统计期间”分别记录。9份公开来源均以研究者摘录形式保管；源站原链接保留，以便继续核对全文。</p>
+</main><footer>原创研究稿 · 本版数字期间与材料范围见正文；条件变化时可沿原问题继续。</footer></body></html>

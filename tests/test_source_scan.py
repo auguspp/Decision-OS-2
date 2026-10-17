@@ -57,27 +57,29 @@ def seeded(seed, tmp_path):
     return model, refs
 
 
-def test_old_full_scan_exhausts_real_budget_but_cold_bounded_pages_finish(seeded):
+def test_cold_bounded_pages_match_full_scan_under_real_budget(seeded):
     model, refs = seeded
-    old, api = reader(model)
-    with pytest.raises(RecordError, match='REMOTE_REQUEST_LIMIT'):
-        old.search('铜')
-    assert api._requests == remote.MAX_REQUESTS + 1 == 513
+    full_reader, api = reader(model)
+    full = full_reader.search('铜')
+    assert full['total'] == 2 and full['next_cursor'] is None
+    assert [row['reference']['manifest']['path'] for row in full['items']] == [r.manifest.path for r in refs[-2:]]
+    assert 0 < api._requests == len(model.requests) <= remote.MAX_REQUESTS == 512
     # Each explicit reader page is a new operation, never a hidden counter reset.
     cursor, pages, counts = None, [], []
     for _ in range(6):
+        start = len(model.requests)
         store, api = reader(model)
         page = ResearchEvidence(store).page(request(), plan('铜', '现金'), cursor=cursor, limit=8)
         assert page['status'] != 'search-unavailable'
         assert page['coverage']['scanned_versions_this_page'] <= MAX_SCAN_VERSIONS
-        assert api._requests < remote.MAX_REQUESTS
+        assert 0 < api._requests == len(model.requests) - start < remote.MAX_REQUESTS
         pages.append(page); counts.append(api._requests)
         cursor = page['next_cursor']
         if cursor is None: break
     assert cursor is None and len(pages) == 3
     assert pages[0]['matches'] == [] and not pages[0]['coverage']['query_plan_complete']
     assert pages[0]['next_cursor']['source_cursor']['scan_offset'] == 32
-    assert len({p['snapshot'] for p in pages}) == 1
+    assert {p['snapshot'] for p in pages} == {full['snapshot']}
     assert [m['reference']['manifest']['path'] for p in pages for m in p['matches']] == [r.manifest.path for r in refs[-2:]] * 2
     assert model.writes == 0
     print('native-budget per explicit page:', counts)

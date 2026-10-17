@@ -13,6 +13,7 @@ from decision_kernel.domain.records import (
     SourceInput, StoreUnavailable, UnknownWrite, encoded,
 )
 from decision_kernel.infrastructure.git_store import GitStore
+from decision_kernel.infrastructure import github_store as remote
 from decision_kernel.infrastructure.github_store import GitHubBinding, GitHubStore
 
 
@@ -240,10 +241,93 @@ def test_foreign_commit_fork_is_not_reachable(api, backend):
     expected = backend.head()
     api.git.commit({"submissions/fork.json": b"{}\n"}, expected=expected)
     fork = api.git.head()
+    assert backend.read(fork, "submissions/fork.json") == b"{}\n"  # Warm the old reachable proof.
     api.git._run("update-ref", "refs/heads/records", expected, fork)
     api.git.commit({"submissions/other.json": b"{}\n"}, expected=expected)
     with pytest.raises(RecordError, match="COMMIT_OUTSIDE_BINDING"):
         backend.read(fork, "submissions/fork.json")
+
+
+def test_exact_ancestor_reuse_keeps_live_checks_cold_reader_and_hard_budget(api, backend):
+    from test_news_read_budget import transport
+
+    ref = VersionedStore(backend).put_source("proof-source", source()).manifest
+    wire = transport(api)
+    warm = GitHubStore(api.binding, wire)
+    original = warm.resolve(ref)
+    start = len(api.requests)
+    assert warm.resolve(ref) == original
+    calls = api.requests[start:]
+    assert not any("/compare/" in path for _, path, _ in calls)
+    prefix = "/repos/" + api.binding.repository
+    assert any(path == prefix for _, path, _ in calls)
+    assert any(path == prefix + "/git/ref/heads/" + api.binding.branch for _, path, _ in calls)
+
+    start, requests = len(api.requests), wire._requests
+    cold = GitHubStore(api.binding, wire)
+    assert cold.resolve(ref) == original and wire._requests > requests
+    assert any("/compare/" in path for _, path, _ in api.requests[start:])
+    # Even a completely warm read must send the live access check through the
+    # original transport. Saturating that same API cannot be hidden by a hit.
+    wire._requests = remote.MAX_REQUESTS
+    start = len(api.requests)
+    with pytest.raises(StoreUnavailable, match="REMOTE_REQUEST_LIMIT"):
+        warm.resolve(ref)
+    assert wire._requests == 513 and len(api.requests) == start
+
+
+def test_ancestor_proof_tracks_forward_head_and_rejects_rewind(api, backend):
+    ref = VersionedStore(backend).put_source("proof-source", source()).manifest
+    original = backend.resolve(ref)
+    advanced = api.git.commit({"submissions/advanced.json": b"{}\n"}, expected=api.git.head())
+    start = len(api.requests)
+    assert backend.resolve(ref) == original
+    expected = "/repos/" + api.binding.repository + f"/compare/{ref.commit}...{advanced}?per_page=1"
+    assert any(path == expected for _, path, _ in api.requests[start:])
+
+    api.git._run("update-ref", "refs/heads/records", api.binding.anchor, advanced)
+    with pytest.raises(RecordError, match="COMMIT_OUTSIDE_BINDING"):
+        backend.resolve(ref)
+
+
+@pytest.mark.parametrize("failure", ["status", "behind_by", "merge_base_commit", "unavailable"])
+def test_failed_ancestor_proof_is_not_cached(api, backend, failure):
+    head = api.git.commit({"submissions/later.json": b"{}\n"}, expected=api.git.head())
+    target = "/repos/" + api.binding.repository + f"/compare/{api.binding.anchor}...{head}?per_page=1"
+    calls = []
+    def first_bad(path, value):
+        if path == target:
+            calls.append(path)
+            if len(calls) == 1:
+                if failure == "unavailable":
+                    raise StoreUnavailable("SYNTHETIC_COMPARE_UNAVAILABLE")
+                value[failure] = {"status": "diverged", "behind_by": 1,
+                                  "merge_base_commit": {"sha": "0" * 40}}[failure]
+        return value
+    api.corrupt_response = first_bad
+    with pytest.raises(RecordError):
+        backend.check_commit(head)
+    backend.check_commit(head)  # A later explicit attempt must obtain a valid proof.
+    backend.check_commit(head)
+    assert len(calls) == 2
+
+
+def test_full_ancestor_cache_falls_back_to_verified_compare(api, monkeypatch):
+    assert remote.MAX_ANCESTOR_PROOFS == 128
+    # Exercise the capacity boundary with a small cache, not a different API budget.
+    monkeypatch.setattr(remote, "MAX_ANCESTOR_PROOFS", 2)
+    backend = GitHubStore(api.binding, api)
+    commits = [api.git.commit({f"submissions/proof-{n}.json": b"{}\n"}, expected=api.git.head())
+               for n in range(3)]
+    for commit in commits:
+        backend._ancestor(api.binding.anchor, commit)
+    assert len(backend._ancestor_proofs) == 2
+    start = len(api.requests)
+    backend._ancestor(api.binding.anchor, commits[0])
+    assert len(api.requests) == start
+    backend._ancestor(api.binding.anchor, commits[2])
+    backend._ancestor(api.binding.anchor, commits[2])
+    assert len(api.requests) == start + 2 and len(backend._ancestor_proofs) == 2
 
 
 def test_binding_change_rejected_without_silent_rebind(api, backend):

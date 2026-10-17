@@ -136,27 +136,23 @@ def test_failed_read_not_cached_and_memory_bound_falls_back_without_losing_sourc
 def test_production_request_limit_is_not_reset_and_cached_host_saves_then_cold_reads(sources, tmp_path, monkeypatch):
     model, _, _, plan, expected = sources
     before = model.git.head()
-    # Reproduce the old host's repeated predecessor/build/reading work with the
-    # real unchanged 512-request transport; never call a writer after this failure.
-    old_api = transport(model)
-    old_reader = VersionedStore(remote.GitHubStore(model.binding, old_api))
-    old = index.rolling_index(old_reader.read_source, plan["batch_references"],
-                              as_of=END, predecessor=plan["predecessor"])
-    with pytest.raises(RecordError): index.read_index(old_reader.read_source, old)
-    assert old_api._requests > remote.MAX_REQUESTS == 512
-    assert model.git.head() == before and model.writes == 0
+    # Protect the current consumer's complete save/read budget. Shared immutable
+    # Git proof reuse can make the former host's fixed-cost failure disappear.
+    start = len(model.requests)
     api, _ = setup(monkeypatch, tmp_path, model, plan)
     out = tmp_path / "saved"
     assert host.main(["build", "--out", str(out)]) == 0
     assert json.loads((out / "view.json").read_bytes()) == expected
     report = json.loads((out / "result/report.json").read_bytes())
     assert report["status"] == "completed" and report["write"] == "published" and model.writes == 1
-    assert api._requests < 512
+    assert model.git.head() != before
+    assert 0 < api._requests == len(model.requests) - start < remote.MAX_REQUESTS == 512
     usage = json.loads((out / "read-usage.json").read_bytes())
     assert usage["verified_source_reads"] == 17 and usage["reused_source_reads"] > 0
     assert usage["serialized_bytes"] < usage["byte_limit"] == 8 * 1024 * 1024
     assert usage["storage_api_requests"] == api._requests and usage["binding_rechecked"]
     ref = report["result"]["reference"]
+    start = len(model.requests)
     fresh_api, _ = setup(monkeypatch, tmp_path, model, {"reference": ref, "source": "none"},
                          saving=False, operation="read")
     fresh = tmp_path / "cold"
@@ -165,7 +161,8 @@ def test_production_request_limit_is_not_reset_and_cached_host_saves_then_cold_r
     page = json.loads((fresh / "reading.json").read_bytes())
     assert page["rows"] == [] and page["coverage"]["retained_versions"] == 16
     assert page["coverage"]["failed_source_windows"] == 1 and len(page["source_outcomes"]) == 17
-    assert 0 < fresh_api._requests < 512 and model.writes == 1
+    assert 0 < fresh_api._requests == len(model.requests) - start < remote.MAX_REQUESTS
+    assert model.writes == 1
 
 
 @pytest.mark.parametrize("change", ["privacy", "marker"])

@@ -45,7 +45,9 @@ HTTP固定HTTPS host api.github.com、正常TLS校验，不跟重定向、不用
 
 每请求30秒，响应/请求上限8MiB；每API实例最多512次请求；树最多8192项，单blob及提交总字节最多4MiB。来源/研究输入仍受2MiB约束，查询最多1024版本。超限明确失败，不截断为成功，不为绕过限制重建实例。
 
-仅缓存确切提交树（32个）和已验blob（128个、合计8MiB），不缓存可见性、权限、当前head或可达性。CLI每操作新建API实例，长期宿主在明确操作边界管理预算；扩大范围需真实用途与验证，不自建缓存平台。
+每个GitHubStore实例缓存确切提交树（32个）、已验blob（128个、合计8MiB），以及最多128个已完整验证成功的祖先关系 `(baseSHA, headSHA)`。两个确切提交间的Git拓扑关系不会因分支移动而改变；不缓存否定、错误或未验证的compare响应，容量满后继续原请求。每次读取仍重新核仓库元数据、实时分支ref/node和marker，再以实际取得的head验证引用可达性；新head使用不同SHA对，旧证明不能代替它。可见性、权限和当前head不缓存。
+
+该有限复用服务于研究交付保存后新reader核验同一清单时的重复compare开销，不增加读取范围或第二存储入口。fresh-reader仍新建独立GitHubStore及全部缓存，复用同一API的累计512次预算；不能为绕过限额重建API。CLI每个显式操作新建API实例，长期宿主在明确操作边界管理预算。Git对象/祖先关系缓存随实例退出，不跨操作持久化。
 
 ## 安装后调用与GPT读取
 
@@ -64,8 +66,8 @@ decision-os store --binding config/store-binding.json read-source --ref /runtime
 
 ## 验证、复用与退出
 
-沿PR #19核读的官方原语：[createCommitOnBranch](https://docs.github.com/en/graphql/reference/commits)、[Git树及truncated](https://docs.github.com/en/rest/git/trees)、[blob](https://docs.github.com/en/rest/git/blobs)、[提交历史/比较](https://docs.github.com/en/rest/commits/commits)。本次只为已采纳可见性作窄适配，不替换其版本/传输/事务机制。
+沿PR #19核读的官方原语：[createCommitOnBranch](https://docs.github.com/en/graphql/reference/commits)、[Git树及truncated](https://docs.github.com/en/rest/git/trees)、[blob](https://docs.github.com/en/rest/git/blobs)、[提交历史/比较](https://docs.github.com/en/rest/commits/commits)。祖先证明复用依据[Git提交对象和提交图](https://git-scm.com/docs/gitglossary)的确切对象关系，仍使用现役compare验证，不替换版本、传输或事务机制。
 
-test_github_store.py的真实Git/模拟GitHub与test_github_transport.py继续保护原合同；test_github_visibility.py复用相同模型，保护private默认、public显式选择、marker不匹配、元数据漂移、只读默认、发送前复核、公开模式幂等和并发CAS。模拟响应不证明真实token或托管写入成功；远端完整CI与真实数据验收分别记录。
+test_github_store.py的真实Git/模拟GitHub与test_github_transport.py继续保护原合同，包括暖祖先缓存后的live权限/分支变化、错误不缓存、容量满回退及同API硬预算；test_github_visibility.py复用相同模型，保护private默认、public显式选择、marker不匹配、元数据漂移、只读默认、发送前复核、公开模式幂等和并发CAS。test_research_delivery_integration.py以真实512限制的传输和原生Git保护多commit原件交付后的独立读回。模拟响应不证明真实token或托管写入成功；远端完整CI与真实数据验收分别记录。
 
 退役时同步处理适配器/绑定/CLI/HTTP的专属配置与测试，保留共享精确引用、前驱、意图和保留语义。生产备份/恢复/健康、第一份正常成果保存和真实消费者采用由#6/#13按启用范围验收；代码回退不自动删除数据，不把备份job成功当恢复成功。

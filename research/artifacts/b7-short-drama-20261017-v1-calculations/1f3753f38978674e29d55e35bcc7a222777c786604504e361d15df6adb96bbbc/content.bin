@@ -1,0 +1,226 @@
+{
+  "title": "短剧观察 Quick：数字与单位复算",
+  "as_of": "2026-10-17",
+  "scope": "仅作报告数字和单位复算；非估值、预测、统计显著性检验或原生research-numbers-v1验收",
+  "inputs": [
+    {
+      "id": "money-1",
+      "subject": "中文在线",
+      "metric": "集团归母净利润",
+      "value": "-42995299.41",
+      "unit": "元",
+      "period": "2026H1",
+      "source": "S6",
+      "pdf_pages": 8,
+      "scope": "集团合并财务口径"
+    },
+    {
+      "id": "money-2",
+      "subject": "中文在线",
+      "metric": "集团经营活动现金流量净额",
+      "value": "126801681.39",
+      "unit": "元",
+      "period": "2026H1",
+      "source": "S6",
+      "pdf_pages": [
+        8,
+        21
+      ],
+      "scope": "集团合并财务口径"
+    },
+    {
+      "id": "money-3",
+      "subject": "中文在线",
+      "metric": "短剧及IP衍生品业务收入",
+      "value": "411260317.48",
+      "unit": "元",
+      "period": "2026H1",
+      "source": "S6",
+      "pdf_pages": 22,
+      "scope": "混合相关业务收入"
+    },
+    {
+      "id": "money-4",
+      "subject": "掌阅科技",
+      "metric": "短剧等衍生业务收入",
+      "value": "118510.46",
+      "unit": "万元",
+      "period": "2026H1",
+      "source": "S7",
+      "pdf_pages": [
+        9,
+        10
+      ],
+      "scope": "混合相关业务收入"
+    },
+    {
+      "id": "money-5",
+      "subject": "掌阅科技",
+      "metric": "集团归母净利润",
+      "value": "-50141750.04",
+      "unit": "元",
+      "period": "2026H1",
+      "source": "S7",
+      "pdf_pages": 6,
+      "scope": "集团合并财务口径"
+    },
+    {
+      "id": "money-6",
+      "subject": "掌阅科技",
+      "metric": "集团经营活动现金流量净额",
+      "value": "-116528498.87",
+      "unit": "元",
+      "period": "2026H1",
+      "source": "S7",
+      "pdf_pages": [
+        6,
+        12
+      ],
+      "scope": "集团合并财务口径"
+    },
+    {
+      "id": "money-7",
+      "subject": "阅文集团",
+      "metric": "集团权益持有人应占盈利",
+      "value": "135376",
+      "unit": "千元",
+      "period": "2026H1",
+      "source": "S8",
+      "pdf_pages": 43,
+      "scope": "集团合并财务口径"
+    },
+    {
+      "id": "money-8",
+      "subject": "阅文集团",
+      "metric": "集团经营活动现金流量净额",
+      "value": "289373",
+      "unit": "千元",
+      "period": "2026H1",
+      "source": "S8",
+      "pdf_pages": 48,
+      "scope": "集团合并财务口径"
+    }
+  ],
+  "calculations": [
+    {
+      "id": "convert-1",
+      "input": "money-1",
+      "operation": "unit-conversion",
+      "factor": "1E-8",
+      "exact": "-0.4299529941",
+      "display": "-0.4300",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-2",
+      "input": "money-2",
+      "operation": "unit-conversion",
+      "factor": "1E-8",
+      "exact": "1.2680168139",
+      "display": "1.2680",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-3",
+      "input": "money-3",
+      "operation": "unit-conversion",
+      "factor": "1E-8",
+      "exact": "4.1126031748",
+      "display": "4.1126",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-4",
+      "input": "money-4",
+      "operation": "unit-conversion",
+      "factor": "0.0001",
+      "exact": "11.851046",
+      "display": "11.8510",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-5",
+      "input": "money-5",
+      "operation": "unit-conversion",
+      "factor": "1E-8",
+      "exact": "-0.5014175004",
+      "display": "-0.5014",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-6",
+      "input": "money-6",
+      "operation": "unit-conversion",
+      "factor": "1E-8",
+      "exact": "-1.1652849887",
+      "display": "-1.1653",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-7",
+      "input": "money-7",
+      "operation": "unit-conversion",
+      "factor": "0.00001",
+      "exact": "1.35376",
+      "display": "1.3538",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    },
+    {
+      "id": "convert-8",
+      "input": "money-8",
+      "operation": "unit-conversion",
+      "factor": "0.00001",
+      "exact": "2.89373",
+      "display": "2.8937",
+      "unit": "人民币亿元",
+      "boundary": "单位换算不改变业务、集团、期间或权益归属口径"
+    }
+  ],
+  "reported_threshold": {
+    "source": "S8",
+    "metric": "短剧及AI漫剧收入",
+    "comparison": "greater_than",
+    "value": "4.3",
+    "unit": "人民币亿元",
+    "period": "2026H1",
+    "boundary": "保留超过关系；不改成精确等于或拆成纯真人短剧"
+  },
+  "descriptive_checks": [
+    {
+      "sources": [
+        "S1",
+        "S2"
+      ],
+      "formula": "6.64 - 6.62",
+      "result": "0.02",
+      "unit": "亿人",
+      "boundary": "舍入年末点的描述性差值，不是精确净增、2026增长或显著性结论"
+    },
+    {
+      "sources": [
+        "S1",
+        "S2"
+      ],
+      "formula": "59.0 - 59.7",
+      "result": "-0.7",
+      "unit": "百分点",
+      "boundary": "同为网民分母的公布点差；不作微短剧专项置信区间推断"
+    },
+    {
+      "sources": [
+        "S3"
+      ],
+      "formula": "(120.5 / 95.7 - 1) * 100",
+      "result": "25.9",
+      "unit": "%",
+      "boundary": "2025年1月与8月原图App端点复算；不得与CNNIC人数相乘"
+    }
+  ]
+}

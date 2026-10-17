@@ -140,6 +140,9 @@ class ReadingRoom:
                     # Do not put previously saved notes in the host's public output.
                     brief = {"reference": plan["brief"], "status": "permission-required",
                              "error": "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED"}
+                if not industry_export and "industry" in doc:
+                    brief = {"reference": plan["brief"], "status": "sources-permission-required",
+                             "error": "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED"}
         readings, used = [], 0
         for ref in refs:
             row = {"reference": deepcopy(ref),

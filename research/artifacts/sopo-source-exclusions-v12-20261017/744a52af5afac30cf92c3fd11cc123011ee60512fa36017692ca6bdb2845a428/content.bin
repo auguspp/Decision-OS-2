@@ -1,0 +1,19 @@
+[
+  {
+    "source": "https://m.10jqka.com.cn/sn/20251114/54910169.shtml",
+    "reason": "2025年问询回复虽含2026预测列，基日仍2025年6月，融资与期间不同；未当成2026年9月最新资金桥。",
+    "not_adopted": "旧186532.25万元资金缺口不用于当前判断。"
+  },
+  {
+    "source": "https://m.sohu.com/a/1079064066_122014422",
+    "reason": "二次概要中的18.31亿元缺口及6.57亿元可支配资金，只作为定位线索；完整当前测算表未核，不进入本轮确定估值。"
+  },
+  {
+    "source": "https://finance.sina.com.cn/stock/aigc/weigui/2026-09-24/doc-inisxtav8185793.shtml",
+    "reason": "AI生成摘要不作为经营数据/项目阶段原始证明；以已经读到的发行人回复限定项目状态。"
+  },
+  {
+    "source": "Earlier missing SSE PDFs and Q1 AI summaries",
+    "reason": "本轮未获得原PDF；不绕过访问限制、不将AI摘要当原件。相关原公告转录已经取得的表行按W5/W6单列，不再笼统说经营数量完全未取得。"
+  }
+]

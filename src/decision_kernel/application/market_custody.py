@@ -30,11 +30,14 @@ from decision_kernel.application.shibor_inputs import SHIBOR_FIELDS, SHIBOR_READ
 
 from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, SESSION_REQUIRED
 
+from decision_kernel.application.market_suspension_inputs import SUSPENSION_FIELDS
+
 QUERY_SCHEMA = "market-query-custody-v1"
 READING_SCHEMA = "market-reading-custody-v1"
 MAX_QUERIES = 32
 MAX_PAGES = 100
 MARKET_FIELDS = {
+    "suspend_d": SUSPENSION_FIELDS,
     "shibor": SHIBOR_FIELDS,
     "us_tradecal": US_CALENDAR_FIELDS,
     "index_global": INDEX_FIELDS,
@@ -68,10 +71,12 @@ def _map_results(payload, transform):
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
+        if kind == "session":
+            extras |= {"suspension_result"}
         if kind in ("stock", "sector", "concept", "session"):
             extras |= {"reference_policy"}
         require(isinstance(value, dict) and required <= value.keys() <= required | extras, "MARKET_CUSTODY_SURFACE")
-        for field in ("calendar_result", "catalog_result", "rate_result"):
+        for field in ("calendar_result", "catalog_result", "rate_result", "suspension_result"):
             if field in value:
                 value[field] = transform(value[field], prefix + [field])
         for field in ("stock_results", "master_results", "factor_results", "member_results", "index_results", "calendar_results", "session_results"):

@@ -10,6 +10,7 @@ import time
 from decision_kernel.application.market_relay_inputs import _range, qualified_trade_calendar
 from decision_kernel.application.market_security_inputs import MASTER_FIELDS, inspect_security_master
 from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, QUOTE_FIELDS, session_quotes
+from decision_kernel.application.market_suspension_inputs import SUSPENSION_FIELDS, session_suspensions
 from decision_kernel.application.market_reading import read_market_payload
 from decision_kernel.application.market_member_recovery import retry_context
 from decision_kernel.application.market_source_check import _code, _last_attempt_failure
@@ -37,7 +38,7 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
                           monotonic=time.monotonic, clock=None):
     now = datetime.now(timezone.utc) if now is None else now
     through = session_scope(exchange, start, end, now)
-    require(selection == 'session-coverage' and access_confirmed is True
+    require(selection in ('session-coverage', 'session-reconcile') and access_confirmed is True
             and request_context_confirmed is True, 'MARKET_SESSION_PERMISSION_REQUIRED')
     require(isinstance(registry, RelayRegistry), 'MARKET_CHECK_REGISTRY')
     specifications = []
@@ -49,6 +50,9 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
             {'exchange': venue, 'list_status': 'L'}, MASTER_FIELDS, 500, 20))
     for api, fields in QUOTE_FIELDS.items():
         specifications.append((api, api, {'trade_date': end}, fields, 5000, 2))
+    reconcile = selection == 'session-reconcile'
+    if reconcile:
+        specifications.append(('suspend_d', 'suspend_d', {'trade_date': end}, SUSPENSION_FIELDS, 5000, 2))
     plan = validate_plan({'schema':'research-source-plan-v1', 'case_id':'market-source-check',
         'requests':[{'api': api, 'stage':'baseline', 'purpose':'Finite SH/SZ session coverage; no source export',
                      'parameters':{**params,'fields':','.join(sorted(fields)),'limit':str(size)}}
@@ -76,6 +80,8 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
     before = client.requests
     payload = {'schema':SESSION_SCHEMA,'calendar_results':{},'master_results':{},'session_results':{},
                'start':start,'end':end,'calendar_end':through,'reference_policy':'isolate-identified'}
+    if reconcile:
+        payload['suspension_result'] = None
     usable = {}
     for spec, use in zip(specifications, plan['requests']):
         slot, api, params, _, _, pages = spec
@@ -84,7 +90,7 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
             item['reason_code'] = 'GLOBAL_SOURCE_STOP'; emit(); continue
         if api == 'stock_basic' and not usable.get(params['exchange'] + '_calendar'):
             continue
-        if api in QUOTE_FIELDS and not any(usable.get(v + '_master') for v in ('SSE','SZSE')):
+        if api in (*QUOTE_FIELDS, 'suspend_d') and not any(usable.get(v + '_master') for v in ('SSE','SZSE')):
             continue
         item.update(status='in-progress',reason_code=None);emit()
         initial = client.requests
@@ -97,7 +103,10 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
             result = {'case_id':'market-source-check','use':use,
                 'status':'captured' if capture['complete'] else 'capture-incomplete','capture':capture}
             mapping = 'calendar_results' if api == 'trade_cal' else 'master_results' if api == 'stock_basic' else 'session_results'
-            payload[mapping][params['exchange'] if 'exchange' in params else api] = result
+            if api == 'suspend_d':
+                payload['suspension_result'] = result
+            else:
+                payload[mapping][params['exchange'] if 'exchange' in params else api] = result
             view = inspect_result(result, registry)
             item.update(row_count=view['row_count'],page_count=view['page_count'])
             if not view['complete']:
@@ -110,13 +119,14 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
                 master = inspect_security_master({'L':result},registry=registry,exchange=params['exchange'])
                 item['reference_quality'] = master['quality'];usable[slot] = bool(master['quality']['eligible_count'])
             else:
-                quality = session_quotes(result,registry,api,end)
+                quality = session_suspensions(result,registry,end) if api == 'suspend_d' else session_quotes(result,registry,api,end)
                 item['quarantined_count'] = quality['quarantined_count']
             item.update(status='checked' if view['row_count'] else 'checked-empty',reason_code=None)
         except (RecordError, MarketInputError) as exc:
             reason = str(exc)
             item.update(status='rejected',reason_code=reason if reason in {
-                'MARKET_RELAY_SESSION_IDENTITY','MARKET_RELAY_SESSION_DATE','MARKET_RELAY_SESSION_ROW_BOUND'
+                'MARKET_RELAY_SESSION_IDENTITY','MARKET_RELAY_SESSION_DATE','MARKET_RELAY_SESSION_ROW_BOUND',
+                'MARKET_RELAY_SUSPENSION_IDENTITY','MARKET_RELAY_SUSPENSION_DATE','MARKET_RELAY_SUSPENSION_ROW_BOUND'
             } else _code(reason))
         finally:
             item['http_attempts'] = client.requests-initial; report['http_attempts'] = client.requests-before;emit()
@@ -124,7 +134,16 @@ def check_session_sources(*, registry, exchange, start, end, access_confirmed=Fa
     # Explicit projection. Never emit context entries, lineage, prices or hashes.
     report['surfaces']['session'] = {k: deepcopy(context[k]) for k in (
         'scope_count','by_exchange','qualified_scope_covered','strict_reference_passed','outside_sh_sz')}
-    complete = context['qualified_scope_covered'] and all(q['status']=='checked' for q in report['queries'].values())
+    if reconcile:
+        report['surfaces']['quote_explanations'] = deepcopy(context['quote_explanations'])
+    complete = context['qualified_scope_covered'] and all(
+        q['status'] in ('checked', 'checked-empty') if k == 'suspend_d' else q['status'] == 'checked'
+        for k, q in report['queries'].items())
+    if reconcile:
+        audit = context['quote_explanations']
+        complete = complete and audit['quarantined_sh_sz_count'] == 0 and all(
+            v['unreferenced_suspension_count'] == 0 and v['explanation_counts'] is not None
+            and v['explanation_counts']['quote-suspension-conflict'] == 0 for v in audit['by_exchange'].values())
     report['status'] = ('checked-session-coverage' if context['strict_reference_passed'] else 'available-with-quarantine') if complete else 'completed-with-gaps'
     emit()
     return report

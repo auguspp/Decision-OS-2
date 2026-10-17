@@ -16,7 +16,7 @@ from decision_kernel.domain.records import require
 
 REPO = 'auguspp/Decision-OS-2'
 INPUTS = {'code_sha', 'exchange', 'start', 'end', 'access_confirmed'}
-OPTIONS = {'selection', 'request_context_confirmed', 'member_code', 'resume'}
+OPTIONS = {'selection', 'request_context_confirmed', 'member_code', 'resume', 'explain_quotes'}
 
 
 def settings(event: dict, env: dict, now: datetime) -> dict:
@@ -33,6 +33,12 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
             and env.get('GITHUB_RUN_ATTEMPT') == '1', 'MARKET_CHECK_NEW_EXPLICIT_RUN_REQUIRED')
     selection = data.get('selection', 'sample')
     require(isinstance(selection, str) and selection in (*SELECTIONS, 'resume-members', 'session-coverage'), 'MARKET_CHECK_SELECTION')
+    explain = data.get('explain_quotes', False)
+    require(type(explain) is bool or type(explain) is str and explain in ('true', 'false'), 'MARKET_CHECK_EXPLANATION_INPUT')
+    explain = explain is True or explain == 'true'
+    require(not explain or selection == 'session-coverage', 'MARKET_CHECK_EXPLANATION_INPUT')
+    if explain:
+        selection = 'session-reconcile'
     context = data.get('request_context_confirmed', False)
     require(type(context) is bool or type(context) is str and context in ('true', 'false'), 'MARKET_CHECK_CONTEXT_PERMISSION')
     context = context is True or context == 'true'
@@ -40,7 +46,7 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
     require(isinstance(code, str) and isinstance(resume, str) and len(resume) <= 4096, 'MARKET_CHECK_MEMBER_INPUT')
     selected = {'exchange': data['exchange'], 'start': data['start'], 'end': data['end'],
                 'access_confirmed': True, 'selection': selection}
-    if selection == 'session-coverage':
+    if selection in ('session-coverage', 'session-reconcile'):
         from decision_kernel.application.market_session_check import session_scope
         require(context and not code and not resume, 'MARKET_SESSION_PERMISSION_REQUIRED')
         session_scope(data['exchange'], data['start'], data['end'], now)
@@ -57,7 +63,7 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
                 'MARKET_CHECK_RECOVERY_INPUT')
     if context:
         selected['request_context_confirmed'] = True
-    if selection != 'session-coverage':
+    if selection not in ('session-coverage', 'session-reconcile'):
         check_scope(data['exchange'], data['start'], data['end'], now, selected['selection'])
     return selected
 
@@ -67,7 +73,7 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
             native_reader=None) -> int:
     now = datetime.now(timezone.utc) if now is None else now
     selected = settings(event, env, now)
-    if selected['selection'] == 'session-coverage' and checker is check_sources:
+    if selected['selection'] in ('session-coverage', 'session-reconcile') and checker is check_sources:
         from decision_kernel.application.market_session_check import check_session_sources
         checker = check_session_sources
     root = Path(env['RUNNER_TEMP']).resolve()

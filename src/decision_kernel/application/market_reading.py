@@ -21,7 +21,7 @@ def _route(payload):
     required = {"schema", "calendar_result", "stock_results", "exchange", "start", "end"}
     optional = {"horizons"}
     if schema == SESSION_SCHEMA:
-        required, optional = SESSION_REQUIRED | {'schema'}, {'reference_policy'}
+        required, optional = SESSION_REQUIRED | {'schema'}, {'reference_policy', 'suspension_result'}
         reader = read_session_coverage
     elif schema == SHIBOR_READING_SCHEMA:
         required, optional = SHIBOR_REQUIRED | {"schema"}, set()

@@ -1,0 +1,121 @@
+{
+  "case_id": "g-explore-20261016",
+  "kind": "quick",
+  "version": "v1.2",
+  "research_as_of": "2026-10-16",
+  "delivered_at": "2026-10-17T00:05:37+08:00",
+  "subject": "江苏索普 600746.SH",
+  "central_question": "醋酸价格继续走强时，江苏索普二季度已出现的利润与经营现金修复，能否延续，并在必要投入之后留下普通股股东可支配现金？",
+  "origin": "same declared broad pool discovery as v1; this is not another G sample",
+  "stage_disposition": "bounded-quick-stage-closed-with-explicit-evidence-gates",
+  "investment_disposition": "retain-as-conditional-research-candidate; no price, trade or unconditional investment conclusion",
+  "original_request_unchanged": {
+    "case_id": "g-explore-20261016",
+    "kind": "quick",
+    "mandate": "在现有公开信息池2026年资料的声明范围开展一次不预选公司或产业赢家的横向探索，形成可核查、可反驳的研究问题；仅查询和核查公开资料，不上传未授权研究正文，不写records或自动升级Full。",
+    "predecessor": null,
+    "questions": [
+      {
+        "question_id": "discovery",
+        "text": "横向资料中有哪些值得进一步调查的新问题，哪些只是重复或无效线索？"
+      },
+      {
+        "question_id": "mechanism",
+        "text": "变化通过什么经济机制影响经营、资本或现金，适用对象如何核实？"
+      },
+      {
+        "question_id": "challenge",
+        "text": "最强替代解释是什么，哪些证据可以推翻或重构问题？"
+      },
+      {
+        "question_id": "next-evidence",
+        "text": "下一项有判别力的核验是什么，何时应停止或升级？"
+      }
+    ],
+    "scope_change_reason": ""
+  },
+  "questions": [
+    {
+      "question_id": "discovery",
+      "state": "answered-for-original-scoped-discovery",
+      "finding": "已有真实变化和业务联系可供调查；本轮不新增发现统计。",
+      "reopen": "只有新材料改变问题的重要性或真实性，才重新筛查；不重复原2026关键词扫描。"
+    },
+    {
+      "question_id": "mechanism",
+      "state": "reframed-with-evidence-limits",
+      "finding": "产品和现金渠道有实证支持，但调查价不能等同实现价，内供中间品不能重复计利。",
+      "reopen": "实际季度产品量价、净投入暴露、库存与销售组合能区分解释时继续。"
+    },
+    {
+      "question_id": "challenge",
+      "state": "partial-answers-and-retained-unknowns",
+      "finding": "限制构成、年化分母已推进，原现金修复不被一笔抹消；历史重述增加版本核验。",
+      "reopen": "原始票据/现金用途、对应期重述报表或直接反证材料出现。"
+    },
+    {
+      "question_id": "next-evidence",
+      "state": "bounded-screen-decision-made-not-Full-concluded",
+      "finding": "此轮Quick已形成问题、机制、反证和取舍；无需无限补证，仍不满足投资定价。",
+      "reopen": "下一实际经营披露或项目/融资结果，而非仅到日历日期；获准Full另行进入完整委托。"
+    }
+  ],
+  "stop_reasons": [
+    "原十查询和四页检索已完成，重放不会改变证据。",
+    "新增原文转录解决了指定口径问题，原PDF仍未取得但不伪称取证穷尽。",
+    "短期后续经营、投产现金与融资结果需实际事件或新增可读披露；不预测为已发生。",
+    "Quick职责是判别是否值得后续研究，不是无授权延伸为完整公司估值。"
+  ],
+  "remaining": [
+    "纯醋酸后续实际实现价、净外购/自用消耗及销售组合",
+    "票据结算/受限现金原始凭证与剩余实际用途",
+    "当前完整剩余资本支付及真实融资结果、达产现金回报",
+    "跨2022—2024的统一重述/合并范围版本",
+    "新Quick公开保管与正常#13阅读采用，尚未获得本案授权/验收"
+  ],
+  "native_source_use": {
+    "status": "inherited-not-rerun-this-turn",
+    "run_id": 38924100177,
+    "attempt": 1,
+    "pool": "queried",
+    "relay": "captured",
+    "overall": "exceptions-require-review",
+    "gaps": [
+      "RELAY_CAPTURE_NOT_ADOPTED"
+    ],
+    "new_web_sources_native_authenticated": false
+  },
+  "side_effects": {
+    "new_capture": 0,
+    "new_pool_query": 0,
+    "new_audit": 0,
+    "production_records_write": 0,
+    "engineering_commit": 0,
+    "formal_decision": false,
+    "automatic_full": false,
+    "schedule_or_notification": false,
+    "github_coordination_comments_only": true
+  },
+  "public_archive_permission": "not-granted-for-this-Quick; no inference from other case or generic continue",
+  "full_parallel": {
+    "status": "inherit confirmed Muyuan v1.2 archival/readback; do not republish",
+    "reference": {
+      "commit": "756d897260903750ac30843b3c6c758dbcd311c1",
+      "path": "research/cases/muyuan-002714sz-20261016/revisions/muyuan-20261016-v1-2-records/record.json",
+      "repository": "auguspp/Decision-OS-2",
+      "sha256": "7cf5dc023a54fc30f80e9049acb1b130ad09179d85f681e5fe9d2ccd746438d0"
+    },
+    "full_quality_acceptance": "not-performed-by-this-turn"
+  },
+  "handoff_claim_comment": 6219311154,
+  "do_not_repeat": [
+    "four-page pool search",
+    "original six successful Relay queries",
+    "new four queries",
+    "new source audit solely for green status",
+    "new searches solely to turn native source audit green",
+    "latest-restatement claims based only on update_flag",
+    "old2025 financing forecast as current bridge"
+  ],
+  "native_progress_submission": "not-attempted; this JSON is local handoff, not runtime schema or a forged native concluded state"
+}

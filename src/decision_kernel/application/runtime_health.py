@@ -156,10 +156,17 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
         require(used <= MAX_METADATA_BYTES, "HEALTH_METADATA_BOUND")
         evidence.append({"path": path, "sha256": digest(raw)})
         return value
+    verified_private = False
     def repository():
+        nonlocal verified_private
         value = get("")
-        require(value.get("id") == binding.repository_id and value.get("full_name") == binding.repository
-                and value.get("private") is (binding.visibility == "private"), "HEALTH_REPOSITORY_MISMATCH")
+        actual_private = value.get("private") if isinstance(value, dict) else None
+        require(isinstance(value, dict) and type(value.get("id")) is int
+                and value.get("id") == binding.repository_id and value.get("full_name") == binding.repository
+                and binding.accepts_privacy(actual_private)
+                and not (verified_private and actual_private is False), "HEALTH_REPOSITORY_MISMATCH")
+        if binding.private_upgrade_allowed and actual_private is True:
+            verified_private = True
     def heads():
         values = {}
         for name in ("main", binding.branch):

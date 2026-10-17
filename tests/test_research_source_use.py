@@ -316,3 +316,32 @@ def test_native_downloader_never_inherits_engineering_auth_or_source_secret(monk
         return type('Done', (), {'returncode': 0})()
     monkeypatch.setattr('decision_kernel.infrastructure.research_receipts.subprocess.run', run)
     assert download_archive(REPO, 100) == b'synthetic-archive'
+
+ 
+def test_native_research_receipt_survives_same_repo_private_upgrade(setup):
+    from dataclasses import replace
+    store, api = setup
+    proof, _ = pool_proof(store, api)
+    api.binding = replace(api.binding, private_upgrade_allowed=True)
+    api.replies[""]["private"] = True
+    result = api.reader().read(proof)
+    assert result["family"] == "pool"
+    assert result["documents"]["report.json"]["operation"] == "prepare"
+    assert result["identity"]["repository"] == REPO
+    assert api.calls.count("/repos/" + REPO) == 2
+
+
+def test_native_research_receipt_private_to_public_reversal_is_rejected(setup):
+    from dataclasses import replace
+    store, api = setup
+    proof, _ = pool_proof(store, api)
+    api.binding = replace(api.binding, private_upgrade_allowed=True)
+    api.replies[""]["private"] = True
+    original = api.request
+    def mutate(method, path, payload=None):
+        if path == "/repos/" + REPO and api.calls.count(path) >= 1:
+            return {**api.replies[""], "private": False}
+        return original(method, path, payload)
+    api.request = mutate
+    with pytest.raises(RecordError, match="SOURCE_USE_VISIBILITY_REVERSED"):
+        api.reader().read(proof)

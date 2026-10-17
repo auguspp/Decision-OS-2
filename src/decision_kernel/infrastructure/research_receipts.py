@@ -65,7 +65,9 @@ class NativeResearchReceipts:
             return self.api.request("GET", base + path)
         # Never accept a repository or native metadata object from the proof.
         repo = get("")
-        require(isinstance(repo, dict) and repo.get("id") == self.binding.repository_id and repo.get("private") is False
+        require(isinstance(repo, dict) and type(repo.get("id")) is int
+                and repo.get("id") == self.binding.repository_id
+                and self.binding.accepts_privacy(repo.get("private"))
                 and repo.get("full_name") == self.binding.repository, "SOURCE_USE_REPOSITORY_MISMATCH")
         run_id, attempt, aid = (proof[k] for k in ("run_id", "run_attempt", "artifact_id"))
         run = get(f"/actions/runs/{run_id}/attempts/{attempt}")
@@ -130,6 +132,13 @@ class NativeResearchReceipts:
         require(({"result.json"} if family == "market" else {"inputs.json", "report.json"} if family == "pool" else
                  {"request.json", "result.json", "source-plan.json", "plan.json"}) <= set(docs),
                 "SOURCE_USE_RECEIPT_FILES_MISSING")
+        # Keep old native receipt identity when the same repository is now
+        # private, but never return the result after a live privacy reversal.
+        if self.binding.private_upgrade_allowed and repo["private"] is True:
+            rechecked = get("")
+            require(isinstance(rechecked, dict) and rechecked.get("id") == self.binding.repository_id
+                    and rechecked.get("full_name") == self.binding.repository
+                    and rechecked.get("private") is True, "SOURCE_USE_VISIBILITY_REVERSED")
         return {"family": family, "documents": docs, "jobs": by_name,
                 "identity": {"repository": self.binding.repository, "run_id": run_id,
                     "run_attempt": attempt, "artifact_id": aid, "artifact_sha256": digest(raw),

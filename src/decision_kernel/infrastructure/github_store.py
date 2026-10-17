@@ -87,6 +87,12 @@ class GitHubBinding:
         except TypeError as exc:
             raise RecordError("INVALID_GITHUB_BINDING") from exc
 
+    def accepts_privacy(self, actual_private) -> bool:
+        """Actual GitHub privacy, not source data or a mutable caller claim."""
+        return type(actual_private) is bool and (
+            actual_private is (self.visibility == "private")
+            or self.private_upgrade_allowed and actual_private is True)
+
     def marker(self) -> bytes:
         # The anchor records its ORIGINAL visibility, not mutable GitHub privacy.
         # Upgrading that same repository to private MUST NOT rewrite legacy markers.
@@ -226,8 +232,7 @@ class GitHubStore:
         require(isinstance(meta, dict) and type(meta.get("id")) is int
                 and meta.get("id") == self.binding.repository_id
                 and meta.get("full_name") == self.repository
-                and type(actual_private) is bool
-                and (actual_private is expected_private or opt_in_upgrade)
+                and self.binding.accepts_privacy(actual_private)
                 and meta.get("archived") is False
                 and isinstance(meta.get("default_branch"), str)
                 and meta["default_branch"] != self.binding.branch,

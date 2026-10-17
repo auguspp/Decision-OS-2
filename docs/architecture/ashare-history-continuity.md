@@ -95,6 +95,72 @@ statuses certifies whole-market history, service uptime or economic adoption.
 The original members resumer rejects history slots. A context is a future
 investigation aid, not a replayable source or an implemented history resumer.
 
+## Same-input factor reconciliation and normal consumption
+
+`stock-history-reconcile` is an explicit choice in the **same** manual host.
+It uses the history inputs and confirmations above, with a smaller cohort of
+1–4 SH/SZ securities. Ordinary `stock-history` remains unchanged and performs
+no point queries. This mode consumes the current operation's original price,
+factor and suspension captures; it does not revalidate an old failed run.
+
+The original normal reader first reads the baseline history. For each qualified,
+complete factor interval, `reconcile_adj_factors` finds gaps against the actual
+calendar. The host registers all admissible code/date point requests before the
+first point HTTP attempt, then uses its **existing** capture and retry session.
+It never calls the separate factor-audit operation, repeats a baseline capture,
+resets the 600-second deadline or extends a Retry-After budget. Invalid or absent
+intervals have unknown gap counts and cannot be replaced with point queries.
+
+The whole operation plans at most 32 logical queries. With `N` codes and `V`
+represented venues, the baseline has `3*N + 2*V + V*(end != calendar_end)`
+queries. The point budget is `min(16, 32 - baseline_queries)`: four codes across
+two venues permit 16 points for yesterday's end, or 14 when the separate
+freshness calendars are needed. When known gaps exceed the budget, no points
+are selected or fetched; all known gaps remain and the receipt records
+`point_budget_exceeded=true`. The existing per-input 2 MiB custody limit is
+separate; fitting this query count does not certify that a payload fits custody.
+
+Actual point captures enter the existing per-venue `factor_supplements` map.
+The same `read_market_payload` then reads the combined history using the original
+raw/qfq formula, listing rules, scope and windows. Invalid, empty or incomplete
+points preserve their local gaps; they do not discard an independent valid point.
+Original captures remain unchanged. Complete baseline factors require no point
+HTTP; an empty supplements map can still use the existing explicit combined
+lineage representation without changing numerical observations.
+
+Each public stock slot retains the original counter fields and adds:
+
+- `baseline`: the normal reader's counter-only result before supplements;
+- `factor_reconciliation`: known original, supplemented and remaining gap counts,
+  or null when the original factor input is unavailable, plus
+  `original_capture_rewritten=false`;
+- `raw_horizons_unchanged`: comparison of complete raw horizon observations
+  inside the process, with no prices or return values in the receipt.
+
+`checked-stock-history-reconcile` requires the combined reader's original full
+history qualification, all planned queries checked or validly empty, an intact
+point budget and unchanged raw observations. Shared unselected master quarantine
+still yields `available-with-quarantine`. Complete factors cannot excuse missing
+prices, suspension conflicts or unknown/stale freshness. Baseline and final
+states describe the **same input operation**, with `original_batch_revalidated=false`.
+They are not two independent supplier observations or two independent sessions.
+
+The private collector separates these existing reading payloads from the
+counter-only public wrapper. It performs no file, SourceInput or store write.
+The manual host receives only the report and uploads only `result.json`.
+Generated arguments and successful counts are not replayable captures or saved
+SourceRefs. True independent source recovery and #7/#13 adoption still need
+source-specific retention rights and actual original custody records.
+
+`test_market_history_reconciliation.py` passes the collector's actual synthetic
+HTTP outputs directly to the ordinary CLI and existing custody. It removes the
+input files and reads each venue's root in a fresh process without credentials,
+checking the same view and zero source requests. Budget boundaries, baseline
+reuse, failed points, original history dependencies, shared deadline, refusal,
+long Retry-After, receipt redaction and lost-point degradation are exercised.
+These extend the existing factor semantics tests rather than replacing their
+proof or claiming live supplier custody.
+
 ## Custody, validation and retirement
 
 The original market CLI, three-surface stock input, SourceInput/query-root
@@ -113,7 +179,7 @@ captures, eight-code bounds and default host routing. Synthetic weekdays are
 not presented as real exchange holiday calendars. Record actual source results
 separately; no fixture certifies supplier health or real retained source recovery.
 
-Retirement removes `stock-history`, its exclusive input/host/period module,
+Retirement removes `stock-history` and `stock-history-reconcile`, their exclusive input/host/period module,
 optional stock suspension map, tests and this documentation together. Retain
 shared single-session suspension helpers until their existing consumer also
 retires. Do not delete historical source operations or their failures; reverting

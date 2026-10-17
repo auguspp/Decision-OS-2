@@ -7,12 +7,12 @@ on:
         type: string
         required: true
       selection:
-        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; session-coverage, stock-history or factor-audit/CN; US: us-indices'
+        description: 'A-share: sample/catalogues/stock, availability/stock-availability, members/resume-members; CN: session-coverage, stock-history, stock-history-reconcile, factor-audit; US: us-indices'
         type: choice
-        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage, stock-history, factor-audit]
+        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage, stock-history, stock-history-reconcile, factor-audit]
         default: sample
       exchange:
-        description: 'CN required for session-coverage/stock-history/factor-audit; SSE/SZSE for other domestic selections; US for us-indices'
+        description: 'CN required for session-coverage/stock-history/stock-history-reconcile/factor-audit; SSE/SZSE for other domestic selections; US for us-indices'
         type: choice
         options: [SSE, SZSE, US, CN]
         default: SSE
@@ -34,11 +34,11 @@ on:
         type: boolean
         default: false
       explain_quotes:
-        description: 'session-coverage optional / stock-history required: reconcile suspension evidence; no source export'
+        description: 'session-coverage optional / stock-history and stock-history-reconcile required: reconcile suspension evidence; no source export'
         type: boolean
         default: false
       stock_codes:
-        description: 'JSON exact SH/SZ codes: stock-history 1-8, factor-audit 1-4; fixed cohort'
+        description: 'JSON exact SH/SZ codes: stock-history 1-8; stock-history-reconcile and factor-audit 1-4; fixed cohort'
         type: string
         default: ''
       member_code:

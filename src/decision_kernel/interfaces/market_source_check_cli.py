@@ -32,11 +32,11 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
     require(isinstance(env.get('GITHUB_RUN_ID'), str) and re.fullmatch(r'[1-9][0-9]*', env['GITHUB_RUN_ID'])
             and env.get('GITHUB_RUN_ATTEMPT') == '1', 'MARKET_CHECK_NEW_EXPLICIT_RUN_REQUIRED')
     selection = data.get('selection', 'sample')
-    require(isinstance(selection, str) and selection in (*SELECTIONS, 'resume-members', 'session-coverage', 'stock-history', 'factor-audit'), 'MARKET_CHECK_SELECTION')
+    require(isinstance(selection, str) and selection in (*SELECTIONS, 'resume-members', 'session-coverage', 'stock-history', 'stock-history-reconcile', 'factor-audit'), 'MARKET_CHECK_SELECTION')
     explain = data.get('explain_quotes', False)
     require(type(explain) is bool or type(explain) is str and explain in ('true', 'false'), 'MARKET_CHECK_EXPLANATION_INPUT')
     explain = explain is True or explain == 'true'
-    require(not explain or selection in ('session-coverage', 'stock-history'), 'MARKET_CHECK_EXPLANATION_INPUT')
+    require(not explain or selection in ('session-coverage', 'stock-history', 'stock-history-reconcile'), 'MARKET_CHECK_EXPLANATION_INPUT')
     if explain and selection == 'session-coverage':
         selection = 'session-reconcile'
     context = data.get('request_context_confirmed', False)
@@ -48,18 +48,18 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
                 'access_confirmed': True, 'selection': selection}
     stock_codes = data.get('stock_codes', '')
     require(isinstance(stock_codes, str) and len(stock_codes) <= 1024
-            and (selection in ('stock-history', 'factor-audit') or not stock_codes), 'MARKET_HISTORY_INPUT')
+            and (selection in ('stock-history', 'stock-history-reconcile', 'factor-audit') or not stock_codes), 'MARKET_HISTORY_INPUT')
     if selection == 'factor-audit':
         from decision_kernel.application.market_factor_check import factor_codes
         from decision_kernel.application.market_session_check import session_scope
         require(context and not explain and not code and not resume, 'MARKET_FACTOR_PERMISSION_REQUIRED')
         selected['stock_codes'] = factor_codes(_json(stock_codes.encode()))
         session_scope(data['exchange'], data['start'], data['end'], now)
-    elif selection == 'stock-history':
+    elif selection in ('stock-history', 'stock-history-reconcile'):
         from decision_kernel.application.market_history_check import history_codes
         from decision_kernel.application.market_session_check import session_scope
         require(context and explain and not code and not resume, 'MARKET_HISTORY_PERMISSION_REQUIRED')
-        selected['stock_codes'] = history_codes(_json(stock_codes.encode()))
+        selected['stock_codes'] = history_codes(_json(stock_codes.encode()), reconcile=selection == 'stock-history-reconcile')
         session_scope(data['exchange'], data['start'], data['end'], now)
     elif selection in ('session-coverage', 'session-reconcile'):
         from decision_kernel.application.market_session_check import session_scope
@@ -78,7 +78,7 @@ def settings(event: dict, env: dict, now: datetime) -> dict:
                 'MARKET_CHECK_RECOVERY_INPUT')
     if context:
         selected['request_context_confirmed'] = True
-    if selection not in ('session-coverage', 'session-reconcile', 'stock-history', 'factor-audit'):
+    if selection not in ('session-coverage', 'session-reconcile', 'stock-history', 'stock-history-reconcile', 'factor-audit'):
         check_scope(data['exchange'], data['start'], data['end'], now, selected['selection'])
     return selected
 
@@ -91,7 +91,7 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
     if selected['selection'] in ('session-coverage', 'session-reconcile') and checker is check_sources:
         from decision_kernel.application.market_session_check import check_session_sources
         checker = check_session_sources
-    if selected['selection'] == 'stock-history' and checker is check_sources:
+    if selected['selection'] in ('stock-history', 'stock-history-reconcile') and checker is check_sources:
         from decision_kernel.application.market_history_check import check_stock_history_sources
         checker = check_stock_history_sources
     if selected['selection'] == 'factor-audit' and checker is check_sources:
@@ -144,7 +144,7 @@ def execute(event: dict, env: dict, out: Path, *, now: datetime | None = None,
     progress(result)
     return 0 if result['status'] in ('checked-sample', 'checked-catalogues', 'checked-stock-sample',
                                        'checked-us-index-context', 'checked-availability-sample',
-                                       'available-with-quarantine', 'checked-members', 'checked-session-coverage', 'checked-stock-history', 'checked-factor-audit') else 2
+                                       'available-with-quarantine', 'checked-members', 'checked-session-coverage', 'checked-stock-history', 'checked-stock-history-reconcile', 'checked-factor-audit') else 2
 
 
 def _native_market_reader(env):

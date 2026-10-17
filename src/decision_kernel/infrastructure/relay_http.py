@@ -99,9 +99,25 @@ class RelayHTTP:
         self.requests += 1
         request = Request(exact, method="GET", headers={"X-API-Key": key,
                           "Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": agent})
+        observed_response = None
         try:
             with self._opener.open(request, timeout=30) as resp:
                 require(resp.status == 200 and resp.geturl() == exact, "RELAY_HTTP_RESPONSE_INVALID")
+                # Headers are already observed even if the body later stalls.
+                # Preserve their original wait instruction without inventing a
+                # successful response body or changing the transport category.
+                def safe_header(name):
+                    value = resp.headers.get(name)
+                    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) and key not in value else None
+                received_at = datetime.now(timezone.utc)
+                wait_metadata = retry_after(resp.headers, key, received_at)
+                self.last_header_diagnostics = {
+                    'retry_after': {'state': wait_metadata[0], 'seconds': wait_metadata[1]},
+                    **rate_limit_headers(resp.headers, key)}
+                observed_response = {
+                    'http_status': 200, 'received_at': received_at.isoformat(),
+                    'retry_after_state': wait_metadata[0], 'retry_after_seconds': wait_metadata[1],
+                    'x_request_id': safe_header('X-Request-ID'), 'x_cache': safe_header('X-Cache')}
                 require(resp.headers.get("Content-Encoding", "identity").lower() in ("", "identity"),
                         "RELAY_CONTENT_ENCODING_INVALID")
                 mime = resp.headers.get("Content-Type", "application/json").split(";")[0].strip().lower()
@@ -112,15 +128,8 @@ class RelayHTTP:
                 raw = resp.read(max_bytes + 1)
                 require(0 < len(raw) <= max_bytes and (length is None or len(raw) == int(length)),
                         "RELAY_RESPONSE_BYTES_INVALID")
-                def safe_header(name):
-                    value = resp.headers.get(name)
-                    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) and key not in value else None
-                wait_metadata = retry_after(resp.headers, key, datetime.now(timezone.utc))
-                self.last_header_diagnostics = {
-                    'retry_after': {'state': wait_metadata[0], 'seconds': wait_metadata[1]},
-                    **rate_limit_headers(resp.headers, key)}
-                meta = {"http_status": 200, "x_request_id": safe_header("X-Request-ID"),
-                        "x_cache": safe_header("X-Cache"), "wire_sha256": sha256(raw).hexdigest()}
+                meta = {"http_status": 200, "x_request_id": observed_response['x_request_id'],
+                        "x_cache": observed_response['x_cache'], "wire_sha256": sha256(raw).hexdigest()}
         except HTTPError as exc:
             self.last_error_meta = http_failure(exc, key)
             self.last_header_diagnostics = {
@@ -130,6 +139,8 @@ class RelayHTTP:
             raise RecordError("RELAY_HTTP_" + str(exc.code)) from None
         except (URLError, OSError, TimeoutError, HTTPException) as exc:
             self.last_error_meta = transport_failure(exc)
+            if observed_response is not None:
+                self.last_error_meta.update(observed_response, error_body_state='unreadable')
             raise RecordError("RELAY_HTTP_UNAVAILABLE") from None
         require(key.encode("ascii") not in raw, "RELAY_SECRET_REFLECTED")
         try:

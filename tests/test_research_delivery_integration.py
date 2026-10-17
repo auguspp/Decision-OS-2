@@ -48,6 +48,9 @@ def test_public_host_delivery_fresh_read_and_readonly_open(host, tmp_path):
     assert file["write"] == "not-requested" and host.git.head() == head and host.writes == writes
     again = invoke(host, tmp_path / "reconciled", "reconcile-delivery", payload, "delivery-one")
     assert again["result"]["reference"] == result["reference"]
+    assert again["result"]["source_use_acceptance"] == result["source_use_acceptance"]
+    assert again["result"]["source_use_acceptance"]["status"] == "not-demonstrated"
+    assert again["result"]["source_use_acceptance"]["reference"] == result["reference"]
     assert again["write"] == "reconciled-without-write" and host.writes == writes
 
 

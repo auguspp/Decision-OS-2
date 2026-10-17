@@ -1,0 +1,178 @@
+{
+  "as_of": "2026-10-16",
+  "case_id": "g-explore-20261016",
+  "cash_reconciliation": {
+    "approx_difference_less_restricted_wan_cny": "9260.886407",
+    "approx_restricted_total_wan_cny": "2915.60",
+    "cash_equivalents": "514628569.42",
+    "difference_wan_cny": "12176.486407",
+    "difference_yuan": "121764864.07",
+    "explicit_restricted_components_wan_cny": [
+      "2390.00",
+      "80.00",
+      "445.60"
+    ],
+    "meaning": "Accounting cash-equivalent exclusion is not identical to legal/contractual restriction. Residual is NOT automatically distributable shareholder cash; selected restriction sum is rounded issuer disclosure.",
+    "money_cap": "636393433.49",
+    "other_monetary_reported_wan_cny": "12176.49",
+    "other_monetary_sum_from_rounded_bank_rows_wan_cny": "12176.49",
+    "rounding_residual_yuan": "-35.93"
+  },
+  "native_new_capture_count": 0,
+  "native_row_provenance": {
+    "balance_h1": {
+      "captured_at": "2026-10-16T15:25:18.847834+00:00",
+      "file": "receipts/G_Quick_Supplemental_Capture.zip",
+      "page_index": 0,
+      "query_index": 2,
+      "row_index": 1,
+      "selection": "sole row or identical-valued versions; not PIT/latest certification",
+      "versions_retained": [
+        "0",
+        "1"
+      ]
+    },
+    "balance_yearend": {
+      "captured_at": "2026-10-16T15:23:00.350141+00:00",
+      "file": "receipts/G_Quick_Supplemental_Capture.zip",
+      "page_index": 0,
+      "query_index": 0,
+      "row_index": 0,
+      "selection": "sole row or identical-valued versions; not PIT/latest certification",
+      "versions_retained": [
+        "0"
+      ]
+    },
+    "cash_h1": {
+      "captured_at": "2026-10-16T14:41:25.443303+00:00",
+      "file": "receipts/G_Quick_Relay_Capture.zip",
+      "page_index": 0,
+      "query_index": 2,
+      "row_index": 1,
+      "selection": "sole row or identical-valued versions; not PIT/latest certification",
+      "versions_retained": [
+        "0",
+        "1"
+      ]
+    },
+    "income_h1": {
+      "captured_at": "2026-10-16T14:41:18.573732+00:00",
+      "file": "receipts/G_Quick_Relay_Capture.zip",
+      "page_index": 0,
+      "query_index": 0,
+      "row_index": 0,
+      "selection": "sole row or identical-valued versions; not PIT/latest certification",
+      "versions_retained": [
+        "1"
+      ]
+    }
+  },
+  "native_source_audit_rerun": false,
+  "operating_scope": {
+    "exact_self_use_or_inventory_change_t": "NOT_ESTABLISHED",
+    "note": "Revenue/tonne is a mixed-product quotient, not a pure acetic-acid price or basis for comparison with a tax-ambiguous survey quote.",
+    "pure_acetic_achieved_q2_price": "NOT_ESTABLISHED",
+    "q1_revenue_two_separate_products_wan_cny": "95230.25",
+    "q1_unit_rounding_checks": [
+      {
+        "note": "Unit margin uses separately rounded disclosures. Residual is retained; not a loss or proof of supplier error.",
+        "product": "醋酸",
+        "reported_unit_gross": "256.95",
+        "rounding_residual_cny_t": "-0.01",
+        "unit_spread_from_rounded_inputs": "256.94"
+      },
+      {
+        "note": "Unit margin uses separately rounded disclosures. Residual is retained; not a loss or proof of supplier error.",
+        "product": "醋酸乙酯",
+        "reported_unit_gross": "303.43",
+        "rounding_residual_cny_t": "0.00",
+        "unit_spread_from_rounded_inputs": "303.43"
+      }
+    ],
+    "q2_mixed_revenue_per_sold_t_cny": "3396.419463084053099340971511018245196032",
+    "q2_production_less_sales_t": "63513.86"
+  },
+  "ordinary_shareholder_cash": "not-established",
+  "receivables_denominator": {
+    "annualized_h1_pct": "9.487223900953098081534548248841685272145",
+    "balance_increase_pct": "8.060898949531758761257174907199164213800",
+    "balance_increase_yuan": "48548732.57",
+    "h1_revenue_yuan": "3429997866.26",
+    "meaning": "The annualization changes the denominator only. Neither ratio measures collections, turnover days or a decline in ending balances.",
+    "notes_and_financing_h1_yuan": "650823154.74",
+    "notes_and_financing_yearend_yuan": "602274422.17",
+    "reported_annualized_h1_pct": "9.49",
+    "sum_of_rounded_components_wan_cny": "65082.31",
+    "unannualized_h1_pct": "18.97444780190619616306909649768337054429"
+  },
+  "research_kind": "quick",
+  "units": "CNY unless key says wan_cny (万元), yi_cny (亿元), pct or cny_t",
+  "verification": {
+    "checks": [
+      {
+        "name": "cash_difference_equals_retained_v11_value",
+        "passed": true
+      },
+      {
+        "name": "bank_rows_sum_to_declared_rounded_subtotal",
+        "passed": true
+      },
+      {
+        "name": "cash_classification_matches_rounded_other_money_within_50_cny",
+        "passed": true
+      },
+      {
+        "name": "restricted_components_equal_2915_60_wan",
+        "passed": true
+      },
+      {
+        "name": "restriction_is_not_entire_account_balance",
+        "passed": true
+      },
+      {
+        "name": "restricted_portions_do_not_exceed_corresponding_balances",
+        "passed": true
+      },
+      {
+        "name": "null_in_unrestricted_account_not_changed_to_observed_zero",
+        "passed": true
+      },
+      {
+        "name": "receivables_positive_balance_increase",
+        "passed": true
+      },
+      {
+        "name": "reported_ratio_reproduced_after_annualization",
+        "passed": true
+      },
+      {
+        "name": "same_number_is_18_97pct_without_annualization",
+        "passed": true
+      },
+      {
+        "name": "component_rounding_explains_reported_subtotal",
+        "passed": true
+      },
+      {
+        "name": "q2_mixed_quotient_to_two_decimals",
+        "passed": true
+      },
+      {
+        "name": "unit_gross_rounding_is_retained_not_filled",
+        "passed": true
+      },
+      {
+        "name": "prior_audit_identified_not_replaced",
+        "passed": true
+      },
+      {
+        "name": "four_original_question_ids_retained",
+        "passed": true
+      }
+    ],
+    "failed": 0,
+    "passed": 15,
+    "scope": "local arithmetic/identity/retained-byte checks, not live native reauthentication, issuer authenticity certification or economic approval"
+  },
+  "version": "v1.2"
+}

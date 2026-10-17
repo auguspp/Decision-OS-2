@@ -185,6 +185,55 @@ def qualified_adj_factors(result: dict, *, registry: RelayRegistry, ts_code: str
     return _factors(view, code, allowed)
 
 
+
+def reconcile_adj_factors(result: dict, supplements: Mapping[str, dict], *,
+                          registry: RelayRegistry, ts_code: str, start: str,
+                          end: str, calendar: Sequence[str]) -> tuple[list, dict, dict]:
+    """Join actual exact-day observations into gaps; never edit the source capture.
+
+    A complete, valid interval is mandatory. A point query may only supply a day
+    missing from that interval, not replace even an identical observed value.
+    Point failures are local; the valid interval and independent points survive.
+    This is a new sourced representation, not proof the original batch was fixed.
+    """
+    lo, hi = _range(start, end)
+    code = _security(ts_code)
+    allowed = _sessions(calendar, lo, hi)
+    view = _view(result, registry, "adj_factor", {"ts_code": code,
+                 "start_date": start, "end_date": end}, FACTOR_FIELDS)
+    baseline = _factors(view, code, allowed)
+    _require(isinstance(supplements, Mapping) and len(supplements) <= 16
+             and all(isinstance(k, str) for k in supplements), "FACTOR_SUPPLEMENT_MAP")
+    values = {row["trade_date"]: row for row in baseline}
+    missing = sorted(allowed - values.keys())
+    points, added = {}, []
+    for requested, source in sorted(supplements.items()):
+        item = {"status": "rejected", "lineage": None}
+        try:
+            day = _day(requested)
+            _require(day in missing, "FACTOR_SUPPLEMENT_NOT_BASELINE_GAP")
+            point = _view(source, registry, "adj_factor",
+                {"ts_code": code, "trade_date": requested}, FACTOR_FIELDS)
+            rows = _factors(point, code, {day})
+            item["lineage"] = _lineage(point)
+            if rows:
+                values[day] = rows[0]
+                added.append(day)
+                item["status"] = "observed-from-point-query"
+            else:
+                item["status"] = "checked-empty"
+        except MarketRelayError as exc:
+            item["reason_code"] = str(exc)
+        points[requested] = item
+    audit = {"baseline_missing_sessions": missing, "supplemented_sessions": sorted(added),
+             "remaining_missing_sessions": sorted(allowed - values.keys()),
+             "points": points, "original_capture_rewritten": False}
+    lineage = {"baseline": _lineage(view), "supplements": points,
+               "representation": "original-interval-plus-exact-missing-day-observations-v1"}
+    return [values[d] for d in sorted(values)], lineage, audit
+
+
+
 def _within_listing(day: str, reference: dict) -> bool:
     # A delisting date is not evidence of trading on that date. This reader
     # conservatively excludes it. P is suspended listing, not a daily halt feed.
@@ -225,7 +274,8 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
                                 offset: int = 0, limit: int = 50,
                                 entity_id: str | None = None,
                                 reference_policy: str = "strict",
-                                suspension_results: Mapping[str, dict] | None = None) -> dict:
+                                suspension_results: Mapping[str, dict] | None = None,
+                                factor_supplements: Mapping[str, Mapping[str, dict]] | None = None) -> dict:
     """Read companion raw/qfq surfaces with one master-derived, undropped scope.
 
     Strict is the unchanged default. Explicit isolate-identified preserves all
@@ -241,6 +291,9 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
     declared = list(references)
     for results in (stock_results, factor_results):
         _require(isinstance(results, Mapping) and set(results) <= set(declared), "UNDECLARED_STOCK")
+    if factor_supplements is not None:
+        _require(isinstance(factor_supplements, Mapping)
+                 and set(factor_supplements) <= set(factor_results), "FACTOR_SUPPLEMENT_SCOPE")
     if entity_id is not None:
         _security(entity_id)
     calendar_view = _view(calendar_result, registry, "trade_cal",
@@ -279,7 +332,15 @@ def read_security_stock_surface(*, calendar_result: dict, master_results: Mappin
                 factors = _factors(view, code, allowed)
                 factor_sources[code] = _lineage(view)
                 state["factor"] = {"status": "checked", "row_count": len(factors)}
+                if factor_supplements is not None and code in factor_supplements:
+                    factors, factor_sources[code], audit = reconcile_adj_factors(
+                        factor_results[code], factor_supplements[code], registry=registry,
+                        ts_code=code, start=start, end=end, calendar=sessions)
+                    state["factor"]["row_count"] = len(factors)
+                    state["factor"]["reconciliation"] = audit
             except MarketRelayError as exc:
+                factors = None
+                factor_sources.pop(code, None)
                 state["factor"] = {"status": "rejected", "reason_code": str(exc)}
         if code in raw and factors is not None:
             try:

@@ -7,12 +7,12 @@ on:
         type: string
         required: true
       selection:
-        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; session-coverage or stock-history/CN; US: us-indices'
+        description: 'Strict: sample/catalogues/stock; isolated A-share: availability/stock-availability; members/resume-members; session-coverage, stock-history or factor-audit/CN; US: us-indices'
         type: choice
-        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage, stock-history]
+        options: [sample, catalogues, stock, us-indices, availability, stock-availability, members, resume-members, session-coverage, stock-history, factor-audit]
         default: sample
       exchange:
-        description: 'CN required for session-coverage/stock-history; SSE/SZSE for other domestic selections; US for us-indices'
+        description: 'CN required for session-coverage/stock-history/factor-audit; SSE/SZSE for other domestic selections; US for us-indices'
         type: choice
         options: [SSE, SZSE, US, CN]
         default: SSE
@@ -30,7 +30,7 @@ on:
         default: false
         required: true
       request_context_confirmed:
-        description: 'Explicitly retain generated member/session/history API request arguments; no returned rows'
+        description: 'Explicitly retain generated API request arguments, including exact factor-gap query dates; no returned rows'
         type: boolean
         default: false
       explain_quotes:
@@ -38,7 +38,7 @@ on:
         type: boolean
         default: false
       stock_codes:
-        description: 'stock-history only: JSON list of 1-8 exact SH/SZ codes; fixed cohort, not discovery'
+        description: 'JSON exact SH/SZ codes: stock-history 1-8, factor-audit 1-4; fixed cohort'
         type: string
         default: ''
       member_code:

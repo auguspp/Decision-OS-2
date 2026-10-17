@@ -31,7 +31,7 @@ def _route(payload):
         reader = read_relay_stock_surface
     elif schema == "relay-security-stock-reading-v1":
         required |= {"master_results", "factor_results"}
-        optional |= {"reference_policy", "suspension_results"}
+        optional |= {"reference_policy", "suspension_results", "factor_supplements"}
         reader = read_security_stock_surface
     elif schema == "relay-ths-group-reading-v1":
         required = GROUP_REQUIRED | {"schema", "kind"}
@@ -59,4 +59,3 @@ def read_market_payload(payload, registry, *, offset=0, limit=50, entity_id=None
             raise MarketInputError("HORIZON_INVALID")
         args["horizons"] = tuple(args["horizons"])
     return reader(**args, registry=registry, offset=offset, limit=limit, entity_id=entity_id)
-

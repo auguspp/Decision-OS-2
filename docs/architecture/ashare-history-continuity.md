@@ -119,3 +119,9 @@ shared single-session suspension helpers until their existing consumer also
 retires. Do not delete historical source operations or their failures; reverting
 code cannot undo those effects. Global expansion remains lower priority than
 unresolved A-share coverage, semantics, custody and real consumer acceptance.
+
+## 精确因子补查与来源组合
+
+已有完整区间捕获仍可能缺少交易日。只对原缺失日使用同源点查询，保留原缺口、不填值；
+见[因子日期核验与补充读取](ashare-factor-reconciliation.md)。普通reader的可选
+`factor_supplements`与有限`factor-audit`宿主共用同一检查，不把诊断成功代签原批次重放。

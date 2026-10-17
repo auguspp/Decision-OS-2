@@ -72,7 +72,7 @@ def _map_results(payload, transform):
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
         if kind == "stock":
-            extras |= {"suspension_results"}
+            extras |= {"suspension_results", "factor_supplements"}
         if kind == "session":
             extras |= {"suspension_result"}
         if kind in ("stock", "sector", "concept", "session"):
@@ -87,6 +87,15 @@ def _map_results(payload, transform):
             mapping = value[field]
             require(isinstance(mapping, dict) and all(isinstance(k, str) and len(k) <= 128 for k in mapping), "MARKET_CUSTODY_RESULT_MAP")
             value[field] = {key: transform(result, prefix + [field, key]) for key, result in mapping.items()}
+        if "factor_supplements" in value:
+            mapping = value["factor_supplements"]
+            require(isinstance(mapping, dict) and all(isinstance(k, str) and len(k) <= 128
+                    for k in mapping), "MARKET_CUSTODY_RESULT_MAP")
+            for code, points in mapping.items():
+                require(isinstance(points, dict) and len(points) <= 16 and all(
+                    isinstance(d, str) and len(d) <= 128 for d in points), "MARKET_CUSTODY_RESULT_MAP")
+                mapping[code] = {day: transform(result, prefix + ["factor_supplements", code, day])
+                                 for day, result in points.items()}
         if value.get("benchmark") is not None:
             baseline = value["benchmark"]
             require(isinstance(baseline, dict) and set(baseline) == {"ts_code", "result"}, "MARKET_CUSTODY_BENCHMARK")

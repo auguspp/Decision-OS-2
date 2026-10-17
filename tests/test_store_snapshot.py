@@ -144,13 +144,16 @@ def test_private_upgrade_native_bundle_keeps_legacy_refs(public_api, tmp_path, m
     import subprocess
 
     store, first, old, current = populated(public_api)
+    # Freeze original pre-upgrade values. The strict old public-only backend
+    # intentionally becomes unusable after GitHub switches to private.
+    expected_source, expected_old = store.read_source(first), store.read_revision(old)
     original = public_api.binding
     binding = replace(original, private_upgrade_allowed=True, write_enabled=False)
     original_head = public_api.git.head()
     public_api.meta["private"] = True
     reopened = VersionedStore(GitHubStore(binding, public_api))
-    assert reopened.read_source(first) == store.read_source(first)
-    assert reopened.read_revision(old) == store.read_revision(old)
+    assert reopened.read_source(first) == expected_source
+    assert reopened.read_revision(old) == expected_old
 
     calls = []
     def credential_scoped_clone(binding, api, destination):
@@ -166,4 +169,4 @@ def test_private_upgrade_native_bundle_keeps_legacy_refs(public_api, tmp_path, m
     assert calls[0][0] == binding and calls[0][1] is public_api
     assert verify_bundle(bundle, binding, original_head) == report
     assert json.loads(public_api.git.read(original_head, "store.json"))["mode"] == "public"
-    assert reopened.read_source(first)["data"] == store.read_source(first)["data"]
+    assert reopened.read_source(first)["data"] == expected_source["data"]

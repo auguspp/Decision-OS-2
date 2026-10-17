@@ -12,7 +12,7 @@ import sys
 
 REPO = "auguspp/Decision-OS-2"
 INPUTS = {"operation", "code_sha", "codes", "periods", "apis", "page_size",
-          "max_pages", "public_rights_confirmed", "family", "dates", "source_plan"}
+          "max_pages", "public_rights_confirmed", "family", "dates", "source_plan", "access_confirmed"}
 
 
 def settings(event: dict, env: dict) -> dict:
@@ -29,8 +29,13 @@ def settings(event: dict, env: dict) -> dict:
     if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha) or sha != env.get("GITHUB_SHA"):
         raise ValueError("RELAY_RUNTIME_CODE_SHA_MISMATCH")
     operation = data.get("operation", "plan")
-    if operation not in ("plan", "capture"):
+    if operation not in ("plan", "capture", "check"):
         raise ValueError("RELAY_RUNTIME_OPERATION_INVALID")
+    from decision_kernel.interfaces import pmi_check_commands
+    if data.get("family") == pmi_check_commands.FAMILY:
+        return pmi_check_commands.settings(data, sha)
+    if operation == "check" or data.get("access_confirmed") not in (None, False, "false"):
+        raise ValueError("RELAY_RUNTIME_UNUSED_CHECK_MODE")
     declaration = data.get("public_rights_confirmed")
     rights = declaration is True or type(declaration) is str and declaration == "true"
     if operation == "capture" and not rights:
@@ -88,6 +93,9 @@ def execute(stage: str, event: dict, env: dict, out: Path, *, run=subprocess.run
     root = Path(env["RUNNER_TEMP"]).resolve()
     if not out.resolve().is_relative_to(root) or out.resolve() == root or out.is_symlink():
         raise ValueError("RELAY_RUNTIME_OUTPUT_INVALID")
+    from decision_kernel.interfaces import pmi_check_commands
+    if selected.get("family") == pmi_check_commands.FAMILY:
+        return pmi_check_commands.execute(stage, selected, out)
     if selected.get("family") == "research":
         cli = [sys.executable, "-m", "decision_kernel.interfaces.relay_research_cli"]
         plan_path = out / "source-plan.json"
@@ -144,7 +152,7 @@ def execute(stage: str, event: dict, env: dict, out: Path, *, run=subprocess.run
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("prepare", "capture"))
+    parser.add_argument("stage", choices=("prepare", "capture", "check"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     try:

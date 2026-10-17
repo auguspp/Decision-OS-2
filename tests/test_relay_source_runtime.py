@@ -86,15 +86,18 @@ def test_output_cannot_escape_owned_temp(tmp_path):
         runtime.execute("prepare", event, env, tmp_path.parent / "outside", run=lambda *a, **k: pytest.fail("ran"))
 
 
-def test_workflow_has_one_secret_consumer_no_write_or_automatic_trigger():
+def test_workflow_has_scoped_secret_consumers_no_write_or_automatic_trigger():
     text = (ROOT / ".github/workflows/relay-source-runtime.yml").read_text()
     assert "on:\n  workflow_dispatch:" in text
     assert "pull_request:" not in text and "push:" not in text and "schedule:" not in text
     assert "contents: read" in text and "contents: write" not in text
     assert "persist-credentials: false" in text and "cancel-in-progress: false" in text
-    assert text.count("secrets.TUSHARE_PROXY_API_KEY") == 1
+    assert text.count("secrets.TUSHARE_PROXY_API_KEY") == 2
     assert "if: inputs.operation == 'capture'\n        env:\n          TUSHARE_PROXY_API_KEY:" in text
-    assert "DECISION_OS_STORE_TOKEN" not in text
+    check_step = text.split("      - name: Check retained PMI reference without exporting supplier rows")[1].split("      - name:")[0]
+    assert "if: inputs.family == 'industry-pmi' && inputs.operation == 'check'" in check_step
+    assert "DECISION_OS_STORE_TOKEN: ${{ github.token }}" in check_step
+    assert text.count("DECISION_OS_STORE_TOKEN") == 1
     assert "inputs.codes }}" not in text and "inputs.periods }}" not in text
     assert "steps.prepare.outcome == 'success'" in text
     assert "retention-days: 7" in text

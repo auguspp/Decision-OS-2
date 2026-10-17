@@ -154,7 +154,13 @@ def test_runtime_inputs_match_host_and_no_extra_secret_write_or_schedule():
     text=(ROOTDIR/'.github/workflows/relay-source-runtime.yml').read_text()
     import re
     inputs=re.findall(r'^      ([a-z_]+):$',text,re.M)
-    assert len(inputs)==11 and set(inputs)==runtime.INPUTS
-    assert text.count('secrets.TUSHARE_PROXY_API_KEY')==1
+    assert len(inputs)==12 and set(inputs)==runtime.INPUTS
+    assert text.count('secrets.TUSHARE_PROXY_API_KEY')==2
     assert 'contents: write' not in text and 'schedule:' not in text
-    assert 'DECISION_OS_STORE_TOKEN' not in text
+    capture = text.split('      - name: Explicit source capture with the repository secret')[1].split('      - name:')[0]
+    assert "if: inputs.operation == 'capture'" in capture
+    assert 'DECISION_OS_STORE_TOKEN' not in capture
+    check = text.split('      - name: Check retained PMI reference without exporting supplier rows')[1].split('      - name:')[0]
+    assert "if: inputs.family == 'industry-pmi' && inputs.operation == 'check'" in check
+    assert 'DECISION_OS_STORE_TOKEN: ${{ github.token }}' in check
+    assert text.count('DECISION_OS_STORE_TOKEN') == 1

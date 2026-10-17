@@ -60,6 +60,12 @@ Retry-After；权限/限流/全局停止保持。没有后台循环、跨运行r
 `original_batch_revalidated=false`始终保留。原区间与点查询的不同结果应交原来源owner
 查语义/上游处理，不能提前断言供应商错误，也不能用补查成功覆盖旧缺口证据。
 
+需要同次价格历史/raw-qfq消费时，使用原历史宿主的显式
+[`stock-history-reconcile`](ashare-history-continuity.md#same-input-factor-reconciliation-and-normal-consumption)。
+它复用上述组合函数并将真实点capture交给普通reader，在同一来源会话中核基线与组合后资格。
+它不调用factor-audit、不重复本操作基线，也不把本诊断计数当输入；额外新鲜度查询会从
+32个总查询额度扣除，点额度可能少于16。真实保管权限及独立跨会话采用仍另行验收。
+
 ## 验证与退出
 
 测试直接走合成Relay响应、原capture、普通raw/qfq reader、有限宿主、原临时Git库和

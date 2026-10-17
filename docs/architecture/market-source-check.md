@@ -214,6 +214,18 @@ permission-before-traffic and redacted host output. Retire this selection, host
 success marker, workflow choice, section and tests together when unused; retain
 the existing modes and shared qualification/custody/CI protections.
 
+## Explicit reconciled history consumer
+
+The original host also admits `stock-history-reconcile` for 1–4 explicitly
+declared SH/SZ securities, `exchange=CN`, with access, request-context and
+suspension-explanation confirmations. It uses the same history acquisition and
+original normal reader, adding only exact missing-day factor captures within
+the shared operation budget. The public host still receives only counters.
+See [the history contract](ashare-history-continuity.md#same-input-factor-reconciliation-and-normal-consumption)
+for baseline/combined qualification, the freshness-aware point limit, consumer
+validation and retirement. It is distinct from the factor-only diagnostic and
+does not recover earlier unretained histories or publish source data.
+
 ## Maintenance and evidence ownership
 
 `tests/test_market_source_check.py` uses the existing synthetic Response and

@@ -20,7 +20,7 @@ def preflight(operation, payload):
     require(plan["agenda"] is None or payload.get("public_feedback_custody_confirmed") is True,
             "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
 
-    require(not plan.get("materials") or payload.get("public_material_custody_confirmed") is True,
+    require(not (plan.get("materials") or plan.get("review")) or payload.get("public_material_custody_confirmed") is True,
             "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
 
 

@@ -26,7 +26,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -40,6 +40,9 @@ def plan_input(value):
     if value.get("materials") is not None:
         from decision_kernel.application.reading_materials import material_plan
         result["materials"] = material_plan(value["materials"])
+    if value.get("review") is not None:
+        from decision_kernel.application.research_review import review_plan
+        result["review"] = review_plan(value["review"])
     return result
 
 
@@ -116,7 +119,7 @@ class ReadingRoom:
     def build(self, value, *, feedback_export=True, material_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
-        require(not plan.get("materials") or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
+        require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         refs = [c["reference"] for c in catalogue["items"] if c["status"] == "readable"]
@@ -178,6 +181,17 @@ class ReadingRoom:
                            else _failure(error))
                 result["materials"] = {"reference": plan["materials"]["reference"], **failure}
                 partial = True
+        if plan.get("review"):
+            from decision_kernel.application.research_review import open_review
+            try:
+                view = open_review(self.store, plan["review"], agenda=agenda, brief=brief)
+                review = {"reference": plan["review"]["after"]["reference"], "status": "readable", "view": view}
+            except (RecordError, KeyError, TypeError) as error:
+                failure = ({"status": "not-included", "error": "REVIEW_DISPLAY_BOUND"}
+                           if isinstance(error, RecordError) and str(error) == "REVIEW_DISPLAY_BOUND" else _failure(error))
+                review = {"reference": plan["review"]["after"]["reference"], **failure}
+            result["review"] = review
+            partial = partial or review["status"] != "readable" or review.get("view", {}).get("status") == "partial"
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

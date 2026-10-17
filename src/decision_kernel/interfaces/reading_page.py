@@ -86,7 +86,9 @@ render();
 
 from decision_kernel.interfaces.reading_materials_page import JS as MATERIALS_JS
 
-JS += MATERIALS_JS
+from decision_kernel.interfaces.research_review_page import JS as REVIEW_JS
+
+JS += MATERIALS_JS + REVIEW_JS
 
 
 def render_page(model):
@@ -103,13 +105,14 @@ def render_page(model):
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0 / READING ROOM</p><h1>研究、议程与简报</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#materials">原件与来源</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
+<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <div class="workspace" id="research"><aside class="panel"><h2>本页研究</h2><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>
 <p id="count" aria-live="polite"></p><div id="cases"></div><div class="actions"><button id="next">导出下一页请求</button><button id="refresh">导出刷新目录请求</button></div></aside>
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
+<section class="panel" id="review"><h2>原问题复核与修订段落采用</h2><div id="review-content"></div></section>
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报与版本采用</h2><div id="brief-content"></div></section>
 <section class="panel" id="provenance"><h2>读取范围与接续</h2></section>

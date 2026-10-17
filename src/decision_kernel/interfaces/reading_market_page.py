@@ -8,7 +8,7 @@ JS = r"""
 function renderMarket(){
  const pane=$('market-content'),part=D.market;
  if(!part){pane.append(el('p','未指定已保管的 A 股市场根。计数检查回执不是行情源，不能据此生成收益；未提供不等于市场没有变化。'));return;}
- const term=x=>({'observed':'所声明窗口可读','data-gaps':'存在数据缺口','partial-history':'历史不完整','not-supplied':'未提供','invalid-data':'数据未通过','restored':'所需来源表示已恢复','partial-restoration':'部分来源表示未恢复','benchmark-not-provided':'未提供基准','empty-declared-universe':'声明范围为空'}[x]||x||'未知');
+ const term=x=>({'observed':'所声明窗口可读','data-gaps':'存在数据缺口','partial-history':'历史不完整','not-supplied':'未提供','invalid-data':'数据未通过','restored':'所需来源表示已恢复','partial-restoration':'部分来源表示未恢复','benchmark-not-provided':'未提供基准','empty-declared-universe':'声明范围为空','scope-unknown':'完整范围未取得','no-market-sessions':'声明区间没有开市日','unknown':'当前时效未知','stale':'尚未覆盖最近交易日','current-through-completed-day':'已覆盖截至前一上海自然日的交易日','current-complete':'读取指定集合的完整分区版本','current-partial':'读取指定集合的部分分区','previous-complete':'读取此根记录的上一完整分区版本','planned':'本次尚未执行','in-progress':'本次进行中','complete':'本次已完成','partial':'本次部分完成','blocked':'本次已停止，条件待解决'}[x]||x||'未知');
  const val=x=>x===null||x===undefined?'未取得':String(x);
  const readPlan=p=>request('market-room-read.json',roomRequest({...D.plan,market:p}));
  pane.append(el('p','A 股原价 / 复权 · 指定已存版本，不自动换到最新。只读，不启动采集、研究或保存。','banner'),
@@ -31,13 +31,20 @@ function renderMarket(){
   button('下载本页完整市场读取结果 JSON',()=>save('market-reader-result.json',JSON.stringify(restored,null,2),'application/json')),
   details('查询来源、局部失败和保管限制',{sources:restored.sources,reading_error:restored.reading_error,qualification:restored.qualification,original_http_restored:restored.original_http_restored,execution_diagnostics:restored.execution_diagnostics}));
  if(!v){pane.append(el('p','共享输入未恢复，不能生成双视图。其他研究面板仍可用；无结果不是零收益。'));return;}
- pane.append(el('p',`市场 ${v.raw.market} · 截止 ${v.raw.as_of} · 币种 ${v.raw.currency} · 声明范围 ${v.scope_count} 个证券。证券代码不是永久公司身份。`),
+ if(restored.serving){
+  pane.append(el('p',`集合读取：${term(restored.serving)}。最新尝试：${term(restored.latest_attempt?.status)}；本页数据请求截止 ${val(restored.selected_requested_end)}，最新尝试请求截止 ${val(restored.latest_requested_end)}。`,'banner'),
+   el('p',`当前时效：${term(v.freshness?.status)}；读取时间 ${val(v.freshness?.read_as_of)}。已存窗口可读、采集尝试完成与当前时效分别判断。`),
+   details('当前尝试、实际读取版本与日历时效',{latest_attempt:restored.latest_attempt,selected_reference:restored.selected_reference,latest_reference:restored.reference,selected_requested_end:restored.selected_requested_end,latest_requested_end:restored.latest_requested_end,freshness:v.freshness,by_exchange:v.by_exchange}));
+ }
+ const cutoff=v.as_of_by_exchange?Object.entries(v.as_of_by_exchange).map(([venue,day])=>`${venue} ${val(day)}`).join(' / '):val(v.raw.as_of);
+ const scope=v.scope_count===null||v.scope_count===undefined?'完整声明范围未取得':`声明范围 ${v.scope_count} 个证券`;
+ pane.append(el('p',`市场 ${v.raw.market} · 实际截止 ${cutoff} · 币种 ${v.raw.currency} · ${scope}。证券代码不是永久公司身份。`),
   el('p','原价与复权分别判断。价格比率不是总回报；复权窗口可读不等于全历史因子完整，停复牌解释不填补缺价。没有基准不显示相对收益。'),
-  details('完整主表分母、资格、隔离与原解释',{master:v.master,qualification_counts:v.qualification_counts,normalization:v.normalization,qualification_limits:v.qualification_limits}));
+  details('完整主表分母、资格、隔离与原解释',{master:v.master,known_scope_count:v.known_scope_count,as_of_by_exchange:v.as_of_by_exchange,qualification_counts:v.qualification_counts,normalization:v.normalization,qualification_limits:v.qualification_limits}));
  const columns=el('div',undefined,'market-columns');
  for(const kind of ['raw','qfq']){
   const s=v[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价（raw）':'复权（qfq，原锚点口径）'),
-   el('p',`${term(s.status)}；本页 ${s.entries.length} / 查询范围 ${s.page.selected_count} / 完整声明 ${s.scope_count}。未读页未计作本页覆盖。`),
+   el('p',`${term(s.status)}；本页 ${s.entries.length} / 查询范围 ${s.page.selected_count} / 完整声明 ${val(s.scope_count)}。未读页未计作本页覆盖。`),
    details('完整范围与窗口计数（分页不改分母）',{page:s.page,coverage:s.coverage,scope_count:s.scope_count,received_count:s.received_count,observed_count:s.observed_count,missing_count:s.missing_count,incomplete_count:s.incomplete_count,horizon_counts:s.horizon_counts,calendar_version:s.calendar_version,source_version:s.source_version,universe_version:s.universe_version,discovery_claim:s.discovery_claim}));
   if(!s.entries.length)box.append(el('p','本次查询/页没有返回证券，不代表原声明范围为空或没有机会。'));
   for(const e of s.entries){

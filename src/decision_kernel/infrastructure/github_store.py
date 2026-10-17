@@ -20,7 +20,7 @@ from decision_kernel.domain.records import (
 
 API_ROOT = "https://api.github.com"
 MAX_RESPONSE = 8 * 1024 * 1024
-MAX_TREE_ENTRIES = 8192
+MAX_TREE_ENTRIES = 32768
 MAX_REQUESTS = 512
 MAX_ANCESTOR_PROOFS = 128
 COMMIT_MUTATION = """mutation StoreCommit($input: CreateCommitOnBranchInput!) {

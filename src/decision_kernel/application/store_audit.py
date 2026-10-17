@@ -6,7 +6,7 @@ import json
 
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.research_delivery import ResearchDelivery, delivery_manifest
-from decision_kernel.application.versioned_store import MAX_QUERY_VERSIONS, VersionedStore
+from decision_kernel.application.versioned_store import MAX_STORE_VERSIONS, VersionedStore
 from decision_kernel.domain.records import BlobRef, RecordError, Selection, SourceRef, require
 
 
@@ -18,7 +18,7 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
     revisions = [p for p in paths if p.startswith("research/cases/") and p.endswith("/record.json")]
     currents = [p for p in paths if p.startswith("research/cases/") and p.endswith("/current.json")]
     artifacts = [p for p in paths if p.startswith("research/artifacts/") and p.endswith("/manifest.json")]
-    require(len(sources) + len(revisions) + len(artifacts) <= MAX_QUERY_VERSIONS, "AUDIT_VERSION_LIMIT")
+    require(len(sources) + len(revisions) + len(artifacts) <= MAX_STORE_VERSIONS, "AUDIT_VERSION_LIMIT")
     source_refs, revision_refs, current_refs = [], [], {}
     for path in sources:
         ref = backend.reference(backend.last_change(snapshot, path), path)

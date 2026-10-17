@@ -1,0 +1,66 @@
+name: decision-os-ashare-data
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [status, sync]
+        default: status
+        required: true
+        description: 'Read health or advance explicitly authorized private SH/SZ daily partitions'
+      code_sha:
+        type: string
+        required: true
+        description: 'Exact reviewed current main commit'
+      selection:
+        type: string
+        required: true
+        description: 'JSON collection_id/generation/start/end/calendar_end, optional refresh_dates; <=6000 bytes'
+      work_units:
+        type: string
+        default: '1'
+        description: '1..32 finite sync units; status requires 1; original page retry budget survives every unit'
+      access_and_custody_confirmed:
+        type: boolean
+        default: false
+        description: 'Authorize these source queries and private retention through the separately configured binding'
+permissions: {}
+concurrency:
+  group: decision-os-relay-source
+  cancel-in-progress: false
+jobs:
+  run:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Advance private partitions with durable per-page checkpoints
+        if: inputs.operation == 'sync'
+        env:
+          DECISION_OS_MARKET_BINDING_JSON: ${{ secrets.DECISION_OS_MARKET_BINDING_JSON }}
+          DECISION_OS_MARKET_STORE_TOKEN: ${{ secrets.DECISION_OS_MARKET_STORE_TOKEN }}
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+        run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"
+      - name: Read retained collection health without source credentials
+        if: inputs.operation == 'status'
+        env:
+          DECISION_OS_MARKET_BINDING_JSON: ${{ secrets.DECISION_OS_MARKET_BINDING_JSON }}
+          DECISION_OS_MARKET_STORE_TOKEN: ${{ secrets.DECISION_OS_MARKET_STORE_TOKEN }}
+        run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"
+      - name: Preserve only the engineering counts receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-ashare-data-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-ashare-data/result.json
+          if-no-files-found: warn
+          retention-days: 7

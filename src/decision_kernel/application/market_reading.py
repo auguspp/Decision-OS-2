@@ -12,6 +12,9 @@ from decision_kernel.application.shibor_inputs import (
     SHIBOR_READING_SCHEMA, SHIBOR_REQUIRED, read_shibor_context,
 )
 from decision_kernel.observations.market_daily import MarketInputError
+from decision_kernel.application.market_collection_inputs import (
+    COLLECTION_READING_SCHEMA, COLLECTION_REQUIRED, read_collection_payload,
+)
 
 
 def _route(payload):
@@ -20,7 +23,10 @@ def _route(payload):
     schema = payload.get("schema")
     required = {"schema", "calendar_result", "stock_results", "exchange", "start", "end"}
     optional = {"horizons"}
-    if schema == SESSION_SCHEMA:
+    if schema == COLLECTION_READING_SCHEMA:
+        required, optional = COLLECTION_REQUIRED | {"schema"}, {"reference_policy", "read_as_of", "freshness_results"}
+        reader = read_collection_payload
+    elif schema == SESSION_SCHEMA:
         required, optional = SESSION_REQUIRED | {'schema'}, {'reference_policy', 'suspension_result'}
         reader = read_session_coverage
     elif schema == SHIBOR_READING_SCHEMA:

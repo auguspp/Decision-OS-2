@@ -341,7 +341,8 @@ def test_native_health_private_upgrade_reads_same_runs_without_metadata_relabeli
     api = API(values)
     report = h.inspect_runtime(upgraded, api, as_of=NOW, backup_run_id=101)
     assert report["status"] == "metadata-ok"
-    assert report["native_reads"] == len(api.calls) == 40
+    baseline = h.inspect_runtime(BINDING, API(), as_of=NOW, backup_run_id=101)
+    assert report["native_reads"] == len(api.calls) == baseline["native_reads"]
     assert report["specified_backup"]["status"] == "inspected"
     assert report["writes"] == report["dispatches"] == 0
 

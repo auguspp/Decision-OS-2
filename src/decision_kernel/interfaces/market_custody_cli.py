@@ -14,7 +14,8 @@ import subprocess
 from pathlib import Path
 import sys
 
-from decision_kernel.application.market_custody import retain_market_reading, read_stored_market, market_reading_projection
+from decision_kernel.application.market_custody import retain_market_reading, market_reading_projection
+from decision_kernel.application.reading_market import read_market_reference
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef, digest, encoded
@@ -137,9 +138,10 @@ def main(argv=None):
             binding = GitHubBinding.from_dict(_load(args.binding))
             if args.operation == "save" and not binding.write_enabled:
                 raise RecordError("REMOTE_READ_ONLY")
+            api = GitHubAPI.from_environment()
             def build(read_only=True):
                 return VersionedStore(GitHubStore(replace(binding, write_enabled=False) if read_only else binding,
-                                                 GitHubAPI.from_environment()))
+                                                 api))
         else:
             def build(read_only=True):
                 return VersionedStore(GitStore(args.path))
@@ -147,8 +149,8 @@ def main(argv=None):
             result = retain_market_reading(payload, registry, build(False), fresh_reader=build,
                                             public_rights_confirmed=True)
         else:
-            result = read_stored_market(payload, registry, build(), offset=args.offset,
-                                        limit=args.limit, entity_id=args.entity_id)
+            result = read_market_reference(payload, registry, build(), offset=args.offset,
+                                           limit=args.limit, entity_id=args.entity_id)
     except (RecordError, MarketInputError) as exc:
         error = str(exc)
     except (ValueError, UnicodeError, OSError, TypeError, KeyError, RecursionError):

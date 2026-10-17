@@ -144,18 +144,41 @@ def _table(api, params, body):
     return value
 
 
-def capture_registered(request, registry, session, *, max_pages=100):
+def capture_registered(request, registry, session, *, max_pages=100, checkpoint=None,
+                       checkpoint_writer=None, pause_requested=None):
     params, item = parameters_for(registry, request['api'], request['parameters'])
     require(type(max_pages) is int and max_pages > 0, 'SOURCE_PAGE_BOUND_INVALID')
     result = {'schema': CAPTURE, 'api': request['api'], 'parameters': params,
         'query_key': request['query_key'], 'pages': [], 'complete': False, 'error': None,
         'snapshot': deepcopy(registry.snapshot), 'source_identity': 'THIRD_PARTY_RELAY_NOT_ISSUER',
         'coverage': 'REQUESTED_PAGE_TERMINATION_NOT_HISTORY_COMPLETENESS'}
+    controller = None
+    if checkpoint is not None or checkpoint_writer is not None or pause_requested is not None:
+        from decision_kernel.application.relay_capture_checkpoint import CaptureCheckpoint, pause_reason
+        controller = CaptureCheckpoint(request, registry, session, result, max_pages=max_pages,
+                                       value=checkpoint, writer=checkpoint_writer)
+        result = controller.capture
+        if controller.control['state'] in ('complete', 'terminal'):
+            return result  # Exact retained completion/failure: no credential or source request.
     offset, seen, total, declared = int(params.get('offset', 0)), set(), 0, 0
-    for page_number in range(1, max_pages + 1):
+    for page in result['pages']:
+        table = page['table']
+        seen.add(digest(encoded({'fields': table['fields'], 'items': table['items']})))
+        offset += len(table['items'])
+        total += len(encoded(table))
+        declared = max(declared, table['reported_count'] or 0)
+    for page_number in range(len(result['pages']) + 1, max_pages + 1):
         page_params = {**params, 'offset': str(offset)} if offset else dict(params)
+        if controller is not None and controller.control['retry'] is None:
+            requested_pause = pause_reason(pause_requested)
+            if requested_pause:
+                controller.pause(requested_pause, page_params)
+                return result
         try:
-            body = session.run(lambda: session.client.request_registered(registry, request['api'], page_params))
+            call = lambda: session.client.request_registered(registry, request['api'], page_params)
+            body = (session.run(call) if controller is None else session.run(call,
+                continuation=controller.control['retry'], checkpoint=controller.retry_progress,
+                pause_requested=pause_requested))
             result['request_execution'] = {'page_number': page_number,
                 'retry_decision': deepcopy(session.last_retry_decision)}
             table = _table(request['api'], page_params, body)
@@ -171,15 +194,24 @@ def capture_registered(request, registry, session, *, max_pages=100):
             if len(table['items']) < int(params['limit']):
                 require(declared <= offset, 'SOURCE_COUNT_SUGGESTS_TRUNCATION')
                 result['complete'] = True
+                if controller is not None:
+                    controller.accepted(complete=True)
                 return result
+            if controller is not None and page_number < max_pages:
+                controller.accepted(complete=False)
         except RecordError as exc:
             result['request_execution'] = {'page_number': page_number,
                 'retry_decision': deepcopy(session.last_retry_decision)}
             result.update(error=str(exc), failure=deepcopy(session.last_error_meta),
                           pending_retry=deepcopy(session.pending_retry), attempts=deepcopy(session.last_attempts),
                           next_parameters=page_params)
+            if controller is not None:
+                controller.failed()
             return result
     result.update(error='SOURCE_PAGE_BOUND_REACHED', next_parameters={**params, 'offset': str(offset)})
+    if controller is not None:
+        controller.control['page_number'] = max_pages + 1
+        controller.failed()
     return result
 
 
@@ -277,6 +309,20 @@ def source_inputs(result, registry):
     """Existing deliver/put-source accepts these; this function itself performs no write."""
     view = inspect_result(result, registry)
     require(view['complete'], 'SOURCE_COMPLETE_CAPTURE_REQUIRED')
+    return _page_inputs(view)
+
+
+def source_page_inputs(result, registry):
+    """Export inspected received pages for an explicit execution checkpoint.
+
+    This does not qualify an incomplete query for normal reading. The checkpoint
+    writer retains completeness/control separately and validates them on restore.
+    Complete-query source_inputs retains its original admission requirement.
+    """
+    return _page_inputs(inspect_result(result, registry))
+
+
+def _page_inputs(view):
     output = []
     for page in view['pages']:
         source = SourceInput(source_id='relay-query-' + view['query_key'][:24] + '-' + str(page['offset']),

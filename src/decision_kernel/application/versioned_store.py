@@ -16,6 +16,11 @@ from decision_kernel.domain.records import (
 from decision_kernel.application.store_backend import StoreBackend
 
 MAX_QUERY_VERSIONS = 1024
+# Store inventory and a bounded cursor scan are distinct from an unpaginated
+# query. Daily market pages/checkpoints need more retained versions, but each
+# explicit scan still examines at most MAX_SCAN_VERSIONS and flat search keeps
+# its original 1024-version boundary.
+MAX_STORE_VERSIONS = 8192
 SOURCE_SCAN_CURSOR = "source-scan-cursor-v1"
 MAX_SCAN_VERSIONS = 32
 
@@ -315,7 +320,7 @@ class VersionedStore:
         with context as backend:
             reader = VersionedStore(backend)
             paths = sorted(p for p in backend.paths(snapshot, "source-views/") if p.endswith("/manifest.json"))
-            require(len(paths) <= MAX_QUERY_VERSIONS, "QUERY_VERSION_LIMIT_EXCEEDED")
+            require(len(paths) <= MAX_STORE_VERSIONS, "STORE_VERSION_LIMIT_EXCEEDED")
             require(offset <= len(paths), "SCAN_CURSOR_OUT_OF_BOUNDS")
             hits, end = [], offset
             for path in paths[offset:offset + scan_limit]:

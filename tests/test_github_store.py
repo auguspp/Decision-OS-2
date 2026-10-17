@@ -7,14 +7,14 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from decision_kernel.application.versioned_store import VersionedStore
+from decision_kernel.application.versioned_store import MAX_STORE_VERSIONS, VersionedStore
 from decision_kernel.domain.records import (
     Conflict, Entity, IntegrityError, MissingObject, RecordError, RevisionInput,
     SourceInput, StoreUnavailable, UnknownWrite, encoded,
 )
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure import github_store as remote
-from decision_kernel.infrastructure.github_store import GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.github_store import GitHubBinding, GitHubStore, github_tree_inventory
 
 
 class GitAPI:
@@ -421,3 +421,142 @@ def test_shared_cli_private_binding_roundtrip_and_readonly(api, tmp_path, monkey
     assert api.writes == writes
     assert store_cli.execute(parser.parse_args(common + ["init-synthetic"])) == 2
     assert json.loads(capsys.readouterr().err)["error"] == "REMOTE_INITIALIZATION_NOT_SUPPORTED"
+
+
+def _extend_tree_metadata(api, files, directories=()):
+    """Boundary metadata only; fixture bodies are never used as stored evidence."""
+    head = api.git.head()
+    tree = api.git._run("rev-parse", head + "^{tree}").stdout.decode().strip()
+    target = "/repos/" + api.binding.repository + "/git/trees/" + tree + "?recursive=1"
+    folders = set(directories)
+    for path in files:
+        parts = path.split("/")
+        folders.update("/".join(parts[:number]) for number in range(1, len(parts)))
+    additions = [dict(path=path, mode="100644", type="blob", sha="0" * 40, size=size)
+        for path, size in files.items()]
+    additions.extend(dict(path=path, mode="040000", type="tree", sha="0" * 40) for path in folders)
+    def extend(path, value):
+        if path == target:
+            present = {row["path"] for row in value["tree"]}
+            value["tree"].extend(row for row in additions if row["path"] not in present)
+        return value
+    api.corrupt_response = extend
+    return head
+
+
+def test_projected_tree_entry_limit_includes_retained_empty_directories_before_post(api):
+    from test_news_read_budget import transport
+
+    assert remote.MAX_TREE_ENTRIES == 32768
+    folders = ["submissions"] + [f"submissions/empty-{number:05d}" for number in range(32766)]
+    before = _extend_tree_metadata(api, {}, folders)
+    wire = transport(api)
+    store = GitHubStore(api.binding, wire)
+    # A valid old recursive response has 32768 entries. Creating one source
+    # manifest adds its file and three previously absent parent directories.
+    with pytest.raises(RecordError, match="^REMOTE_TREE_LIMIT_BEFORE_WRITE$"):
+        store.commit({f"source-views/new/{'a' * 64}/manifest.json": b"{}\n"}, expected=before)
+    assert api.writes == 0 and api.git.head() == before and wire._requests < remote.MAX_REQUESTS
+
+
+def test_projected_store_version_limit_counts_all_families_before_post(api):
+    from test_news_read_budget import transport
+
+    assert MAX_STORE_VERSIONS == 8192
+    files = {}
+    for number in range(MAX_STORE_VERSIONS):
+        paths = (f"source-views/s/{number:064x}/manifest.json",
+            f"research/cases/c/revisions/r{number}/record.json",
+            f"research/artifacts/a/{number:064x}/manifest.json")
+        files[paths[number % 3]] = 3
+    old = {"store.json": len(api.binding.marker()), **files}
+    counts = github_tree_inventory(api.binding, old)
+    assert counts["version_count"] == 8192 and counts["tree_entries"] < remote.MAX_TREE_ENTRIES
+    assert counts["tree_response_bytes_estimate"] < remote.MAX_RESPONSE
+    before = _extend_tree_metadata(api, files)
+    wire = transport(api)
+    store = GitHubStore(api.binding, wire)
+    with pytest.raises(RecordError, match="^STORE_VERSION_LIMIT_BEFORE_WRITE$"):
+        store.commit({f"source-views/s/{8192:064x}/manifest.json": b"{}\n"}, expected=before)
+    assert api.writes == 0 and api.git.head() == before and wire._requests < remote.MAX_REQUESTS
+
+
+def test_projected_original_eight_mib_response_limit_stops_before_post(api):
+    from test_news_read_budget import transport
+
+    assert remote.MAX_RESPONSE == 8 * 1024 * 1024
+    def path(number):
+        return f"submissions/request-{number:088d}.json"
+    base = {"store.json": len(api.binding.marker()), path(0): 3}
+    first = github_tree_inventory(api.binding, base)["tree_response_bytes_estimate"]
+    second = github_tree_inventory(api.binding, {**base, path(1): 3})["tree_response_bytes_estimate"]
+    count = 1 + (remote.MAX_RESPONSE - first) // (second - first)
+    files = {path(number): 3 for number in range(count)}
+    old = {"store.json": len(api.binding.marker()), **files}
+    additions = {path(count + number): b"{}\n" for number in range(128)}
+    previous = github_tree_inventory(api.binding, old)
+    projected = github_tree_inventory(api.binding, {**old, **{p: len(raw) for p, raw in additions.items()}})
+    assert previous["tree_response_bytes_estimate"] <= remote.MAX_RESPONSE < projected["tree_response_bytes_estimate"]
+    assert projected["tree_entries"] < remote.MAX_TREE_ENTRIES and projected["version_count"] == 0
+    before = _extend_tree_metadata(api, files)
+    wire = transport(api)
+    store = GitHubStore(api.binding, wire)
+    with pytest.raises(RecordError, match="^REMOTE_TREE_RESPONSE_LIMIT_BEFORE_WRITE$"):
+        store.commit(additions, expected=before)
+    assert api.writes == 0 and api.git.head() == before and wire._requests < remote.MAX_REQUESTS
+
+
+def test_pointer_overwrite_keeps_same_tree_count_at_boundary(api, backend, monkeypatch):
+    path = "research/cases/case/current.json"
+    first = backend.commit({path: b'{"version":1}\n'}, expected=backend.head())
+    monkeypatch.setattr(remote, "MAX_TREE_ENTRIES", 5)
+    second = backend.commit({path: b'{"version":2}\n'}, expected=first)
+    assert api.writes == 2 and api.git.read(second, path) == b'{"version":2}\n'
+    rows = [row for row in api.git._run("ls-tree", "-r", "-t", "-z", second).stdout.split(b"\0") if row]
+    assert len(rows) == 5
+
+
+def test_uncached_tree_after_cache_capacity_keeps_its_empty_directory_inventory(api, backend, monkeypatch):
+    for number in range(31):
+        commit = api.git.commit({f"submissions/warm-{number}.json": b"{}\n"}, expected=api.git.head())
+        backend._tree(commit)
+    assert len(backend._trees) == 32
+    before = api.git.commit({"submissions/last.json": b"{}\n"}, expected=api.git.head())
+    _extend_tree_metadata(api, {}, ["submissions", "submissions/retained-empty"])
+    backend._tree(before)
+    assert before not in backend._trees
+    # A cached historical lookup must not make the next write use its directories.
+    backend._tree(api.binding.anchor)
+    monkeypatch.setattr(remote, "MAX_TREE_ENTRIES", 35)
+    with pytest.raises(RecordError, match="^REMOTE_TREE_LIMIT_BEFORE_WRITE$"):
+        backend.commit({"submissions/new.json": b"{}\n"}, expected=before)
+    assert api.writes == 0 and api.git.head() == before
+
+
+def test_response_estimate_covers_long_origin_paths_and_pretty_json_with_unit_reserve(api):
+    binding = replace(api.binding, repository="a" * 39 + "/" + "b" * 100)
+    source = "s" * 96
+    files = {"store.json": 300, f"source-views/{source}/{'a' * 64}/manifest.json": 4 * 1024 * 1024,
+        f"research/cases/{'c' * 96}/revisions/{'r' * 96}/record.json": 17}
+    folders = {"submissions", "submissions/empty"}
+    for path in files:
+        parts = path.split("/")
+        folders.update("/".join(parts[:number]) for number in range(1, len(parts)))
+    origin = remote.API_ROOT + "/repos/" + binding.repository + "/git/"
+    rows = [dict(path=path, mode="100644", type="blob", sha="f" * 40, size=size,
+                 url=origin + "blobs/" + "f" * 40) for path, size in files.items()]
+    rows.extend(dict(path=path, mode="040000", type="tree", sha="e" * 40,
+                     url=origin + "trees/" + "e" * 40) for path in folders)
+    wire = json.dumps(dict(sha="a" * 40, url=origin + "trees/" + "a" * 40,
+                          tree=rows, truncated=False), indent=4).encode()
+    counts = github_tree_inventory(binding, files, directories=folders)
+    assert counts["tree_entries"] == len(rows) and counts["version_count"] == 2
+    assert counts["tree_response_bytes_estimate"] > len(wire)
+    assert counts["tree_response_bytes_estimate"] > github_tree_inventory(api.binding, files,
+        directories=folders)["tree_response_bytes_estimate"]
+    empty = github_tree_inventory(binding, {"store.json": 300}, directories=["submissions"])
+    longest = ["submissions/" + f"d{number:03d}" + "x" * (512 - len("submissions/") - 4)
+        for number in range(160)]
+    added = github_tree_inventory(binding, {"store.json": 300}, directories=longest)
+    assert added["tree_entries"] - empty["tree_entries"] == 160
+    assert added["tree_response_bytes_estimate"] - empty["tree_response_bytes_estimate"] <= remote.TREE_RESPONSE_WORK_UNIT_RESERVE

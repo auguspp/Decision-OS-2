@@ -418,7 +418,7 @@ def test_workflow_keeps_finite_check_read_only_and_secret_only_at_capture():
     assert "exit 1" in denied["steps"][0]["run"]
     holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
                for step in candidate["steps"] if "FTSHARE_API_KEY" in json.dumps(step)]
-    assert holders == [("ftshare-check", "capture")]
+    assert holders == [("ftshare-check", "capture"), ("ftshare-check-continue", "capture")]
     steps = {step["id"]: step for step in job["steps"] if "id" in step}
     assert steps["capture"]["env"]["FTSHARE_API_KEY"] == "${{ secrets.FTSHARE_API_KEY }}"
     assert "FTSHARE_API_KEY" not in workflow.get("env", {})

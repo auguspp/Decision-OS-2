@@ -84,18 +84,21 @@ def assert_no_source_retained(client):
     assert KEY not in json.dumps(client.last_error_meta)
 
 
-def test_daily_request_uses_fixed_origin_repeated_symbols_and_header_only_credential(monkeypatch):
+@pytest.mark.parametrize("adjust_kind", ["none", "forward"])
+def test_daily_request_uses_fixed_origin_repeated_symbols_and_header_only_credential(monkeypatch, adjust_kind):
     monkeypatch.setenv("FTSHARE_BASE_URL", "https://untrusted.invalid/gateway")
     client, opener = setup()
-    get_daily(client, adjust_kind="forward")
+    get_daily(client, adjust_kind=adjust_kind)
     request, timeout = opener.calls[0]
     url = urlsplit(request.full_url)
     assert (url.scheme, url.netloc, url.path) == (
         "https", "market.ft.tech", "/gateway/api/v2/market/data/stock-candlesticks/batch")
     assert parse_qs(url.query) == {"symbols": sorted(SYMBOLS), "interval_unit": ["day"],
-        "adjust_kind": ["forward"], "since_ts_millis": [str(SINCE)], "until_ts_millis": [str(UNTIL)]}
+        "adjust_kind": [adjust_kind], "since_ts_millis": [str(SINCE)], "until_ts_millis": [str(UNTIL)]}
     assert request.method == "GET" and request.data is None and timeout == 90
     sent = {name.lower(): value for name, value in request.header_items()}
+    assert sent["x-client-name"] == "ft-claw"
+    assert sent["user-agent"] == "DecisionOS2-FTShareDaily/0.1"
     assert sent["ftshare_api_key"] == KEY and sent["accept-encoding"] == "identity"
     assert sent["content-type"] == "application/json" and sent["accept"] == "application/json"
     assert KEY not in request.full_url and "authorization" not in sent

@@ -94,7 +94,7 @@ def verify_native_repair_evidence(document, *, store, api, execution_code_sha):
 def health_receipt(reading):
     """Allowlist counts and qualified dates; never emit rows, names or SourceRefs."""
     view = reading["view"]
-    return {"status": reading["status"], "serving": reading["serving"],
+    result = {"status": reading["status"], "serving": reading["serving"],
         "source_requests": reading["source_requests"],
         "unavailable_queries": reading["unavailable_queries"],
         "selected_requested_end": reading["selected_requested_end"],
@@ -107,6 +107,15 @@ def health_receipt(reading):
             "scope_count", "observed_count", "missing_count", "incomplete_count", "horizon_counts")},
         "supplier_rows_in_receipt": False,
         "qualification": "restored-partition-and-window-counts-not-provider-uptime-certification"}
+    if "endpoint_comparisons" in view:
+        endpoints = view["endpoint_comparisons"]
+        result["endpoint_comparisons"] = {kind: {
+            **{key: endpoints[kind][key] for key in (
+                "scope_count", "observed_count", "missing_count", "incomplete_count")},
+            "horizon_counts": [{key: window[key] for key in (
+                "sessions", "scope_count", "observed_count", "missing_count")}
+                for window in endpoints[kind]["horizon_counts"]]} for kind in ("raw", "qfq")}
+    return result
 
 
 def run_collection(*, operation, plan, registry, open_unit, attempt_id, max_work_units=1,

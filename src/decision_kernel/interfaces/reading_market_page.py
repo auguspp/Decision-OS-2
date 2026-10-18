@@ -41,6 +41,7 @@ function renderMarket(){
  pane.append(el('p',`市场 ${v.raw.market} · 实际截止 ${cutoff} · 币种 ${v.raw.currency} · ${scope}。证券代码不是永久公司身份。`),
   el('p','原价与复权分别判断。价格比率不是总回报；复权窗口可读不等于全历史因子完整，停复牌解释不填补缺价。没有基准不显示相对收益。'),
   details('完整主表分母、资格、隔离与原解释',{master:v.master,known_scope_count:v.known_scope_count,as_of_by_exchange:v.as_of_by_exchange,qualification_counts:v.qualification_counts,normalization:v.normalization,qualification_limits:v.qualification_limits}));
+ pane.append(el('h2','完整逐日窗口'),el('p','这一用途需要窗口内每个交易日的合格价格；端点比较另列，不填补逐日缺口。'));
  const columns=el('div',undefined,'market-columns');
  for(const kind of ['raw','qfq']){
   const s=v[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价（raw）':'复权（qfq，原锚点口径）'),
@@ -54,7 +55,27 @@ function renderMarket(){
    for(const w of e.horizons){const tr=el('tr');for(const x of [w.sessions,`${val(w.baseline_date)} → ${val(w.end_date)}`,term(w.status),val(w.change_pct)])tr.append(el('td',val(x)));table.append(tr);}
    row.append(table,details('原证券资格、因子缺口、日历与来源明细',e));box.append(row);
   }columns.append(box);
- }pane.append(columns,el('p','本页 JSON 是原读取器结果，不是供应商原始响应文件。浏览、下载和导出请求均不表示人工接受，也未采用进 Brief。'));
+ }pane.append(columns);
+ const endpoints=v.endpoint_comparisons;
+ if(endpoints){
+  const endpointTerm=x=>({'observed':'端点比较可用','partial-comparisons':'部分端点比较可用','no-usable-comparison':'暂无可用端点比较','comparison-gaps':'部分端点比较缺失','missing-endpoint-observations':'所需端点价格缺失','invalid-endpoint-adjustment':'所需端点复权未通过','insufficient-calendar-history':'日历长度不足'}[x]||term(x));
+  pane.append(el('h2','端点区间比较'),el('p','按同一交易日历定位 5 / 20 / 60 日前的基准日和实际截止日。只判断这两端；复权沿用截止日因子锚。中间缺日不表示为完整路径，端点可用也不改变集合完成、原窗口或当前时效。'));
+  const comparisons=el('div',undefined,'market-columns');
+  for(const kind of ['raw','qfq']){
+   const s=endpoints[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价端点（raw）':'复权端点（qfq，原锚点口径）'),
+    el('p',`${endpointTerm(s.status)}；本页 ${s.entries.length} / 查询范围 ${s.page.selected_count} / 完整声明 ${val(s.scope_count)}。`),
+    details('独立端点计数（分页不改分母）',{comparison_basis:endpoints.comparison_basis,daily_path_certified:endpoints.daily_path_certified,page:s.page,scope_count:s.scope_count,known_scope_count:s.known_scope_count,observed_count:s.observed_count,missing_count:s.missing_count,incomplete_count:s.incomplete_count,horizon_counts:s.horizon_counts,source_version:s.source_version}));
+   if(!s.entries.length)box.append(el('p','本次查询/页没有返回证券，不代表原声明范围为空。'));
+   for(const e of s.entries){
+    const row=el('article',undefined,'market-entry');row.append(el('h3',`${e.security_reference?.name||'名称未取得'} · ${e.entity_id}`),el('p',endpointTerm(e.status)));
+    const table=el('table',undefined,'market-table'),head=el('tr');
+    for(const title of ['交易日间隔','基准日 → 截止日','端点值（基准 → 截止）','端点状态','变动 %'])head.append(el('th',title));table.append(head);
+    for(const w of e.horizons){const tr=el('tr');for(const x of [w.sessions,`${val(w.baseline_date)} → ${val(w.end_date)}`,`${val(w.baseline_value)} → ${val(w.end_value)}`,endpointTerm(w.status),val(w.change_pct)])tr.append(el('td',val(x)));table.append(tr);}
+    row.append(table,details('所需端点、独立资格和原来源定位',e));box.append(row);
+   }comparisons.append(box);
+  }pane.append(comparisons);
+ }
+ pane.append(el('p','本页 JSON 是原读取器结果，不是供应商原始响应文件。浏览、下载和导出请求均不表示人工接受，也未采用进 Brief。'));
 }
 renderMarket();
 """

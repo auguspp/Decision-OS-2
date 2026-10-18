@@ -1,5 +1,5 @@
 name: decision-os-relay-source-runtime
-run-name: ${{ inputs.family == 'market-bulk-check' && 'Relay bulk boundary 20261018' || 'decision-os-relay-source-runtime' }}
+run-name: ${{ inputs.family == 'market-ohlcv-check' && 'Relay OHLCV capacity 20261018' || inputs.family == 'market-bulk-check' && 'Relay bulk boundary 20261018' || 'decision-os-relay-source-runtime' }}
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +16,7 @@ on:
       family:
         description: 'Typed source family, catalogue plan, or fixed private bulk diagnostic'
         type: choice
-        options: [financial, participants, research, industry-pmi, market-bulk-check]
+        options: [financial, participants, research, industry-pmi, market-bulk-check, market-ohlcv-check]
         default: financial
       codes:
         description: 'Typed families only: securities separated by spaces or commas'
@@ -61,7 +61,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   source:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.family != 'market-bulk-check'
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.family != 'market-bulk-check' && inputs.family != 'market-ohlcv-check'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -97,7 +97,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   bulk-check:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.family == 'market-bulk-check'
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && (inputs.family == 'market-bulk-check' || inputs.family == 'market-ohlcv-check')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

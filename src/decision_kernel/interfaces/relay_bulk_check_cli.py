@@ -20,8 +20,10 @@ from decision_kernel.infrastructure.relay_http import RelayHTTP, ROOT
 from decision_kernel.interfaces.relay_source_runtime import INPUTS, REPO
 
 FAMILY = 'market-bulk-check'
+FULL_FAMILY = 'market-ohlcv-check'
 WORKFLOW = '.github/workflows/relay-source-runtime.yml'
 TITLE = 'Relay bulk boundary 20261018'
+FULL_TITLE = 'Relay OHLCV capacity 20261018'
 PREFIX = '/repos/' + REPO
 
 
@@ -32,7 +34,7 @@ def settings(event, env):
             and env.get('GITHUB_RUN_ATTEMPT') == '1', 'BULK_MANUAL_MAIN_ATTEMPT_ONE')
     require(isinstance(event, dict) and isinstance(event.get('inputs'), dict), 'BULK_EVENT')
     data = event['inputs']
-    require(set(data) <= INPUTS and data.get('family') == FAMILY
+    require(set(data) <= INPUTS and data.get('family') in (FAMILY, FULL_FAMILY)
             and data.get('operation') == 'check'
             and (data.get('access_confirmed') is True or type(data.get('access_confirmed')) is str and data['access_confirmed'] == 'true')
             and (data.get('public_rights_confirmed') is False or type(data.get('public_rights_confirmed')) is str and data['public_rights_confirmed'] == 'false'), 'BULK_EXPLICIT_PRIVATE_CHECK')
@@ -40,14 +42,16 @@ def settings(event, env):
             and str(data.get('page_size', '100')) == '100'
             and str(data.get('max_pages', '100')) == '100', 'BULK_UNUSED_SELECTORS')
     raw = data.get('source_plan')
+    study = core.FULL_STUDY if data.get('family') == FULL_FAMILY else core.STUDY
     require(isinstance(raw, str) and len(raw.encode()) <= 256
-            and _json(raw.encode()) == {'study': core.STUDY}, 'BULK_FIXED_STUDY')
+            and _json(raw.encode()) == {'study': study}, 'BULK_FIXED_STUDY')
     sha, run_id = data.get('code_sha'), env.get('GITHUB_RUN_ID')
     require(isinstance(sha, str) and re.fullmatch(r'[a-f0-9]{40}', sha)
             and sha == env.get('GITHUB_SHA'), 'BULK_CODE_SHA')
     require(isinstance(run_id, str) and re.fullmatch(r'[1-9][0-9]{0,14}', run_id), 'BULK_RUN_ID')
-    return {'study': core.STUDY, 'code_sha': sha, 'run_id': run_id,
-            'attempt': 1, 'repository': REPO, 'plan': core.plan()}
+    return {'study': study, 'code_sha': sha, 'run_id': run_id,
+            'attempt': 1, 'repository': REPO,
+            'plan': core.full_plan() if study == core.FULL_STUDY else core.plan()}
 
 
 def check_private(api, selected):
@@ -60,12 +64,13 @@ def check_private(api, selected):
 
 
 def native_ready(api, selected):
+    title = FULL_TITLE if selected['study'] == core.FULL_STUDY else TITLE
     check_private(api, selected)
     run = api.request('GET', PREFIX + '/actions/runs/' + selected['run_id'])
     require(run.get('id') == int(selected['run_id']) and run.get('head_sha') == selected['code_sha']
             and run.get('head_branch') == 'main' and run.get('run_attempt') == 1
             and run.get('event') == 'workflow_dispatch' and run.get('path') == WORKFLOW
-            and run.get('display_title') == TITLE and run.get('status') == 'in_progress'
+            and run.get('display_title') == title and run.get('status') == 'in_progress'
             and run.get('repository', {}).get('id') == 1420041744, 'BULK_NATIVE_RUN_IDENTITY')
     # The CI gate owns full/qualified merge reuse. This is the real main run,
     # not an old PR success or source-input claim.
@@ -84,7 +89,7 @@ def native_ready(api, selected):
                              + urlencode({'event': 'workflow_dispatch', 'per_page': 100, 'page': page}))
         history = result.get('workflow_runs')
         require(isinstance(history, list) and len(history) <= 100, 'BULK_RUN_INVENTORY')
-        matches.extend(r for r in history if r.get('display_title') == TITLE)
+        matches.extend(r for r in history if r.get('display_title') == title)
         if len(history) < 100:
             break
     else:
@@ -151,7 +156,7 @@ def execute(stage, event, env, out, *, api=None, client_factory=RelayHTTP,
                 check_private(api, selected)
             row.update(status='request-started', requested_at=clock())
             report['source_requests'] += 1
-            require(report['source_requests'] <= core.MAX_CALLS, 'BULK_SOURCE_BUDGET')
+            require(report['source_requests'] <= len(selected['plan']), 'BULK_SOURCE_BUDGET')
             save()
             start = monotonic()
             if spec['kind'] == 'capability':
@@ -170,7 +175,9 @@ def execute(stage, event, env, out, *, api=None, client_factory=RelayHTTP,
             filename = spec['id'] + '.json'
             retained.append((filename, raw))
             row['raw_file'] = filename
-            finding = core.inspect_capability(raw) if spec['kind'] == 'capability' else core.inspect_quote(raw, spec)
+            finding = core.inspect_capability(raw) if spec['kind'] == 'capability' else (
+                core.inspect_full_quote(raw, spec) if selected['study'] == core.FULL_STUDY
+                else core.inspect_quote(raw, spec))
             row.update(status='response-inspected', finding=finding)
             if spec['kind'] == 'capability' and finding.get('max_limit') is not None:
                 require(finding['max_limit'] >= 12000, 'BULK_DECLARED_LIMIT_STOPS_LARGER_REQUESTS')
@@ -186,7 +193,7 @@ def execute(stage, event, env, out, *, api=None, client_factory=RelayHTTP,
                     row[key] = value
             failed = True
         save()
-    require(client.requests <= core.MAX_CALLS, 'BULK_SOURCE_BUDGET')
+    require(client.requests <= len(selected['plan']), 'BULK_SOURCE_BUDGET')
     # A request-started receipt is intentionally not a claim that a response
     # arrived. Keep actual transport count separately for interrupted admission.
     report['transport_requests'] = client.requests

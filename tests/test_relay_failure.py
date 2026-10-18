@@ -1,5 +1,6 @@
 """Safe failure facts and finite metadata recovery. All traffic is synthetic."""
-from datetime import datetime, timezone
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from email.message import Message
 import io
 import json
@@ -13,10 +14,12 @@ from urllib.parse import urlencode
 import pytest
 
 from decision_kernel.domain.records import RecordError
+from decision_kernel.application.relay_capture_checkpoint import new_retry_state, validate_retry_state
 from decision_kernel.infrastructure.relay_failure import (
     ERROR_BYTES, http_failure, metadata_retry_delay, retry_after, transport_failure,
 )
 from decision_kernel.infrastructure.relay_http import CAPABILITIES, ROOT, RelayHTTP
+from decision_kernel.infrastructure.relay_retry import RetryingRelay
 from decision_kernel.interfaces.relay_capabilities_cli import capture
 
 KEY = "synthetic-secret-123"
@@ -43,6 +46,16 @@ class Sequence:
         if isinstance(reply, BaseException):
             raise reply
         return reply
+
+
+class UnreadableReply(Reply):
+    def __init__(self, exc, headers):
+        super().__init__()
+        self.exc = exc
+        self.headers.update(headers)
+
+    def read(self, size):
+        raise self.exc
 
 
 def error(status=429, code="rate_limited", headers=None, raw=None):
@@ -218,6 +231,117 @@ def test_success_transport_still_has_exact_original_four_fields():
     assert client.request("income", params)["code"] == 0
     assert set(client.last_response_meta) == {"http_status","x_request_id","x_cache","wire_sha256"}
     assert client.last_error_meta is None
+
+
+@pytest.mark.parametrize("exc,category", [
+    (TimeoutError("private body"), "timeout"),
+    (IncompleteRead(b"private partial body"), "incomplete-read"),
+    (ConnectionResetError("private body"), "connection"),
+])
+def test_http200_body_failure_retains_observed_headers_without_a_success(exc, category):
+    reply = UnreadableReply(exc, {"Retry-After": "45", "X-Request-ID": "request-body",
+        "X-Cache": "MISS", "X-RateLimit-Remaining": "7", "X-RateLimit-IP-Remaining": "0",
+        "Set-Cookie": "private cookie"})
+    client = RelayHTTP(opener=Sequence(reply), credential=KEY)
+    with pytest.raises(RecordError, match="^RELAY_HTTP_UNAVAILABLE$"):
+        client.capabilities()
+    failure = client.last_error_meta
+    assert failure["http_status"] == 200 and failure["classification"] == category
+    assert failure["retry_after_seconds"] == 45 and failure["error_body_state"] == "unreadable"
+    assert failure["x_request_id"] == "request-body" and failure["x_cache"] == "MISS"
+    assert datetime.fromisoformat(failure["received_at"]).utcoffset() is not None
+    assert client.last_header_diagnostics["key_remaining"] == {"state": "valid", "remaining": 7}
+    assert client.last_header_diagnostics["ip_remaining"] == {"state": "valid", "remaining": 0}
+    assert client.last_response_meta is client.last_response_bytes is None and reply.closed
+    assert "private" not in json.dumps(failure) and KEY not in json.dumps(failure)
+
+
+def test_body_failure_headers_do_not_leak_into_the_next_connection_failure():
+    first = UnreadableReply(TimeoutError("private"), {"Retry-After": "45", "X-Request-ID": KEY})
+    client = RelayHTTP(opener=Sequence(first, TimeoutError("private connection")), credential=KEY)
+    with pytest.raises(RecordError):
+        client.capabilities()
+    assert client.last_error_meta["http_status"] == 200 and client.last_error_meta["x_request_id"] is None
+    with pytest.raises(RecordError):
+        client.capabilities()
+    assert client.last_error_meta == {"http_status": None, "classification": "timeout",
+                                    "retry_after_state": "missing", "retry_after_seconds": None}
+    assert client.last_header_diagnostics is None and client.requests == 2
+
+
+@pytest.mark.parametrize("header,reason", [("181", "wait-budget"),
+    ("invalid", "retry-after-unusable"), (KEY, "retry-after-unusable")])
+def test_body_failure_does_not_replace_an_unusable_or_long_wait_with_thirty_seconds(header, reason):
+    client = RelayHTTP(opener=Sequence(UnreadableReply(TimeoutError("private"),
+        {"Retry-After": header})), credential=KEY)
+    waits, checkpoints = [], []
+    session = RetryingRelay(client, sleep=waits.append, clock=lambda: NOW.isoformat())
+    with pytest.raises(RecordError, match="^RELAY_HTTP_UNAVAILABLE$"):
+        session.run(client.capabilities, continuation=new_retry_state(),
+                    checkpoint=lambda value: checkpoints.append(deepcopy(value)))
+    saved = validate_retry_state(checkpoints[-1])
+    assert saved["phase"] == "failed" and saved["decision"]["reason"] == reason
+    assert saved["attempts"][0]["failure"]["http_status"] == 200
+    assert saved["wait_budget_seconds"] == 0 and waits == [] and client.requests == 1
+    assert KEY not in json.dumps(saved)
+
+
+def test_body_failure_wait_and_header_facts_resume_through_the_original_checkpoint():
+    clock, waits, checkpoints = [NOW], [], []
+    def sleep(seconds):
+        waits.append(seconds)
+        clock[0] += timedelta(seconds=seconds)
+    client = RelayHTTP(opener=Sequence(UnreadableReply(TimeoutError("private"),
+        {"Retry-After": "45"}), Reply()), credential=KEY)
+    session = RetryingRelay(client, sleep=sleep, monotonic=lambda: (clock[0] - NOW).total_seconds(),
+        clock=lambda: clock[0].isoformat(), deadline=40)
+    with pytest.raises(RecordError, match="^RELAY_HTTP_UNAVAILABLE$"):
+        session.run(client.capabilities, continuation=new_retry_state(),
+                    checkpoint=lambda value: checkpoints.append(deepcopy(value)))
+    original = deepcopy(validate_retry_state(checkpoints[-1]))
+    assert original["phase"] == "paused" and original["wait_budget_seconds"] == 45
+    assert original["attempts"][0]["failure"]["http_status"] == 200
+    assert waits == [] and client.requests == 1
+    clock[0] += timedelta(seconds=10)
+    session = RetryingRelay(client, sleep=sleep, monotonic=lambda: (clock[0] - NOW).total_seconds(),
+        clock=lambda: clock[0].isoformat(), deadline=600)
+    assert session.run(client.capabilities, continuation=original,
+        checkpoint=lambda value: checkpoints.append(deepcopy(value)))["apis"]["income"]["enabled"]
+    restored = validate_retry_state(checkpoints[-1])
+    assert restored["phase"] == "response" and restored["wait_budget_seconds"] == 45
+    assert [a["attempt"] for a in restored["attempts"]] == [1, 2] and waits == [35]
+    assert restored["attempts"][0]["completed_wait_seconds"] == 35 and client.requests == 2
+    assert original["attempts"][0]["completed_wait_seconds"] == 0
+
+
+def test_four_body_failures_still_exhaust_the_original_page_and_cannot_resume():
+    client = RelayHTTP(opener=Sequence(*(UnreadableReply(TimeoutError("private"), {})
+        for _ in range(4))), credential=KEY)
+    waits, checkpoints = [], []
+    session = RetryingRelay(client, sleep=waits.append, clock=lambda: NOW.isoformat())
+    with pytest.raises(RecordError, match="^RELAY_HTTP_UNAVAILABLE$"):
+        session.run(client.capabilities, continuation=new_retry_state(),
+                    checkpoint=lambda value: checkpoints.append(deepcopy(value)))
+    saved = validate_retry_state(checkpoints[-1])
+    assert saved["phase"] == "failed" and saved["decision"]["reason"] == "attempt-limit"
+    assert waits == [30, 30, 30] and saved["wait_budget_seconds"] == 90
+    with pytest.raises(RecordError, match="^RELAY_CHECKPOINT_NOT_RESUMABLE$"):
+        session.run(client.capabilities, continuation=saved, checkpoint=lambda _: None)
+    assert client.requests == 4
+
+
+@pytest.mark.parametrize("raw,code", [(b"not-json", "RELAY_JSON_INVALID"),
+    (b'{"key":"synthetic-secret-123"}', "RELAY_SECRET_REFLECTED")])
+def test_observed_wait_header_does_not_turn_content_rejection_into_a_transport_retry(raw, code):
+    reply = Reply(raw)
+    reply.headers["Retry-After"] = "45"
+    client = RelayHTTP(opener=Sequence(reply), credential=KEY)
+    waits = []
+    session = RetryingRelay(client, sleep=waits.append, clock=lambda: NOW.isoformat())
+    with pytest.raises(RecordError, match="^" + code + "$"):
+        session.run(client.capabilities)
+    assert client.requests == 1 and waits == [] and client.last_error_meta is None
+    assert session.last_retry_decision["reason"] == "not-retryable"
 
 
 def test_workflow_retries_opt_in_and_secret_only_in_capture_step():

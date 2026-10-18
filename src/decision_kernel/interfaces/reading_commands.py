@@ -2,6 +2,8 @@
 from pathlib import Path
 
 from decision_kernel.application.reading_room import ReadingRoom, plan_input
+from decision_kernel.application.versioned_store import VersionedStore
+from decision_kernel.infrastructure.github_reading import reading_scope
 from decision_kernel.domain.records import RecordError, require
 
 OPERATION = "reading-room"
@@ -36,13 +38,16 @@ def preflight(operation, payload, *, public=True):
 def perform(store, payload, *, public=True, market_registry=None):
     preflight(OPERATION, payload, public=public)
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
-    reads = _SourceReads(store.read_source)
-    result = ReadingRoom(store, source_reader=reads, market_registry=market_registry).build(
-        payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True,
-        material_export=not public or payload.get("public_material_custody_confirmed") is True,
-        industry_export=not public or payload.get("public_sources_custody_confirmed") is True,
-        market_export=not public or payload.get("public_sources_custody_confirmed") is True)
-    result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
+    # Exit checks run before returning the model to any HTML/report writer.
+    with reading_scope(store.backend) as backend:
+        store = VersionedStore(backend)
+        reads = _SourceReads(store.read_source)
+        result = ReadingRoom(store, source_reader=reads, market_registry=market_registry).build(
+            payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True,
+            material_export=not public or payload.get("public_material_custody_confirmed") is True,
+            industry_export=not public or payload.get("public_sources_custody_confirmed") is True,
+            market_export=not public or payload.get("public_sources_custody_confirmed") is True)
+        result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result
 
 

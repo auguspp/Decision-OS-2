@@ -418,11 +418,15 @@ def test_workflow_keeps_finite_check_read_only_and_secret_only_at_capture():
     assert "exit 1" in denied["steps"][0]["run"]
     holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
                for step in candidate["steps"] if "FTSHARE_API_KEY" in json.dumps(step)]
-    assert holders == [("ftshare-check", "capture"), ("ftshare-check-continue", "capture")]
+    assert holders == [("ftshare-check", "capture"), ("ftshare-check-continue", "capture"),
+                       ("ftshare-sync", "runtime")]
+    relay_holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
+                     for step in candidate["steps"] if "TUSHARE_PROXY_API_KEY" in json.dumps(step)]
+    assert relay_holders == [("sync", None), ("repair", None), ("ftshare-calendar", "runtime")]
     steps = {step["id"]: step for step in job["steps"] if "id" in step}
     assert steps["capture"]["env"]["FTSHARE_API_KEY"] == "${{ secrets.FTSHARE_API_KEY }}"
     assert "FTSHARE_API_KEY" not in workflow.get("env", {})
-    assert "FTSHARE_API_KEY" not in job.get("env", {})
+    assert all("FTSHARE_API_KEY" not in candidate.get("env", {}) for candidate in workflow["jobs"].values())
     for stage in ("prepare", "capture", "release"):
         assert "decision_kernel.interfaces.ftshare_check_cli " + stage in steps[stage]["run"]
     assert all(not step.get("continue-on-error") for step in job["steps"])

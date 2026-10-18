@@ -28,8 +28,13 @@ def read_market_reference(reference, registry, store, *, offset=0, limit=50,
     require(ref.selection == Selection(), "MARKET_CUSTODY_WHOLE_SOURCE_REQUIRED")
     require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100,
             "PAGE_INVALID")
-    if ref.manifest.path.startswith("source-views/market-collection-"):
-        from decision_kernel.application.market_collection_reading import read_collection_version
+    if ref.manifest.path.startswith(("source-views/market-collection-", "source-views/ftshare-collection-")):
+        if ref.manifest.path.startswith("source-views/ftshare-collection-"):
+            from decision_kernel.application.ftshare_collection_inputs import (
+                read_ftshare_collection_version as collection_reader,
+            )
+        else:
+            from decision_kernel.application.market_collection_reading import read_collection_version as collection_reader
         from decision_kernel.application.versioned_store import VersionedStore
         from decision_kernel.infrastructure.github_store import GitHubStore
         from decision_kernel.infrastructure.market_snapshot import GitMarketReader
@@ -40,8 +45,8 @@ def read_market_reference(reference, registry, store, *, offset=0, limit=50,
             store = VersionedStore(GitMarketReader(replace(store.backend.binding, write_enabled=False),
                                                    store.backend.api))
         clock = datetime.now(timezone.utc).isoformat() if read_as_of is None else read_as_of
-        return read_collection_version(ref, registry, store, offset=offset, limit=limit,
-                                       entity_id=entity_id, read_as_of=clock)
+        return collection_reader(ref, registry, store, offset=offset, limit=limit,
+                                 entity_id=entity_id, read_as_of=clock)
     if ashare_only:
         # Reject other market families before restoring any of their queries.
         _, root = _read_manifest(store, ref, READING_SCHEMA)
@@ -84,7 +89,8 @@ def open_market(store, value, *, registry=None, read_as_of=None):
         return {**result, "status": "not-included", "error": "ROOM_MARKET_DISPLAY_BOUND"}
     view = restored["view"]
     if view is not None:
-        require(view.get("schema") in ("relay-security-stock-view-v1", "relay-ashare-collection-view-v1"),
+        require(view.get("schema") in ("relay-security-stock-view-v1", "relay-ashare-collection-view-v1",
+                                      "ashare-collection-view-v2"),
                 "ROOM_MARKET_VIEW_INVALID")
         require(view["raw"]["page"] == view["qfq"]["page"], "ROOM_MARKET_PAGE_MISMATCH")
         offset = view["raw"]["page"]["next_offset"]
@@ -95,7 +101,7 @@ def open_market(store, value, *, registry=None, read_as_of=None):
     result["partial"] = restored["status"] != "restored" or view is None or any(
         view[k]["incomplete_count"] is None or view[k]["incomplete_count"] > 0
         and view[k].get("status") != "no-market-sessions" for k in ("raw", "qfq"))
-    if view is not None and view.get("schema") == "relay-ashare-collection-view-v1":
+    if view is not None and view.get("schema") in ("relay-ashare-collection-view-v1", "ashare-collection-view-v2"):
         result["partial"] = result["partial"] or restored["serving"] != "current-complete" or (
             any(view[k].get("status") != "no-market-sessions" for k in ("raw", "qfq"))
             and view["freshness"]["status"] != "current-through-completed-day")

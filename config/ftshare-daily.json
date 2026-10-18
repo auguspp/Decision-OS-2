@@ -1,0 +1,15 @@
+{
+  "schema": "ftshare-daily-runtime-v1",
+  "collection_id": "ftshare-cn-eod",
+  "generation": "g20261016",
+  "legacy_reference": {
+    "manifest": {
+      "commit": "3fcaa33e745afa0084ff20136538a06ce8c38877",
+      "path": "source-views/market-collection-7c761159fc6a90a08b8f8634-6ed2725eea4de422add3acce/5176cd63eacc36b864e0e3d1dfd85f53a8d9b54984e224afcbf57ebeaac4bff5/manifest.json",
+      "repository": "auguspp/Decision-OS-2",
+      "sha256": "a1f9884e92df80d834adc41eca7c65de97ecdde443eaa5b419f00792ccff3acc"
+    },
+    "selection": {"kind": "all", "start": null, "end": null, "columns": []}
+  },
+  "qualification": null
+}

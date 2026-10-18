@@ -35,16 +35,20 @@ function renderMarket(){
   pane.append(el('p',`集合读取：${term(restored.serving)}。最新尝试：${term(restored.latest_attempt?.status)}；本页数据请求截止 ${val(restored.selected_requested_end)}，最新尝试请求截止 ${val(restored.latest_requested_end)}。`,'banner'),
    el('p',`当前时效：${term(v.freshness?.status)}；读取时间 ${val(v.freshness?.read_as_of)}。已存窗口可读、采集尝试完成与当前时效分别判断。`),
    details('当前尝试、实际读取版本与日历时效',{latest_attempt:restored.latest_attempt,selected_reference:restored.selected_reference,latest_reference:restored.reference,selected_requested_end:restored.selected_requested_end,latest_requested_end:restored.latest_requested_end,freshness:v.freshness,by_exchange:v.by_exchange}));
+  if(restored.latest_attempt?.source_hold) pane.append(el('p',`后续采集已暂停：${val(restored.latest_attempt.source_hold.reason_code)}。已保存的数据仍按其原始覆盖范围读取，暂停原因需要复核后处理。`,'banner'));
  }
+ const providerForward=v.normalization==='provider-supplied-forward-close-single-request-v1';
+ const qfqLabel=providerForward?'前复权（FTShare 供应商整段价格口径）':'复权（qfq，原锚点口径）';
+ const adjustmentNote=providerForward?'前复权直接使用 FTShare 同一整段查询的价格；未提供复权因子，也未建立截止日因子锚。不同调整请求的价格不拼接。':'复权沿用截止日因子锚；窗口可读不等于全历史因子完整。';
  const cutoff=v.as_of_by_exchange?Object.entries(v.as_of_by_exchange).map(([venue,day])=>`${venue} ${val(day)}`).join(' / '):val(v.raw.as_of);
  const scope=v.scope_count===null||v.scope_count===undefined?'完整声明范围未取得':`声明范围 ${v.scope_count} 个证券`;
  pane.append(el('p',`市场 ${v.raw.market} · 实际截止 ${cutoff} · 币种 ${v.raw.currency} · ${scope}。证券代码不是永久公司身份。`),
-  el('p','原价与复权分别判断。价格比率不是总回报；复权窗口可读不等于全历史因子完整，停复牌解释不填补缺价。没有基准不显示相对收益。'),
+  el('p','原价与复权分别判断。价格比率不是总回报；缺价不填补，没有基准不显示相对收益。'),el('p',adjustmentNote),
   details('完整主表分母、资格、隔离与原解释',{master:v.master,known_scope_count:v.known_scope_count,as_of_by_exchange:v.as_of_by_exchange,qualification_counts:v.qualification_counts,normalization:v.normalization,qualification_limits:v.qualification_limits}));
  pane.append(el('h2','完整逐日窗口'),el('p','这一用途需要窗口内每个交易日的合格价格；端点比较另列，不填补逐日缺口。'));
  const columns=el('div',undefined,'market-columns');
  for(const kind of ['raw','qfq']){
-  const s=v[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价（raw）':'复权（qfq，原锚点口径）'),
+  const s=v[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价（raw）':qfqLabel),
    el('p',`${term(s.status)}；本页 ${s.entries.length} / 查询范围 ${s.page.selected_count} / 完整声明 ${val(s.scope_count)}。未读页未计作本页覆盖。`),
    details('完整范围与窗口计数（分页不改分母）',{page:s.page,coverage:s.coverage,scope_count:s.scope_count,received_count:s.received_count,observed_count:s.observed_count,missing_count:s.missing_count,incomplete_count:s.incomplete_count,horizon_counts:s.horizon_counts,calendar_version:s.calendar_version,source_version:s.source_version,universe_version:s.universe_version,discovery_claim:s.discovery_claim}));
   if(!s.entries.length)box.append(el('p','本次查询/页没有返回证券，不代表原声明范围为空或没有机会。'));
@@ -53,16 +57,16 @@ function renderMarket(){
    const table=el('table',undefined,'market-table'),head=el('tr');
    for(const title of ['交易日窗','基准日 → 截止日','原状态','变动 %'])head.append(el('th',title));table.append(head);
    for(const w of e.horizons){const tr=el('tr');for(const x of [w.sessions,`${val(w.baseline_date)} → ${val(w.end_date)}`,term(w.status),val(w.change_pct)])tr.append(el('td',val(x)));table.append(tr);}
-   row.append(table,details('原证券资格、因子缺口、日历与来源明细',e));box.append(row);
+   row.append(table,details('证券资格、价格缺口、复权口径与来源明细',e));box.append(row);
   }columns.append(box);
  }pane.append(columns);
  const endpoints=v.endpoint_comparisons;
  if(endpoints){
   const endpointTerm=x=>({'observed':'端点比较可用','partial-comparisons':'部分端点比较可用','no-usable-comparison':'暂无可用端点比较','comparison-gaps':'部分端点比较缺失','missing-endpoint-observations':'所需端点价格缺失','invalid-endpoint-adjustment':'所需端点复权未通过','insufficient-calendar-history':'日历长度不足'}[x]||term(x));
-  pane.append(el('h2','端点区间比较'),el('p','按同一交易日历定位 5 / 20 / 60 日前的基准日和实际截止日。只判断这两端；复权沿用截止日因子锚。中间缺日不表示为完整路径，端点可用也不改变集合完成、原窗口或当前时效。'));
+  pane.append(el('h2','端点区间比较'),el('p','按同一交易日历定位 5 / 20 / 60 日前的基准日和实际截止日。只判断这两端；'+adjustmentNote+'中间缺日不表示为完整路径，端点可用也不改变集合完成、原窗口或当前时效。'));
   const comparisons=el('div',undefined,'market-columns');
   for(const kind of ['raw','qfq']){
-   const s=endpoints[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价端点（raw）':'复权端点（qfq，原锚点口径）'),
+   const s=endpoints[kind],box=el('section');box.append(el('h3',kind==='raw'?'原价端点（raw）':'端点 · '+qfqLabel),
     el('p',`${endpointTerm(s.status)}；本页 ${s.entries.length} / 查询范围 ${s.page.selected_count} / 完整声明 ${val(s.scope_count)}。`),
     details('独立端点计数（分页不改分母）',{comparison_basis:endpoints.comparison_basis,daily_path_certified:endpoints.daily_path_certified,page:s.page,scope_count:s.scope_count,known_scope_count:s.known_scope_count,observed_count:s.observed_count,missing_count:s.missing_count,incomplete_count:s.incomplete_count,horizon_counts:s.horizon_counts,source_version:s.source_version}));
    if(!s.entries.length)box.append(el('p','本次查询/页没有返回证券，不代表原声明范围为空。'));

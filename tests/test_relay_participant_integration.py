@@ -83,7 +83,7 @@ def write_capture(path):
 def test_plan_is_three_api_crossproduct_offline_and_no_overwrite(tmp_path,capsys,monkeypatch):
     monkeypatch.delenv('TUSHARE_PROXY_API_KEY',raising=False)
     out=tmp_path/'plan'
-    args=['plan','--codes','000001.SZ','600519.SH','--dates','20261015','20260930','--output',str(out)]
+    args=['plan','--codes','000001.SZ','600000.SH','--dates','20261015','20260930','--output',str(out)]
     assert main(args)==0
     rows=[json.loads(x) for x in out.read_text().splitlines()]
     assert len(rows)==12 and all('date' in x and 'period' not in x for x in rows)
@@ -155,8 +155,14 @@ def test_runtime_inputs_match_host_and_no_extra_secret_write_or_schedule():
     import re
     inputs=re.findall(r'^      ([a-z_]+):$',text,re.M)
     assert len(inputs)==12 and set(inputs)==runtime.INPUTS
-    assert text.count('secrets.TUSHARE_PROXY_API_KEY')==2
     assert 'contents: write' not in text and 'schedule:' not in text
+    # The original participant/financial/PMI job retains its exact secret scope.
+    # A separate fixed private diagnostic must not add a third consumer here.
+    text, bulk = text.split('\n  bulk-check:', 1)
+    assert bulk.count('secrets.TUSHARE_PROXY_API_KEY') == 1
+    assert bulk.count('DECISION_OS_STORE_TOKEN') == 2
+    assert "inputs.family == 'market-bulk-check'" in bulk
+    assert text.count('secrets.TUSHARE_PROXY_API_KEY')==2
     capture = text.split('      - name: Explicit source capture with the repository secret')[1].split('      - name:')[0]
     assert "if: inputs.operation == 'capture'" in capture
     assert 'DECISION_OS_STORE_TOKEN' not in capture

@@ -92,6 +92,12 @@ def test_workflow_has_scoped_secret_consumers_no_write_or_automatic_trigger():
     assert "pull_request:" not in text and "push:" not in text and "schedule:" not in text
     assert "contents: read" in text and "contents: write" not in text
     assert "persist-credentials: false" in text and "cancel-in-progress: false" in text
+    # Keep the original source job's two consumers unchanged. The finite bulk
+    # job is isolated and has its own native/one-shot guards and dedicated tests.
+    text, bulk = text.split("\n  bulk-check:", 1)
+    assert bulk.count("secrets.TUSHARE_PROXY_API_KEY") == 1
+    assert bulk.count("DECISION_OS_STORE_TOKEN") == 2
+    assert "inputs.family == 'market-bulk-check'" in bulk
     assert text.count("secrets.TUSHARE_PROXY_API_KEY") == 2
     assert "if: inputs.operation == 'capture'\n        env:\n          TUSHARE_PROXY_API_KEY:" in text
     check_step = text.split("      - name: Check retained PMI reference without exporting supplier rows")[1].split("      - name:")[0]

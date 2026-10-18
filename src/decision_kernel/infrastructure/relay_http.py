@@ -25,6 +25,14 @@ FINANCIAL_APIS = frozenset({"income", "balancesheet", "cashflow", "fina_indicato
 PARTICIPANT_APIS = frozenset({"report_rc", "research_report", "stk_surv"})
 READ_APIS = FINANCIAL_APIS | PARTICIPANT_APIS | {"disclosure_date"}
 MAX_BODY = 4 * 1024 * 1024  # Response safety, not a purchased-use allowance.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
+MAX_REQUEST_TIMEOUT_SECONDS = 90
+
+
+def validate_request_timeout_seconds(value):
+    require(type(value) is int and DEFAULT_REQUEST_TIMEOUT_SECONDS <= value <= MAX_REQUEST_TIMEOUT_SECONDS,
+            "RELAY_REQUEST_TIMEOUT_INVALID")
+    return value
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -35,7 +43,9 @@ class _NoRedirect(HTTPRedirectHandler):
 class RelayHTTP:
     """Only reviewed read APIs. Each call is one attempt; shared by batch and legacy API."""
 
-    def __init__(self, *, opener=None, credential=None):
+    def __init__(self, *, opener=None, credential=None,
+                 request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS):
+        self._request_timeout_seconds = validate_request_timeout_seconds(request_timeout_seconds)
         self._opener = opener if opener is not None else build_opener(ProxyHandler({}), _NoRedirect())
         self._credential = credential if credential is not None else os.environ.get(SECRET_ENV, "")
         self.requests = 0
@@ -44,6 +54,11 @@ class RelayHTTP:
         self.last_error_meta = None
         self.last_retry_after = ("missing", None)
         self.last_header_diagnostics = None
+
+    @property
+    def request_timeout_seconds(self):
+        """Socket operation timeout, not a total HTTP wall-clock deadline."""
+        return self._request_timeout_seconds
 
     def validate_credential(self):
         key = self._credential
@@ -101,7 +116,7 @@ class RelayHTTP:
                           "Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": agent})
         observed_response = None
         try:
-            with self._opener.open(request, timeout=30) as resp:
+            with self._opener.open(request, timeout=self.request_timeout_seconds) as resp:
                 require(resp.status == 200 and resp.geturl() == exact, "RELAY_HTTP_RESPONSE_INVALID")
                 # Headers are already observed even if the body later stalls.
                 # Preserve their original wait instruction without inventing a

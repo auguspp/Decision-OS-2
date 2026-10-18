@@ -8,6 +8,9 @@ import math
 import time
 
 from decision_kernel.domain.records import RecordError, require
+from decision_kernel.infrastructure.relay_http import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS, validate_request_timeout_seconds,
+)
 
 RETRYABLE_CLASSES = frozenset({'temporary-upstream', 'temporary-gateway', 'timeout',
                               'connection', 'dns-temporary', 'incomplete-read', 'rate-limit'})
@@ -45,6 +48,8 @@ class RetryingRelay:
     def __init__(self, client, policy=None, *, sleep=time.sleep, monotonic=time.monotonic,
                  clock=None, deadline=None):
         self.client = client
+        self._request_timeout_seconds = validate_request_timeout_seconds(
+            getattr(client, 'request_timeout_seconds', DEFAULT_REQUEST_TIMEOUT_SECONDS))
         self.policy = RetryPolicy() if policy is None else policy
         require(isinstance(self.policy, RetryPolicy), 'RELAY_RETRY_POLICY_INVALID')
         self.sleep, self.monotonic = sleep, monotonic
@@ -53,6 +58,10 @@ class RetryingRelay:
         self.last_attempts = []
         self.pending_retry = None
         self.last_retry_decision = None
+
+    @property
+    def request_timeout_seconds(self):
+        return self._request_timeout_seconds
 
     def __getattr__(self, key):
         return getattr(self.client, key)
@@ -68,7 +77,7 @@ class RetryingRelay:
         self.last_retry_decision = None
         waited = 0
         for attempt in range(1, self.policy.max_attempts + 1):
-            if self.deadline is not None and self.monotonic() + 30 > self.deadline:
+            if self.deadline is not None and self.monotonic() + self.request_timeout_seconds > self.deadline:
                 self.last_retry_decision = {'reason': 'run-deadline', 'required_wait_seconds': None}
                 self.pending_retry = {'reason': 'run-deadline', 'retry_after_seconds': None}
                 raise RecordError('RELAY_RUN_DEADLINE')
@@ -133,7 +142,7 @@ class RetryingRelay:
             reason = 'attempt-limit'
         elif waited + delay > self.policy.max_wait_seconds:
             reason = 'wait-budget'
-        elif self.deadline is not None and not self.monotonic() + delay + 30 <= self.deadline:
+        elif self.deadline is not None and not self.monotonic() + delay + self.request_timeout_seconds <= self.deadline:
             reason = 'run-deadline'
         else:
             reason = 'retry'
@@ -172,7 +181,7 @@ class RetryingRelay:
                 self.pending_retry = {'reason': 'work-unit-complete', 'retry_after_seconds': pending}
                 emit('paused')
                 raise RecordError('RELAY_' + reason)
-            if self.deadline is not None and self.monotonic() + wait + 30 > self.deadline:
+            if self.deadline is not None and self.monotonic() + wait + self.request_timeout_seconds > self.deadline:
                 self.last_retry_decision = {'reason': 'run-deadline', 'required_wait_seconds': pending}
                 self.pending_retry = {'reason': 'run-deadline', 'retry_after_seconds': pending}
                 emit('paused')
@@ -197,7 +206,7 @@ class RetryingRelay:
             started = self.clock()
             # Persistence of this reservation MUST finish before the HTTP call.
             emit('in-flight', attempt)
-            if self.deadline is not None and self.monotonic() + 30 > self.deadline:
+            if self.deadline is not None and self.monotonic() + self.request_timeout_seconds > self.deadline:
                 # The writer can consume the remaining admission window. Do not
                 # issue a late HTTP request or erase its durable reservation.
                 raise CheckpointStateError('RELAY_CHECKPOINT_ADMISSION_EXPIRED')

@@ -16,6 +16,7 @@ from decision_kernel.application import reading_market as consumer
 from decision_kernel.application.market_collection import _slots, plan_collection, unit_request
 from decision_kernel.application.market_collection_custody import retain_market_collection
 from decision_kernel.application.market_collection_reading import read_collection_version
+from decision_kernel.application.market_collection_runtime import health_receipt
 from decision_kernel.application.market_custody import retain_market_query
 from decision_kernel.application.market_relay_inputs import qualified_trade_calendar
 from decision_kernel.application.reading_room import ReadingRoom
@@ -48,11 +49,11 @@ def room(store, reference, **page):
         "market": {"reference": reference, **page}})
 
 
-def seed_native_day(store, fresh):
+def seed_native_day(store, fresh, *, start=END, missing_slots=()):
     """Retain original query envelopes once; sync/control is exercised elsewhere."""
     p = plan_collection(collection_id="synthetic-native-consumer", generation="g1",
-        start=END, end=END, calendar_end=END, registry=REGISTRY)
-    opener = CollectionOpener(start=END, end=END)
+        start=start, end=END, calendar_end=END, registry=REGISTRY)
+    opener = CollectionOpener(start=start, end=END)
     session = RetryingRelay(RelayHTTP(opener=opener, credential="synthetic-key-only"),
                             clock=lambda: NOW.isoformat())
     units, dates = {}, set()
@@ -67,16 +68,19 @@ def seed_native_day(store, fresh):
                        "status": "complete", "reason_code": None}
         if slot.startswith("calendar:"):
             dates.update(d.replace("-", "") for d in qualified_trade_calendar(result,
-                registry=REGISTRY, exchange=slot[9:], start=END, end=END))
+                registry=REGISTRY, exchange=slot[9:], start=start, end=END))
 
     for slot in _slots(p):
         retain(slot)
     p["sessions"] = sorted(dates)
     for slot in _slots(p):
         if slot not in units:
-            retain(slot)
+            if slot in missing_slots:
+                units[slot] = {"query": None, "checkpoint": None, "status": "pending", "reason_code": None}
+            else:
+                retain(slot)
     value = {"plan": p, "units": units, "last_qualified": None,
-        "attempt": {"id": "synthetic-native-retention", "status": "complete", "reason_code": None,
+        "attempt": {"id": "synthetic-native-retention", "status": "partial" if missing_slots else "complete", "reason_code": None,
                     "started_at": NOW.isoformat(), "updated_at": NOW.isoformat(), "source_requests": len(opener.calls)}}
     return retain_market_collection(value, REGISTRY, store, fresh_reader=fresh,
                                     custody_authorized=True)["reference"]
@@ -152,6 +156,7 @@ def test_room_blocked_latest_attempt_keeps_previous_values_and_current_staleness
     previous = read_collection_version(old["reference"], REGISTRY, fresh(), limit=1)
     assert restored["view"]["raw"] == previous["view"]["raw"]
     assert restored["view"]["qfq"] == previous["view"]["qfq"]
+    assert restored["view"]["endpoint_comparisons"] == previous["view"]["endpoint_comparisons"]
     page = render_page(result)
     assert '"serving":"previous-complete"' in page and '"status":"blocked"' in page
     assert '"status":"stale"' in page
@@ -222,6 +227,58 @@ def test_existing_custody_cli_reopens_native_collection_without_capture_files_or
     assert a["view"]["raw"]["source_version"] == b["view"]["raw"]["source_version"]
     assert a["view"]["raw"]["entries"][0]["entity_id"] != b["view"]["raw"]["entries"][0]["entity_id"]
     assert "synthetic-key-only" not in first.stdout + first.stderr + second.stdout + second.stderr
+    assert store.backend.head() == head
+
+
+def test_partial_native_collection_cli_room_and_health_keep_endpoint_purpose_separate(tmp_path, monkeypatch):
+    path = tmp_path / "endpoint-records.git"
+    store = VersionedStore(GitStore.init_synthetic(path))
+    fresh = lambda: VersionedStore(GitStore(path))
+    reference = seed_native_day(store, fresh, start="20261009", missing_slots=("20261013:daily", "20261013:adj_factor"))
+    selected = tmp_path / "reference.json"
+    selected.write_bytes(encoded(reference))
+    head = store.backend.head()
+    env = {**os.environ, "PYTHONPATH": str(ROOT_DIR / "src")}
+    for name in ("TUSHARE_PROXY_API_KEY", "DECISION_OS_STORE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        env.pop(name, None)
+    command = [sys.executable, "-m", "decision_kernel.interfaces.market_custody_cli", "read",
+        "--path", str(path), "--registry", str(REGISTRY_PATH), "--input", str(selected), "--limit", "1"]
+    completed = subprocess.run(command, cwd=tmp_path, env=env, check=False, text=True,
+                               capture_output=True, timeout=30)
+    restored = json.loads(completed.stdout)
+    assert completed.returncode == 2 and restored["status"] == "partial-restoration"
+    assert restored["serving"] == "current-partial" and restored["source_requests"] == 0
+    assert restored["reference"] == restored["selected_reference"] == reference
+    assert restored["unavailable_queries"] == 2 and restored["latest_attempt"]["status"] == "partial"
+    view = restored["view"]
+    for kind in ("raw", "qfq"):
+        assert view[kind]["horizon_counts"][0]["observed_count"] == 0
+        surface = view["endpoint_comparisons"][kind]
+        assert surface["horizon_counts"][0]["observed_count"] == 4 and surface["scope_count"] == 4
+        assert [w["observed_count"] for w in surface["horizon_counts"]] == [4, 0, 0]
+        window = surface["entries"][0]["horizons"][0]
+        assert window["status"] == "observed" and window["baseline_date"] == "2026-10-09"
+        assert window["end_date"] == "2026-10-16" and window["change_pct"] == "0"
+    # Pin the room clock to the actual CLI read so the full result is comparable.
+    from datetime import datetime
+    read_clock = datetime.fromisoformat(view["freshness"]["read_as_of"])
+    monkeypatch.setattr(consumer, "datetime", SimpleNamespace(now=lambda zone: read_clock))
+    result = room(fresh(), reference, limit=1)
+    part = result["market"]
+    assert encoded(part["view"]) == encoded(restored)
+    assert part["status"] == "readable" and part["partial"] and result["status"] == "partial"
+    next_part = room(fresh(), part["next_plan"]["reference"], offset=1, limit=1)["market"]
+    assert next_part["view"]["view"]["view_version"] == view["view_version"]
+    assert next_part["view"]["view"]["endpoint_comparisons"]["raw"]["entries"][0]["entity_id"] != view["endpoint_comparisons"]["raw"]["entries"][0]["entity_id"]
+    receipt = health_receipt(restored)
+    assert receipt["raw"]["horizon_counts"][0]["observed_count"] == 0
+    assert receipt["endpoint_comparisons"]["raw"]["horizon_counts"][0]["observed_count"] == 4
+    assert receipt["source_requests"] == 0 and not receipt["supplier_rows_in_receipt"]
+    safe = encoded(receipt["endpoint_comparisons"]).decode()
+    assert not any(value in safe for value in ("entries", "source_version", "SourceRef", "baseline_value", "600000.SH"))
+    html = render_page(result)
+    assert "完整逐日窗口" in html and "端点区间比较" in html and '"daily_path_certified":false' in html
+    assert "innerHTML" not in html and "synthetic-key-only" not in completed.stdout + completed.stderr
     assert store.backend.head() == head
 
 

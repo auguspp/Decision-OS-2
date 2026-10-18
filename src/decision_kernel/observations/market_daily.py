@@ -181,3 +181,43 @@ def observe_daily(*, entity_id: str, series: Sequence[Mapping[str, object]], as_
             "calendar_version": calendar_version,
             "benchmark": None if benchmark is None else {k: v for k, v in benchmark.items() if k != "series"},
             "horizons": entries}
+
+
+def observe_endpoints(*, entity_id: str, series: Sequence[Mapping[str, object]], as_of: str,
+                      market_sessions: Sequence[str], calendar_version: str, adjustment: str,
+                      source_version: str, market: str, currency: str,
+                      horizons: tuple[int, ...] = (5, 20, 60)) -> dict:
+    """Compare calendar-selected endpoints without certifying a daily path.
+
+    Every supplied row receives the same validation as a daily observation. Only
+    the two required dates determine comparison availability; missing intermediate
+    observations are neither filled nor represented as a complete daily window.
+    """
+    require_text(entity_id, "ENTITY_REQUIRED")
+    days = daily_context(as_of=as_of, market_sessions=market_sessions,
+                         calendar_version=calendar_version, adjustment=adjustment,
+                         source_version=source_version, market=market, currency=currency,
+                         horizons=horizons)
+    prices = _normalized(series, days)
+    entries = []
+    for horizon in horizons:
+        entry = {"sessions": horizon, "end_date": as_of}
+        if len(days) <= horizon:
+            entry.update(status="insufficient-calendar-history", available_sessions=len(days) - 1)
+        else:
+            baseline, end = days[-horizon - 1], days[-1]
+            required = [baseline.isoformat(), end.isoformat()]
+            missing = [day.isoformat() for day in (baseline, end) if day not in prices]
+            entry.update(baseline_date=required[0], required_dates=required)
+            if missing:
+                entry.update(status="missing-endpoint-observations", missing_dates=missing)
+            else:
+                entry.update(status="observed", baseline_value=str(prices[baseline]),
+                    end_value=str(prices[end]), change_pct=str(_change(prices[end], prices[baseline])))
+        entries.append(entry)
+    complete = sum(entry["status"] == "observed" for entry in entries)
+    return {"entity_id": entity_id, "as_of": as_of,
+        "status": "observed" if complete == len(entries) else "partial-comparisons" if complete else "no-usable-comparison",
+        "comparison_basis": "calendar-endpoints-v1", "market": market, "currency": currency,
+        "adjustment": adjustment, "return_semantics": "price-ratio-not-total-return",
+        "source_version": source_version, "calendar_version": calendar_version, "horizons": entries}

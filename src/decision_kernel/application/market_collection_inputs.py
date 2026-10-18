@@ -25,11 +25,12 @@ from decision_kernel.application.market_suspension_inputs import (
 )
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.domain.records import encoded, digest
-from decision_kernel.observations.market_daily import MarketInputError, observe_daily
+from decision_kernel.observations.market_daily import MarketInputError, observe_daily, observe_endpoints
 
 
 COLLECTION_READING_SCHEMA = "relay-ashare-collection-reading-v1"
 COLLECTION_VIEW_SCHEMA = "relay-ashare-collection-view-v1"
+ENDPOINT_COMPARISONS_SCHEMA = "relay-ashare-endpoint-comparisons-v1"
 COLLECTION_REQUIRED = {"calendar_results", "master_results", "partitions", "start", "end", "calendar_end"}
 PARTITION_APIS = ("daily", "adj_factor", "suspend_d")
 HORIZONS = (5, 20, 60)
@@ -153,6 +154,63 @@ def _history(code, reference, sessions, queries, values, bad, suspension):
     for kind, api in (("price", "daily"), ("factor", "adj_factor")):
         qualification[kind]["quarantined_reasons"] = {d: bad[api][code][d] for d in dates[api]["quarantined"]}
     return prices, factors, qualification, explanation
+
+
+def _endpoint_observations(code, venue, cutoff, days, reference, prices, factors,
+                           queries, values, bad, versions):
+    context = {"entity_id": code, "as_of": cutoff, "market_sessions": days,
+        "calendar_version": versions["calendar"], "market": venue, "currency": "CNY",
+        "horizons": HORIZONS}
+    raw = observe_endpoints(**context, series=prices, adjustment="raw", source_version=versions["raw"])
+    price_by_day = {row["trade_date"]: row for row in prices}
+    factor_by_day = {row["trade_date"]: row for row in factors}
+    adjusted_by_day, adjustments = {}, {}
+    required_dates = sorted({day for window in raw["horizons"] for day in window.get("required_dates", [])})
+    inputs = {}
+    for day in required_dates:
+        inputs[day] = {kind: _value(api, code, day, values, bad, queries)[0]
+            if _within_listing(day, reference) else "outside-listing"
+            for kind, api in (("price_state", "daily"), ("factor_state", "adj_factor"))}
+    for window in raw["horizons"]:
+        required = window.get("required_dates")
+        if required is None:
+            continue
+        # Retain the existing end-anchored factor arithmetic, but give it exactly
+        # this comparison's dependencies. An unrelated intermediate or other
+        # horizon's invalid adjusted value cannot reject this pair.
+        try:
+            adjusted, detail = _adjust([price_by_day[d] for d in required if d in price_by_day],
+                [factor_by_day[d] for d in required if d in factor_by_day], required, cutoff)
+        except MarketInputError as exc:
+            adjusted, detail = [], {"status": "rejected", "reason_code": _reason(exc)}
+        adjusted_by_day.update((row["trade_date"], row) for row in adjusted)
+        adjustments[window["sessions"]] = {
+            "normalization": NORMALIZATION, "anchor_date": cutoff,
+            "anchor_factor": factor_by_day.get(cutoff, {}).get("adj_factor"),
+            "baseline_factor": factor_by_day.get(required[0], {}).get("adj_factor"),
+            "missing_factor_dates": [d for d in required if d not in factor_by_day],
+            "status": detail["status"],
+            **({"reason_code": detail["reason_code"]} if "reason_code" in detail else {})}
+    qfq = observe_endpoints(**context, series=[adjusted_by_day[d] for d in sorted(adjusted_by_day)],
+        adjustment="qfq", source_version=versions["qfq"])
+    for window in qfq["horizons"]:
+        adjustment = adjustments.get(window["sessions"])
+        if adjustment is not None:
+            window["adjustment"] = adjustment
+            if adjustment["status"] == "rejected":
+                window["status"] = "invalid-endpoint-adjustment"
+    raw["endpoint_inputs"] = {day: {"price_state": states["price_state"]} for day, states in inputs.items()}
+    qfq["endpoint_inputs"] = inputs
+    return {"raw": raw, "qfq": qfq}
+
+
+def _empty_endpoint_observation(code, venue, cutoff, convention, reason, versions):
+    return {"entity_id": code, "as_of": cutoff, "market": venue, "currency": "CNY",
+        "adjustment": convention, "status": "input-unavailable", "reason_code": reason,
+        "comparison_basis": "calendar-endpoints-v1", "return_semantics": "price-ratio-not-total-return",
+        "source_version": versions[convention], "calendar_version": versions["calendar"],
+        "endpoint_inputs": {},
+        "horizons": [{"sessions": h, "end_date": cutoff, "status": reason} for h in HORIZONS]}
 
 
 def read_ashare_collection(*, calendar_results, master_results, load_partition, registry,
@@ -317,8 +375,17 @@ def read_ashare_collection(*, calendar_results, master_results, load_partition, 
             "missing_count": None, "relative_observed_count": 0, "relative_missing_count": scope} for h in HORIZONS],
         "entries": [], "page": dict(page), "discovery_claim": "not-established-by-supplied-universe"}
         for k in ("raw", "qfq")}
+    endpoint_surfaces = {k: {"kind": "stock", "as_of": common_as_of, "as_of_by_exchange": cutoffs,
+        "requested_end": hi, "market": "SH/SZ", "currency": "CNY", "adjustment": k,
+        "calendar_version": versions["calendar"], "source_version": versions[k], "universe_version": versions["universe"],
+        "coverage": "declared-current-L-snapshots", "scope_count": scope, "known_scope_count": len(references),
+        "observed_count": 0, "missing_count": None, "incomplete_count": None,
+        "horizon_counts": [{"sessions": h, "scope_count": scope, "observed_count": 0,
+            "missing_count": None} for h in HORIZONS], "entries": [], "page": dict(page)} for k in surfaces}
     complete = dict.fromkeys(surfaces, 0)
+    endpoint_complete = dict.fromkeys(endpoint_surfaces, 0)
     entry_hash = hashlib.sha256()
+    endpoint_entry_hash = hashlib.sha256()
     for code in all_codes:
         venue = next(v for v, suffix in EXCHANGES.items() if code.endswith("." + suffix))
         master, days, cutoff = masters[venue], sessions[venue], cutoffs[venue]
@@ -338,6 +405,8 @@ def read_ashare_collection(*, calendar_results, master_results, load_partition, 
                 market_sessions=days, calendar_version=versions["calendar"], adjustment=k,
                 source_version=versions[k], market=venue, currency="CNY", horizons=HORIZONS)
                 for k, series in (("raw", prices), ("qfq", adjusted))}
+            endpoint_observations = _endpoint_observations(code, venue, cutoff, days, reference,
+                prices, factors, day_queries, values, bad, versions)
             supplied = {"raw": bool(prices), "qfq": bool(adjusted)}
         else:
             qualification = {"price": {"status": "unavailable"}, "factor": {"status": "unavailable"},
@@ -345,6 +414,8 @@ def read_ashare_collection(*, calendar_results, master_results, load_partition, 
             explanation = {"status": "not-assessed", "counts": None, "missing_quote_count": None,
                 "evidence_status": "not-assessed", "evidence_quarantined_day_count": None}
             observations = {k: _empty_observation(code, venue, cutoff, k, availability, versions) for k in surfaces}
+            endpoint_observations = {k: _empty_endpoint_observation(code, venue, cutoff, k, availability, versions)
+                                     for k in surfaces}
             supplied = dict.fromkeys(surfaces, False)
         qualification["availability"] = availability
         qualification["master"] = master.get("qualification", {}).get(code) if master is not None else None
@@ -371,6 +442,19 @@ def read_ashare_collection(*, calendar_results, master_results, load_partition, 
             entry_hash.update(encoded(observed))
             if code in selected_codes:
                 surfaces[convention]["entries"].append(observed)
+        for convention, observed in endpoint_observations.items():
+            observed.update(security_reference=reference, availability=availability,
+                lineage_representation="original-whole-market-day-queries-in-collection-source-lineage")
+            if code in references:
+                surface = endpoint_surfaces[convention]
+                seen = [window["status"] == "observed" for window in observed["horizons"]]
+                surface["observed_count"] += int(any(seen))
+                endpoint_complete[convention] += int(all(seen))
+                for i, qualified in enumerate(seen):
+                    surface["horizon_counts"][i]["observed_count"] += int(qualified)
+            endpoint_entry_hash.update(encoded(observed))
+            if code in selected_codes:
+                endpoint_surfaces[convention]["entries"].append(observed)
     for convention, surface in surfaces.items():
         surface["missing_count"] = scope - surface["observed_count"] if known_scope else None
         surface["incomplete_count"] = scope - complete[convention] if known_scope else None
@@ -379,6 +463,16 @@ def read_ashare_collection(*, calendar_results, master_results, load_partition, 
         surface["status"] = "scope-unknown" if not known_scope else "empty-declared-universe" if not scope else (
             "no-market-sessions" if not actual_days and all(c is not None for c in calendars.values())
             else "data-gaps" if surface["incomplete_count"] else "observed")
+    for convention, surface in endpoint_surfaces.items():
+        surface["missing_count"] = scope - surface["observed_count"] if known_scope else None
+        surface["incomplete_count"] = scope - endpoint_complete[convention] if known_scope else None
+        for window in surface["horizon_counts"]:
+            window["missing_count"] = scope - window["observed_count"] if known_scope else None
+        surface["status"] = "scope-unknown" if not known_scope else "empty-declared-universe" if not scope else (
+            "no-market-sessions" if not actual_days and all(c is not None for c in calendars.values())
+            else "comparison-gaps" if surface["incomplete_count"] else "observed")
+    endpoints = {"schema": ENDPOINT_COMPARISONS_SCHEMA, "comparison_basis": "calendar-endpoints-v1",
+        "normalization": NORMALIZATION, "daily_path_certified": False, **endpoint_surfaces}
     freshness = {"read_as_of": clock, "completed_day_through": completed_through, "calendar_through": through,
         "status": "unknown" if clock is None or any(v["current_session_lag"] is None for v in by_venue.values())
             else "stale" if any(v["current_session_lag"] for v in by_venue.values()) else "current-through-completed-day",
@@ -400,8 +494,13 @@ def read_ashare_collection(*, calendar_results, master_results, load_partition, 
             "NO_PRICE_OR_FACTOR_FILL; HALT_SUPPORT_NOT_FULL_DAY_CERTIFICATION",
             "END_ANCHORED_FACTOR_RATIO_NOT_TOTAL_RETURN_OR_CORPORATE_ACTION_CERTIFICATION",
             "RESTORED_SOURCE_AND_WINDOW_USABILITY_SEPARATE; NO_UPTIME_OR_DISCOVERY_CERTIFICATION"]}
-    out["view_version"] = digest(encoded({"context": out, "entries_sha256": entry_hash.hexdigest()}))
+    endpoint_context = {key: value for key, value in endpoints.items() if key not in endpoint_surfaces}
+    endpoint_context.update({kind: {key: value for key, value in surface.items() if key not in ("entries", "page")}
+                            for kind, surface in endpoint_surfaces.items()})
+    out["view_version"] = digest(encoded({"context": out, "entries_sha256": entry_hash.hexdigest(),
+        "endpoint_comparisons": endpoint_context, "endpoint_entries_sha256": endpoint_entry_hash.hexdigest()}))
     out.update(surfaces)
+    out["endpoint_comparisons"] = endpoints
     return out
 
 

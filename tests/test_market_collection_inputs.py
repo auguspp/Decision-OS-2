@@ -141,6 +141,50 @@ def test_bad_factor_is_date_and_security_local_without_changing_raw_or_peer():
     assert view["freshness"]["status"] == "unknown"
 
 
+def test_endpoints_survive_missing_intermediate_prices_and_out_of_range_intermediate_adjustment():
+    op = CollectionOpener()
+    missing, extreme = op.days[-3], op.days[-4]
+    op.edits[missing, "daily"] = lambda rows: [row for row in rows if row["ts_code"] != "600000.SH"]
+    op.edits[extreme, "daily"] = lambda rows: change(rows, "600000.SH", close="1e99")
+    op.edits[extreme, "adj_factor"] = lambda rows: change(rows, "600000.SH", adj_factor="1e99")
+    view = op.read()
+    comparisons = view["endpoint_comparisons"]
+    assert not comparisons["daily_path_certified"]
+    assert all(w["status"] == "missing-market-sessions" for w in entry(view)["horizons"])
+    assert entry(view, kind="qfq")["qualification"]["adjustment"]["status"] == "rejected"
+    assert [Decimal(w["change_pct"]) for w in entry(comparisons)["horizons"]] == [0, 0, -50]
+    assert [Decimal(w["change_pct"]) for w in entry(comparisons, kind="qfq")["horizons"]] == [0, 0, 0]
+    for kind in ("raw", "qfq"):
+        assert view[kind]["incomplete_count"] == 1 and view[kind]["status"] == "data-gaps"
+        assert comparisons[kind]["incomplete_count"] == 0 and comparisons[kind]["scope_count"] == 4
+        assert all(w["observed_count"] == 4 for w in comparisons[kind]["horizon_counts"])
+        assert iso(missing) not in entry(comparisons, kind=kind)["endpoint_inputs"]
+        assert iso(extreme) not in entry(comparisons, kind=kind)["endpoint_inputs"]
+    assert view["freshness"]["status"] == "unknown" and view["source_requests"] == 0
+    assert len(op.loader_calls) == len(set(op.loader_calls)) == 3 * len(op.days)
+
+
+def test_bad_endpoint_factors_and_adjusted_range_only_limit_dependent_security_and_horizon():
+    op = CollectionOpener()
+    baseline20, baseline60 = op.days[-21], op.days[-61]
+    op.edits[baseline60, "adj_factor"] = lambda rows: change(rows, "600000.SH", adj_factor="0")
+    op.edits[baseline20, "daily"] = lambda rows: change(rows, "600000.SH", close="1e99")
+    op.edits[baseline20, "adj_factor"] = lambda rows: change(rows, "600000.SH", adj_factor="1e99")
+    view = op.read()
+    comparisons = view["endpoint_comparisons"]
+    assert all(w["status"] == "observed" for w in entry(comparisons)["horizons"])
+    qfq = entry(comparisons, kind="qfq")
+    assert qfq["status"] == "partial-comparisons"
+    assert [w["status"] for w in qfq["horizons"]] == [
+        "observed", "invalid-endpoint-adjustment", "missing-endpoint-observations"]
+    assert qfq["endpoint_inputs"][iso(baseline60)]["factor_state"] == "quarantined"
+    assert qfq["horizons"][2]["adjustment"]["missing_factor_dates"] == [iso(baseline60)]
+    assert qfq["horizons"][1]["adjustment"]["reason_code"] == "MARKET_RELAY_ADJUSTED_CLOSE_RANGE"
+    assert all(w["adjustment"]["anchor_date"] == iso(END) for w in qfq["horizons"])
+    assert all(w["status"] == "observed" for w in entry(comparisons, "000001.SZ", "qfq")["horizons"])
+    assert [w["observed_count"] for w in comparisons["qfq"]["horizon_counts"]] == [4, 3, 3]
+
+
 @pytest.mark.parametrize("api", ["daily", "adj_factor", "suspend_d"])
 def test_missing_last_partition_preserves_known_scope_and_truthful_freshness(api):
     op = CollectionOpener()
@@ -161,6 +205,14 @@ def test_missing_last_partition_preserves_known_scope_and_truthful_freshness(api
     if api == "suspend_d":
         assert entry(view)["history_quote_explanation"]["evidence_unavailable_dates"] == [iso(END)]
         assert all(w["status"] == "observed" for w in entry(view, kind="qfq")["horizons"])
+    comparisons = view["endpoint_comparisons"]
+    for kind in ("raw", "qfq"):
+        expected = "missing-endpoint-observations" if api == "daily" or api == "adj_factor" and kind == "qfq" else "observed"
+        assert all(w["status"] == expected and w["end_date"] == iso(END)
+                   for w in entry(comparisons, kind=kind)["horizons"])
+    if api == "adj_factor":
+        assert all(w["adjustment"]["status"] == "missing-anchor-factor"
+                   for w in entry(comparisons, kind="qfq")["horizons"])
 
 
 def test_whole_capture_failure_is_unknown_but_complete_empty_is_known_missing():
@@ -207,6 +259,13 @@ def test_calendar_gaps_and_missing_master_do_not_borrow_other_venue_or_zero_scop
     assert missing["raw"]["missing_count"] is None and missing["raw"]["incomplete_count"] is None
     assert missing["raw"]["page"]["entries_count"] == 4
     assert entry(missing)["qualification"]["availability"] == "reference-unavailable"
+    for kind in ("raw", "qfq"):
+        assert entry(view["endpoint_comparisons"], kind=kind)["availability"] == "calendar-unavailable"
+        assert entry(view["endpoint_comparisons"], "000001.SZ", kind)["status"] == "observed"
+        surface = missing["endpoint_comparisons"][kind]
+        assert surface["scope_count"] is None and surface["known_scope_count"] == 2
+        assert surface["missing_count"] is None and surface["incomplete_count"] is None
+        assert surface["observed_count"] == 2 and all(w["missing_count"] is None for w in surface["horizon_counts"])
 
 
 def test_weekend_requested_end_uses_actual_exchange_session_without_a_price_fallback():
@@ -232,6 +291,10 @@ def test_closed_range_and_different_venue_cutoff_remain_explicit():
     assert different["by_exchange"]["SSE"]["outside_calendar_row_counts"]["daily"] == 2
     assert entry(different)["horizons"][0]["end_date"] == "2026-10-15"
     assert entry(different, "000001.SZ")["horizons"][0]["end_date"] == "2026-10-16"
+    endpoints = different["endpoint_comparisons"]
+    assert endpoints["raw"]["as_of"] is None
+    assert entry(endpoints)["horizons"][0]["end_date"] == "2026-10-15"
+    assert entry(endpoints, "000001.SZ")["horizons"][0]["end_date"] == "2026-10-16"
 
 
 def test_old_calendar_zero_lag_is_not_present_freshness_and_fresh_proof_counts_real_sessions():
@@ -284,6 +347,46 @@ def test_pagination_filter_and_inline_dispatch_keep_same_counts_versions_and_inp
     assert absent["raw"]["entries"] == [] and absent["scope_count"] == 4
     stream = op.read(calendars=calendars, masters=masters, loader=lambda d, a: partitions[d][a], limit=1)
     assert stream == first
+
+
+def test_endpoint_denominator_keeps_quarantine_new_listing_and_off_page_result_identity(monkeypatch):
+    from decision_kernel.application import market_collection_inputs as composition
+
+    op = CollectionOpener()
+    op.rows["stock_basic", "SSE"].append(deepcopy(op.rows["stock_basic", "SSE"][0]))
+    op.rows["stock_basic", "SSE"][1]["list_date"] = op.days[-11]
+    op.edits[END, "daily"] = lambda rows: [*rows, {"ts_code": "600099.SH", "trade_date": END, "close": "10"}]
+    calendars, masters = op.references()
+    partitions = {day: {api: op.load(day, api) for api in ("daily", "adj_factor", "suspend_d")} for day in op.days}
+    def read(**page):
+        return op.read(calendars=calendars, masters=masters, loader=lambda day, api: partitions[day][api], **page)
+    first, second, absent = read(limit=1), read(limit=1, offset=1), read(entity_id="999999.SZ")
+    isolated, listed = read(entity_id="600000.SH"), read(entity_id="600001.SH")
+    assert first["view_version"] == second["view_version"] == absent["view_version"] == isolated["view_version"]
+    for kind in ("raw", "qfq"):
+        surface = first["endpoint_comparisons"][kind]
+        assert surface["scope_count"] == 4 and surface["observed_count"] == 3
+        assert surface["missing_count"] == 1 and surface["incomplete_count"] == 2
+        assert [w["observed_count"] for w in surface["horizon_counts"]] == [3, 2, 2]
+        assert surface["horizon_counts"] == second["endpoint_comparisons"][kind]["horizon_counts"]
+        assert surface["page"]["entries_count"] == 5 and surface["page"] == first[kind]["page"]
+        assert absent["endpoint_comparisons"][kind]["entries"] == []
+        assert entry(isolated["endpoint_comparisons"], kind=kind)["availability"] == "reference-quarantined"
+        assert [w["status"] for w in entry(listed["endpoint_comparisons"], "600001.SH", kind)["horizons"]] == [
+            "observed", "missing-endpoint-observations", "missing-endpoint-observations"]
+    # A purpose change outside the selected page must affect result identity even
+    # when all input identities, old strict results and visible entries are equal.
+    original = composition.observe_endpoints
+    def changed_purpose(**kwargs):
+        result = original(**kwargs)
+        if kwargs["entity_id"] == "600001.SH":
+            result["comparison_basis"] = "synthetic-alternate-purpose"
+        return result
+    monkeypatch.setattr(composition, "observe_endpoints", changed_purpose)
+    changed = read(limit=1)
+    assert changed["raw"] == first["raw"] and changed["qfq"] == first["qfq"]
+    assert changed["endpoint_comparisons"] == first["endpoint_comparisons"]
+    assert changed["view_version"] != first["view_version"]
 
 
 def test_inline_non_market_partition_cannot_hide_unconsumed_source_input():

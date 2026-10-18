@@ -1,27 +1,52 @@
-# FTShare / Tushare Relay 有界双源验收（#128）
+# FTShare / Tushare Relay 有界双源验收
 
-## 旧 Kernel 已交事实
+本责任由 #128 / PR #130 持有；复用旧 Kernel 技术与原始来源，不恢复旧业务兼容或启用全局主备切换。市场原采集、四个失败 checkpoint、预算、records 和 #10 owner 均不改变。
 
-- [旧 #501](https://github.com/auguspp/decision-kernel/pull/501) 已使用实际 cnequity 0.11.0 运行本地 Parquet/PIT/修订与严格复权测试；CNEquity 是读取/存储实现，不是第二个独立数据来源，OS2 本轮不建新 lake。
-- [旧 #725](https://github.com/auguspp/decision-kernel/pull/725) 实际 FTShare 全页 5904 唯一证券，原价与旧 HiThink 在 5560/5560 个可比 close 上相等，但全页缺 latest，原公司行动有 403/route_not_allowed，单日时钟不构成可靠日频资格。这是 **FTShare/HiThink** 证据，不能冒充本次 FTShare/Relay 资格。
-- [旧 #795](https://github.com/auguspp/decision-kernel/pull/795#issuecomment-6051834248) 真实执行56次有限历史 K 线请求并离线恢复14份价格 CSV；原价采集可用，但复权/PIT/日常连续未证明；不能重放已消费的试点。
-- [旧 #364](https://github.com/auguspp/decision-kernel/issues/364) TDX/eltdx 真实完成269个概念板块及其 K 线核验；不等于全市场个股行情合格源。
-- [OS2 #10 终态](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6243033585) 两市 current-L 身份 5226 已保管；2026-10-15/16 daily 和 adj_factor 四原查询已耗尽各4次 timeout，不能重置或换客户端偷抓相同失败页。末次 ASHARE_REMOTE_RATE_LIMIT 是 GitHub API 额度安全暂停，并非供应商 HTTP 429。
+## 复用结论
 
-## 第一组实际能力
+旧 Kernel [#501](https://github.com/auguspp/decision-kernel/pull/501) 的 CNEquity 0.11.0 实际测试证明本地 Parquet/PIT/修订和严格复权能力，不证明第二独立上游。本次不建第二个 lake。旧 [#725](https://github.com/auguspp/decision-kernel/pull/725) 的 FTShare/HiThink 全页价格对照、latest 缺失与公司行动403保持原解释；不偷换为 FTShare/Relay。旧 [#795](https://github.com/auguspp/decision-kernel/pull/795) 的56请求历史原件可用于零来源请求重算；旧 [#364](https://github.com/auguspp/decision-kernel/issues/364) 的 TDX/eltdx 已验对象是概念板块，不是全部个股。
 
-本批复用现有 observations.market_daily 精确日期/Decimal 校验，只新增纯函数 compare_retained_raw_market 与显式本地 CLI。对两个**已由原 owner 各自验证且合法保管**的数据投影，比较最多32只沪深股票同一交易日的原 OHLC 与可核的成交量；不发网络/供应商请求，不写 records，不改 Market 原源、失败检查点、Brief、Research、自动调度或任何投资行为。
+Reuse Decision: REUSE + THIN_ADAPTER。复用 observations.market_daily 日期/Decimal，新增纯比较器、本地CLI和专属反例；不复制SDK、客户端、调度、存储或原失败恢复程序。按真实用途检查：close-only 日分区可比较 close，无须编造 OHLCV。
 
-使用：
+## 离线工具合同
 
-    python -m decision_kernel.interfaces.secondary_market_comparison_cli --relay path/to/relay.json --ftshare path/to/ftshare.json --session 2026-09-30
+调用者先独立认证两份合法保管的原件，随后才投影为 provider/source_ref/acquired_at/session/rows。每端最多32行沪深证券；同日、CNY、NONE 原价，小数字符串保持精确。基础行是 symbol/trade_date/close/currency/adjustment/trade_status。完整提供 open/high/low/volume/volume_unit 时才检查和比较 OHLCV；残缺扩展不退化为合法基础行。成交量仅对已证明的 Relay LOTS_100_SHARES / FTShare SHARES 做十进制指数平移，不受调用方精度与traps影响。
 
-每端对象必须包含 provider/source_ref/acquired_at/session/rows；locator 的 repository/commit/path/sha256 **只检查格式，不做 GitHub 权限/原件认证**。来源版本和取得时间必须由调用者沿现役 SourceRef、原数据/返回证明先核，单凭这些字段不能自签 source_authentication。每行基础字段为 symbol/trade_date/close/currency/adjustment/trade_status；已证明存在完整 OHLCV 时可**整组**提供 open/high/low/volume/volume_unit，不能提供残缺 OHLCV 然后假装 close-only。因为现有 OS2 日分区正常只要求 close，基础诊断只比较相同市场日的原收盘价，不虚构其余字段；只有两侧均完整提供时才比较 OHLC/成交量，并逐项报告 fields_compared。只能同日、SH/SZ、CNY、NONE 原价、Decimal 字符串；扩展读数还要有严格 OHLC 和合法成交量。Relay 的来源单位 LOTS_100_SHARES 和 FTShare 的 SHARES 必须先由其原合同证明，比较器只在明确声明后归一成交量。交易状态 UNKNOWN / SUSPENDED 仅保留身份，不通过价格比较。未上市、过期、缺因子、公司行动证据不能通过填1或推断恢复。
+source_ref 接受原 repository/commit/path/sha256 Git locator；也接受在其上明确添加 kind=github-actions-artifact、run_id、attempt、artifact_id、artifact_sha256 的原生归档 locator。后一类 commit 是 producer code commit，path 是 ZIP 内成员，不冒充Git内已存原件。**本函数只核locator格式，不查询GitHub、不认证归档字节或许可**；调用者的受信原件核验仍是前置。输入文件有128KiB有限读取、JSON重复键/非有限值与符号链接拒绝；输入错误仅输出固定拒绝码，不泄露异常、路径或供应商文本。
 
-比较结果仅给出证券和不同 OHLC 字段名、覆盖数/差异数，无源价格/原Body/凭据/SourceRef 文本。无可比配对 CLI 以退出码2返回 NO_COMPARABLE_PAIRS，成功仍明确 common_upstream_independence=NOT_ESTABLISHED、ftshare_backup_admission=NOT_ESTABLISHED、market_canonical_changed=false。两家值相等不能证明真正上游独立、PIT 或合法备用准入。
+    python -m decision_kernel.interfaces.secondary_market_comparison_cli --relay relay.json --ftshare ftshare.json --session 2026-09-30
 
-## 下一真实双源来源资格
+默认 purpose=trading-rows 只比较两侧都明确声明TRADING的值。显式 --purpose quoted-values 仅回答“已保存同日原价数值是否相等”，允许保留UNKNOWN交易状态；它不是放宽交易、停牌、连续性或复权资格。后者适用于本次历史档案。所有输出均声明 trading_eligibility_granted=false、ftshare_backup_admission=NOT_ESTABLISHED、common_upstream_independence=NOT_ESTABLISHED、market_canonical_changed=false。无可比对返回NO_COMPARABLE_PAIRS/exit2；DIAGNOSTIC_ONLY/exit0也不是备源准入。输出只含代码、字段名和计数，不含源价、源体或原件路径。
 
-现有旧 FTShare/HiThink 真实对照与 OS2 无完整 daily 的 Relay 主表 **无法组成同日双源原价真实配对**；本批只有纯函数合成反例，不宣称实际双源比价已经完成。下一步须由 #10 当前owner 协同固定最多32个具名沪深证券、交易日、状态与来源读取；在两端具合法原件/受信元数据/权限、独立读回后才进行现实对比。FTShare 的最新交易日时钟、上市/停牌、企业行为/复权权限另验，不从旧 5904 个报价自动晋级。新来源调用需要明确额度/许可/现役runner 的源密钥归属并留下原生run和受限原件证据；无凭据不换主机或身份绕过。
+## 2026-10-18 实际历史双源核验
 
-当前阶段判定是：已有可运行的**离线比较工具**，**真实 FTShare/Relay 同日对照=尚未验收**，**FTShare 正式备用准入=尚未成立**。#10 保持独立采集主施工，本组不得重启其4条 terminal 查询。维护人 #12 来源资格；不再需要此源时连同本地CLI、纯函数、专属测试和本文一同退出，保留历史数据引用及失败记录。
+前序“尚未找到配对原件”由本次实际下载与核验纠正，不用后验结果改写过去失败。两个原生运行及其仓库/producer SHA/attempt=1已读；均为原已完成success的历史任务，没有重新派发：
+
+| 来源 | 原生run / artifact | 原ZIP bytes / SHA256 |
+|---|---|---|
+| FTShare | [37720503804](https://github.com/auguspp/decision-kernel/actions/runs/37720503804) / 11525786543 | 974365 / `70247b75aca780faa4d5d4ca9d2f9564568c5376302e9e7cf3dfa35ebf10f59e` |
+| Relay | [37125677265](https://github.com/auguspp/decision-kernel/actions/runs/37125677265) / 11275545350 | 407921 / `c6ba9fd435f9da4ebeaa862694479b3e5eb25c27cabf9d2c8d3bbb006801b2e3` |
+
+FTShare producer `f732e0ef6f1c63c30ad05ff3f1c27663a649ef12`，Relay producer `ceee7e4ec53b474ad0d4f0d8dc76781f1cee3818`。下载ZIP大小/原生digest、CRC、无重复/越界/符号链接成员已核；FTShare全部56原响应及14CSV、Relay全部9原响应的内部bytes/SHA256逐项相等，原receipt工作流身份与native对应。JSON用拒绝重复键和Decimal直接解析，不经binary float。FTShare原plan与各请求一致，adjust_kind=none、interval_unit=day、上海时间毫秒边界、证券与日期唯一、正价与OHLC边界均核；Relay成功daily原fields、查询日/行日、证券唯一与正close均核。未运行旧producer代码或宣称已重验其所有日频/复权结论。
+
+固定采用FTShare原研究全部14个证券，不按是否匹配选择样本。用其2026年原响应与Relay原四个daily日期相交，交易状态均保持UNKNOWN，以quoted-values比较：
+
+| 原市场日 | 应核证券 | 有双方原报价 | 相等 | 不同 | Relay缺项 |
+|---|---:|---:|---:|---:|---:|
+| 2026-07-07 | 14 | 12 | 12 | 0 | 2 |
+| 2026-09-01 | 14 | 14 | 14 | 0 | 0 |
+| 2026-09-22 | 14 | 14 | 14 | 0 | 0 |
+| 2026-09-30 | 14 | 14 | 14 | 0 | 0 |
+| 合计 | 56证券×日期 | 54 | 54 | 0 | 2 |
+
+这次**真实历史close比较成立**，不是只有合成测试。Relay原包只取close，因此没有双源OHLCV、成交量或因子一致性结论。2个缺项没有填充，没有从分母删除，也不猜停牌/新股原因。FTShare于10月8日取得，Relay于10月3日取得；不同回溯版本，不是历史当时可得/PIT证据，也不是10月16日新鲜行情或长期可用率。
+
+### 复算步骤
+
+沿表中两个native artifact ID下载原ZIP并核外层metadata/digest；按各receipt核全部原raw文件和身份。取FTShare receipt.coverage中全部14个symbol，遍历requests中period=2026的raw_file，以ts_millis按UTC+8转市场日；取Relay calls中api=daily的四个原response_file，以其params.trade_date对齐。Decimal读取原close，缺键保持缺项。双方构造close-only投影，附原receipt.json成员SHA及明确artifact locator，原finished_at分别作为取得时钟，trade_status=UNKNOWN。按四个日期分别调用上面的CLI并显式 --purpose quoted-values；检查每次fields_compared只包含close、总分母56/配对54/缺项2，以及所有不授权字段。原ZIP失效或digest不符时停止，不能找另一个“相近”包重命名为本结果。
+
+## 决策与剩余边界
+
+结论是：**FTShare值得作为原价交叉核验候选，但本次不启用自动备用采集或替换Relay。** 其独立底层上游、现役凭据/额度、新交易日连续性、上市/停牌、公司行动及复权仍分别未验。主源超时或GitHub配额不足不可通过重置原terminal解决；本组对#10无写入。
+
+本次只有历史原件读回和比较，source HTTP=0、records写入=0；原始供应商数据保留于原私有仓，main仅记录原创工程说明与汇总。原Actions归档到期仍是保管限制：FTShare预计2026-11-07、Relay预计2026-11-02到期；不把下载/本地复算称为永久保管。后继真正采集须沿#12/#10的原owner、同语义资格与实际授权执行；保持原单标准市场入口。退役本比较能力时同步删除比较器、CLI及两组专属测试，保留本次事实及来源历史。

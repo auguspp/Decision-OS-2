@@ -19,6 +19,8 @@ BASE_ROW_FIELDS = frozenset(("symbol", "trade_date", "close", "currency", "adjus
 EXTRA_ROW_FIELDS = frozenset(("open", "high", "low", "volume", "volume_unit"))
 CAPTURE_FIELDS = frozenset(("provider", "source_ref", "acquired_at", "session", "rows"))
 REF_FIELDS = frozenset(("repository", "commit", "path", "sha256"))
+ARTIFACT_FIELDS = frozenset(("kind", "run_id", "attempt", "artifact_id", "artifact_sha256"))
+PURPOSES = ("trading-rows", "quoted-values")
 MAX_ROWS = 32
 
 
@@ -28,7 +30,7 @@ def _reject(code: str) -> None:
 
 def _ref(value: object) -> None:
     # Caller independently verifies the exact source; a plausible locator is not proof.
-    if not isinstance(value, Mapping) or set(value) != REF_FIELDS:
+    if not isinstance(value, Mapping) or set(value) not in (REF_FIELDS, REF_FIELDS | ARTIFACT_FIELDS):
         _reject("REFERENCE_REQUIRED")
     if (not isinstance(value["repository"], str)
         or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value["repository"])
@@ -40,8 +42,16 @@ def _ref(value: object) -> None:
         or not 0 < len(value["path"]) <= 512
         or value["path"].startswith("/")
         or any(p in ("", ".", "..") for p in value["path"].split("/"))
-        or not value["path"].isascii()):
+        or not value["path"].isascii() or not value["path"].isprintable()
+        or "\\" in value["path"]):
         _reject("REFERENCE_INVALID")
+    if "kind" in value:
+        if (value["kind"] != "github-actions-artifact"
+            or any(type(value[k]) is not int or not 1 <= value[k] < 10**18
+                   for k in ("run_id", "attempt", "artifact_id"))
+            or not isinstance(value["artifact_sha256"], str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["artifact_sha256"])):
+            _reject("ARTIFACT_REFERENCE_INVALID")
 
 
 def _capture(value: object, provider: str, session: str) -> dict[str, dict]:
@@ -51,7 +61,7 @@ def _capture(value: object, provider: str, session: str) -> dict[str, dict]:
         _reject("PROVIDER_OR_SESSION")
     _ref(value["source_ref"])
     when = value["acquired_at"]
-    if not isinstance(when, str):
+    if not isinstance(when, str) or not 1 <= len(when) <= 64:
         _reject("ACQUISITION_CLOCK")
     try:
         parsed = datetime.fromisoformat(when)
@@ -106,15 +116,19 @@ def _capture(value: object, provider: str, session: str) -> dict[str, dict]:
                 volume = Decimal(raw_vol)
             except (ArithmeticError, ValueError):
                 _reject("VOLUME_INVALID")
-            if not volume.is_finite() or volume < 0 or volume.adjusted() > 99:
+            if not volume.is_finite() or volume < 0 or not -99 <= volume.adjusted() <= 99:
                 _reject("VOLUME_INVALID")
-            normalized_volume = volume * (100 if provider == "TUSHARE_RELAY" else 1)
+            # An exponent shift is exact and independent of ambient precision/traps.
+            parts = volume.as_tuple()
+            normalized_volume = (Decimal((parts.sign, parts.digits, parts.exponent + 2))
+                                 if provider == "TUSHARE_RELAY" else volume)
         found[symbol] = {"prices": numbers, "volume_shares": normalized_volume,
                          "trade_status": row["trade_status"]}
     return found
 
 
-def compare_retained_raw_market(*, relay: object, ftshare: object, session: str) -> dict:
+def compare_retained_raw_market(*, relay: object, ftshare: object, session: str,
+                                purpose: str = "trading-rows") -> dict:
     """Compare at most 32 original close pairs, optionally full OHLCV; no prices in output.
 
     Never uses a provider's claimed 5/20/60 returns or adjusts/fills corporate actions.
@@ -124,6 +138,8 @@ def compare_retained_raw_market(*, relay: object, ftshare: object, session: str)
         trade_day(session)
     except MarketInputError:
         _reject("SESSION_INVALID")
+    if not isinstance(purpose, str) or purpose not in PURPOSES:
+        _reject("PURPOSE_INVALID")
     primary = _capture(relay, "TUSHARE_RELAY", session)
     secondary = _capture(ftshare, "FTSHARE", session)
     if relay["source_ref"] == ftshare["source_ref"]:
@@ -132,10 +148,12 @@ def compare_retained_raw_market(*, relay: object, ftshare: object, session: str)
     details = []
     for symbol in shared:
         a, b = primary[symbol], secondary[symbol]
-        if a["trade_status"] != "TRADING" or b["trade_status"] != "TRADING":
+        trading_known = a["trade_status"] == b["trade_status"] == "TRADING"
+        if purpose == "trading-rows" and not trading_known:
             details.append({"symbol": symbol, "status": "NON_TRADING_OR_UNKNOWN",
                             "fields_compared": [], "price_fields_differ": [],
-                            "volume_comparison": "NOT_ASSESSED"})
+                            "volume_comparison": "NOT_ASSESSED",
+                            "trading_status_confirmed": False})
             continue
         comparable = [field for field in PRICE_FIELDS
                       if field in a["prices"] and field in b["prices"]]
@@ -144,10 +162,11 @@ def compare_retained_raw_market(*, relay: object, ftshare: object, session: str)
                   else "EQUAL" if a["volume_shares"] == b["volume_shares"] else "DIFFERENCE")
         details.append({"symbol": symbol, "status": "PRICE_DIFFERENCE" if different else "PRICE_EQUAL",
                         "fields_compared": comparable, "price_fields_differ": different,
-                        "volume_comparison": volume})
+                        "volume_comparison": volume, "trading_status_confirmed": trading_known})
     counts = {code: sum(x["status"] == code for x in details)
               for code in ("PRICE_EQUAL", "PRICE_DIFFERENCE", "NON_TRADING_OR_UNKNOWN")}
     return {"schema": "secondary-market-raw-comparison-v1", "session": session,
+            "purpose": purpose, "trading_eligibility_granted": False,
             "provider_pair": list(PROVIDERS),
             "primary_count": len(primary), "secondary_count": len(secondary),
             "paired_count": len(shared), "primary_only": len(primary) - len(shared),

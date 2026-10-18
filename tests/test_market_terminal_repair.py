@@ -43,8 +43,13 @@ def repair_fixture(*, backend_store=None, only_three_sessions=False):
             raise TimeoutError("SYNTHETIC_ORIGINAL_TIMEOUT")
 
     original.before = timeout_original
-    base = run(plan, store, fresh, original, max_queries=10, clock=clock, attempt_id="run-100-1-u1")
+    # Long calendars first consume six other endpoint queries. Construct the
+    # same four original exhausted owners before collecting repair evidence.
+    base = run(plan, store, fresh, original, max_queries=10 if only_three_sessions else 16,
+        clock=clock, attempt_id="run-100-1-u1")
     assert all(base["collection"]["units"][slot]["status"] == "failed" for slot in REPAIR_SLOTS)
+    assert all(sum(day + ":" + api == slot for api, day, _ in source_calls(original)) == 4
+               for slot in REPAIR_SLOTS)
     evidence = {}
     native_start = clock.now()
     for index, api in enumerate(("daily", "adj_factor"), 1):

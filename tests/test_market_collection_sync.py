@@ -4,6 +4,7 @@ No provider traffic occurs. These tests prove retained execution and reading
 semantics, not supplier availability, historical universe coverage or rights.
 """
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from io import BytesIO
 import json
 import os
@@ -14,20 +15,22 @@ from urllib.error import HTTPError
 import pytest
 
 from decision_kernel.application.market_collection import (
-    CollectionSyncInterrupted, checkpoint_id, plan_collection, sync_collection,
+    CollectionSyncInterrupted, checkpoint_id, plan_collection, sync_collection, unit_request,
 )
 from decision_kernel.application.market_collection_custody import (
-    CHECKPOINT_SCHEMA, restore_market_checkpoint, restore_market_collection,
+    CHECKPOINT_SCHEMA, retain_market_checkpoint, restore_market_checkpoint, restore_market_collection,
 )
 from decision_kernel.application.market_collection_reading import (
     latest_market_reference, read_collection_version,
 )
 from decision_kernel.application.market_custody import QUERY_SCHEMA, restore_market_query
-from decision_kernel.application.research_sources import CAPTURE
+from decision_kernel.application.relay_capture_checkpoint import CheckpointWriteError
+from decision_kernel.application.research_sources import CAPTURE, capture_registered
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef, UnknownWrite, encoded
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.relay_http import RelayHTTP, SECRET_ENV
+from decision_kernel.infrastructure.relay_retry import RetryingRelay
 from test_market_collection_inputs import CollectionOpener
 from test_market_custody import MemoryBackend
 from test_market_relay_inputs import REGISTRY, ROOT_DIR
@@ -98,6 +101,136 @@ def http_error(status, *, error=None, headers=None):
     body = {"error": error} if error is not None else {"message": "synthetic refusal"}
     return HTTPError("https://synthetic.invalid/source", status, "synthetic refusal",
                      headers or {}, BytesIO(encoded(body)))
+
+
+def retained_checkpoint(request, slot, store, fresh, opener, clock, *, owner=None, stop_phase=None):
+    """An original synthetic control published ahead of its collection ledger."""
+    use, pages = unit_request(request, slot, REGISTRY)
+    reference = None
+
+    def writer(state):
+        nonlocal reference
+        retry = state["control"]["retry"]
+        if stop_phase == "response" and retry is not None and retry["phase"] == "response":
+            # Inject a schema-valid received response not yet committed to its
+            # page. The ordinary capture writer commits response+page together;
+            # its legitimate complete control must not be used for this case.
+            state["capture"].update(pages=state["capture"]["pages"][:-1], complete=False)
+            state["control"]["state"] = "executing"
+        saved = retain_market_checkpoint(state, REGISTRY, store, fresh_reader=fresh,
+            checkpoint_id=owner or checkpoint_id(request, slot), predecessor=reference, custody_authorized=True)
+        reference = saved["reference"]
+        if stop_phase is not None and retry is not None and retry["phase"] == stop_phase:
+            raise UnknownWrite("SYNTHETIC_CONTROL_READBACK_UNKNOWN")
+
+    client = RelayHTTP(opener=opener, credential="synthetic-key-only", request_timeout_seconds=90)
+    session = RetryingRelay(client, clock=clock.now, sleep=clock.sleep,
+                            monotonic=clock.monotonic, deadline=clock.monotonic() + 600)
+    if stop_phase is None:
+        capture_registered(use, REGISTRY, session, max_pages=pages, checkpoint_writer=writer)
+    else:
+        with pytest.raises(CheckpointWriteError):
+            capture_registered(use, REGISTRY, session, max_pages=pages, checkpoint_writer=writer)
+    return restore_market_checkpoint(reference, REGISTRY, fresh())
+
+
+def test_endpoint_priority_makes_all_comparisons_readable_before_the_original_history_is_complete():
+    _, store, fresh = memory()
+    request, opener = plan(start="20260701"), CollectionOpener()
+    # A synthetic 72-session / 220-slot plan, with the original whole-day APIs.
+    for venue in ("SSE", "SZSE"):
+        for row in opener.rows["trade_cal", venue]:
+            if row["cal_date"] in {"20261001", "20261002", "20261005", "20261006"}:
+                row["is_open"] = 0
+    captured = run(request, store, fresh, opener, max_queries=12)
+    expected = [(api, day, 0) for day in (END, "20261009", "20260911", "20260716")
+                for api in ("daily", "adj_factor")]
+    assert source_calls(opener)[4:] == expected and len(opener.calls) == 12
+    collection = restore_market_collection(captured["reference"], REGISTRY, fresh())["collection"]
+    assert captured["status"] == "partial" and len(collection["units"]) == 220
+    assert collection["plan"]["generation"] == request["generation"]
+    assert collection["units"]["20261015:daily"]["status"] == "pending"
+    assert all(u["status"] == "pending" for s, u in collection["units"].items() if s.endswith(":suspend_d"))
+    reading = read_collection_version(captured["reference"], REGISTRY, fresh(), read_as_of=NOW.isoformat())
+    assert reading["source_requests"] == 0 and reading["query_count"] == 220
+    assert reading["serving"] == "current-partial" and reading["unavailable_queries"] == 208
+    for mode in ("raw", "qfq"):
+        assert [h["observed_count"] for h in reading["view"][mode]["horizon_counts"]] == [0, 0, 0]
+        surface = reading["view"]["endpoint_comparisons"][mode]
+        assert surface["scope_count"] == 4 and surface["incomplete_count"] == 0
+        assert [h["observed_count"] for h in surface["horizon_counts"]] == [4, 4, 4]
+        first = next(e for e in surface["entries"] if e["entity_id"] == "600000.SH")
+        assert [Decimal(h["change_pct"]) for h in first["horizons"]] == ([0, 0, -50] if mode == "raw" else [0] * 3)
+    tail = CollectionOpener()
+    continued = run(request, store, fresh, tail, previous=captured["reference"], max_queries=1)
+    assert source_calls(tail) == [("suspend_d", END, 0)]
+    assert set(continued["collection"]["units"]) == set(collection["units"])
+    assert all(continued["collection"]["units"][s] == u for s, u in collection["units"].items()
+               if u["status"] == "complete")
+
+
+def test_endpoint_priority_uses_each_exchange_calendar_and_deduplicates_original_queries():
+    _, store, fresh = memory()
+    request, opener = plan(start="20260701"), CollectionOpener()
+    for row in opener.rows["trade_cal", "SSE"]:
+        if row["cal_date"] == END:
+            row["is_open"] = 0
+    captured = run(request, store, fresh, opener, max_queries=20)
+    dates = ("20261015", "20261008", END, "20261009", "20260916", "20260917", "20260721", "20260722")
+    assert source_calls(opener)[4:] == [(api, day, 0) for day in dates for api in ("daily", "adj_factor")]
+    assert len(opener.calls) == len(set(source_calls(opener))) == 20
+    reading = read_collection_version(captured["reference"], REGISTRY, fresh(), read_as_of=NOW.isoformat())["view"]
+    assert reading["as_of"] is None
+    assert reading["as_of_by_exchange"] == {"SSE": "2026-10-15", "SZSE": "2026-10-16"}
+    for code, end, baseline in (("600000.SH", "2026-10-15", "2026-10-08"),
+                                ("000001.SZ", "2026-10-16", "2026-10-09")):
+        entry = next(e for e in reading["endpoint_comparisons"]["qfq"]["entries"] if e["entity_id"] == code)
+        assert all(h["status"] == "observed" for h in entry["horizons"])
+        assert entry["horizons"][0]["required_dates"] == [baseline, end]
+    assert captured["status"] == "partial"
+
+
+def test_started_nonendpoint_keeps_pages_remaining_attempts_and_wait_before_new_endpoints():
+    _, store, fresh = memory()
+    request = plan(start="20260701")
+    base = run(request, store, fresh, CollectionOpener(), max_queries=4)
+    slot, clock = "20260701:daily", Clock()
+    # count expands SSE only: 4,998 SSE + 2 SZSE + 1 excluded BJ = 5,001.
+    opener = CollectionOpener(count=4998)
+
+    def second_page_failure(api, params):
+        if params.get("offset") == "5000":
+            if len(opener.calls) == 3:
+                clock.seconds = 550
+            raise http_error(503, error="upstream_pool_exhausted", headers={"Retry-After": "50"})
+
+    opener.before = second_page_failure
+    old = retained_checkpoint(base["collection"]["plan"], slot, store, fresh, opener, clock)
+    assert old["state"]["control"]["state"] == "paused"
+    assert len(old["state"]["capture"]["pages"]) == 1
+    assert len(old["state"]["control"]["retry"]["attempts"]) == 2
+    assert old["state"]["capture"]["next_parameters"]["offset"] == "5000"
+    old_attempts = old["state"]["control"]["retry"]["attempts"]
+    assert old_attempts[-1]["checkpoint_not_before"] == Clock(600).now()
+    resumed_clock, later = Clock(575), CollectionOpener(count=4998)
+    later.before = lambda api, params: (_ for _ in ()).throw(
+        http_error(503, error="upstream_pool_exhausted", headers={"Retry-After": "50"}))
+    stopped = run(request, store, fresh, later, previous=base["reference"], clock=resumed_clock, max_queries=1)
+    assert source_calls(later) == [("daily", "20260701", 5000)] * 2
+    assert resumed_clock.waits == [25, 50]
+    terminal = stopped["collection"]["units"][slot]
+    state = restore_market_checkpoint(terminal["checkpoint"], REGISTRY, fresh())
+    assert terminal["status"] == "failed" and state["state"]["control"]["max_pages"] == 2
+    assert state["page_references"] == old["page_references"]
+    assert state["state"]["capture"]["pages"] == old["state"]["capture"]["pages"]
+    attempts = state["state"]["control"]["retry"]["attempts"]
+    assert [a["attempt"] for a in attempts] == [1, 2, 3, 4]
+    assert attempts[0] == old_attempts[0] and attempts[1]["checkpoint_not_before"] == old_attempts[1]["checkpoint_not_before"]
+    assert [a["checkpoint_wait_seconds"] for a in attempts] == [50, 50, 50, 0]
+    next_op = CollectionOpener()
+    continued = run(request, store, fresh, next_op, previous=stopped["reference"], clock=Clock(700), max_queries=1)
+    assert source_calls(next_op) == [("daily", END, 0)]
+    assert encoded(continued["collection"]["units"][slot]) == encoded(terminal)
 
 
 def test_plan_capture_retention_resume_increment_and_normal_windows():

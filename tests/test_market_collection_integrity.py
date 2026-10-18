@@ -1,18 +1,22 @@
 """Execution-owner integrity regressions through real source and store contracts."""
+from copy import deepcopy
+
 import pytest
 
 from decision_kernel.application.market_collection import CollectionSyncInterrupted, checkpoint_id
-from decision_kernel.application.market_collection_custody import restore_market_checkpoint, restore_market_collection
+from decision_kernel.application.market_collection_custody import (
+    retain_market_collection, restore_market_checkpoint, restore_market_collection,
+)
 from decision_kernel.application.market_collection_reading import (
     latest_market_reference, read_collection_version,
 )
 from decision_kernel.application.market_custody import QUERY_SCHEMA
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, StoreUnavailable, UnknownWrite, encoded
-from decision_kernel.infrastructure.relay_http import SECRET_ENV
+from decision_kernel.infrastructure.relay_http import RelayHTTP, SECRET_ENV
 from test_market_collection_sync import (
     Clock, CollectionOpener, END, REGISTRY, http_error, manifest_bodies,
-    memory, plan, run, source_calls,
+    memory, plan, retained_checkpoint, run, source_calls,
 )
 from test_market_custody import MemoryBackend
 
@@ -29,6 +33,128 @@ def paused_master(store, fresh):
                  pause_requested=lambda: "WORK_UNIT_COMPLETE" if len(opener.calls) >= 3 else None)
     assert paused["collection"]["units"]["master:SSE"]["status"] == "paused"
     return request, paused
+
+
+@pytest.mark.parametrize("status", ["blocked", "unknown-write"])
+def test_later_durable_stop_precedes_every_pending_endpoint(monkeypatch, status):
+    _, store, fresh = memory()
+    request = plan(start="20260701")
+    previous = run(request, store, fresh, CollectionOpener(), max_queries=4)
+    collection = deepcopy(previous["collection"])
+    slot = "20260701:suspend_d"
+    collection["units"][slot].update(status=status, reason_code="SYNTHETIC_RECONCILIATION_REQUIRED")
+    saved = retain_market_collection(collection, REGISTRY, store, fresh_reader=fresh,
+        predecessor=previous["reference"], custody_authorized=True)
+    monkeypatch.setattr(RelayHTTP, "validate_credential", lambda self: pytest.fail("credential before global stop"))
+    opener = CollectionOpener()
+    stopped = run(request, store, fresh, opener, previous=saved["reference"], max_queries=1)
+    assert stopped["receipt"]["latest_attempt"]["status"] == "blocked" and opener.calls == []
+    assert stopped["receipt"]["latest_attempt"]["source_requests"] == 0
+    assert encoded(stopped["collection"]["units"]) == encoded(collection["units"])
+
+
+@pytest.mark.parametrize("kind", ["in-flight", "response", "auth", "rate", "secret"])
+def test_hidden_later_control_stops_endpoints_before_credentials_or_source(monkeypatch, kind):
+    _, store, fresh = memory()
+    request = plan(start="20260701")
+    previous = run(request, store, fresh, CollectionOpener(), max_queries=4)
+    slot, original = "20260701:daily", CollectionOpener()
+    if kind in {"auth", "rate"}:
+        original.before = lambda api, params: (_ for _ in ()).throw(
+            http_error(403 if kind == "auth" else 429, headers={"Retry-After": "invalid"}))
+    elif kind == "secret":
+        original.edits["20260701", "daily"] = lambda rows: [{**row, "close": "synthetic-key-only"} for row in rows]
+    hidden = retained_checkpoint(previous["collection"]["plan"], slot, store, fresh, original, Clock(),
+        stop_phase=kind if kind in {"in-flight", "response"} else None)
+    if kind in {"auth", "rate", "secret"}:
+        assert hidden["state"]["control"]["state"] == "terminal"
+    else:
+        assert hidden["state"]["control"]["state"] == "executing"
+        assert hidden["state"]["control"]["retry"]["phase"] == kind
+    assert previous["collection"]["units"][slot]["checkpoint"] is None
+    monkeypatch.setattr(RelayHTTP, "validate_credential", lambda self: pytest.fail("credential before hidden stop"))
+    later = CollectionOpener()
+    stopped = run(request, store, fresh, later, previous=previous["reference"], max_queries=1, clock=Clock(1))
+    assert later.calls == [] and stopped["receipt"]["latest_attempt"]["source_requests"] == 0
+    assert stopped["receipt"]["latest_attempt"]["reason_code"] == (
+        "RELAY_CHECKPOINT_INFLIGHT" if kind in {"in-flight", "response"} else "RELAY_CHECKPOINT_GLOBAL_STOP")
+    assert stopped["receipt"]["execution_error_persisted"] is False
+    durable = restore_market_collection(stopped["reference"], REGISTRY, fresh())["collection"]
+    assert encoded(durable["units"]) == encoded(previous["collection"]["units"])
+    assert encoded(latest_market_reference(fresh(), REGISTRY,
+        checkpoint_id=checkpoint_id(request, slot))) == encoded(hidden["reference"])
+
+
+def test_hidden_complete_later_query_is_adopted_before_endpoints_without_credentials(monkeypatch):
+    _, store, fresh = memory()
+    request = plan(start="20260701")
+    previous = run(request, store, fresh, CollectionOpener(), max_queries=4)
+    slot, opener = "20260701:daily", CollectionOpener()
+    old = retained_checkpoint(previous["collection"]["plan"], slot, store, fresh, opener, Clock())
+    assert old["state"]["control"]["state"] == "complete"
+    monkeypatch.delenv(SECRET_ENV, raising=False)
+    callbacks = []
+
+    def selected_only(owner):
+        callbacks.append(owner)
+        assert owner == checkpoint_id(request, slot)
+        return old["reference"]
+
+    adopted = run(request, store, fresh, previous=previous["reference"], max_queries=1,
+        clock=Clock(1), latest_checkpoint=selected_only)
+    assert callbacks == [checkpoint_id(request, slot)]
+    assert adopted["collection"]["units"][slot]["status"] == "complete"
+    assert adopted["collection"]["units"][END + ":daily"]["status"] == "pending"
+    assert adopted["receipt"]["latest_attempt"]["source_requests"] == 0 and len(opener.calls) == 1
+    reading = read_collection_version(adopted["reference"], REGISTRY, fresh())
+    assert reading["sources"][slot]["status"] == "restored" and reading["source_requests"] == 0
+
+
+def test_newly_derived_date_owners_are_checked_before_more_source(monkeypatch):
+    _, store, fresh = memory()
+    request = plan(start="20260701")
+    monkeypatch.delenv(SECRET_ENV, raising=False)
+    entered = run(request, store, fresh, max_queries=1)
+    initial = restore_market_collection(entered["reference"], REGISTRY, fresh())["collection"]
+    assert initial["plan"]["sessions"] == [] and len(initial["units"]) == 4
+    opener = CollectionOpener()
+    for venue in ("SSE", "SZSE"):
+        retained_checkpoint(request, "calendar:" + venue, store, fresh, opener, Clock())
+    proved = {**request, "sessions": opener.days}
+    hidden = retained_checkpoint(proved, "20260701:daily", store, fresh, opener, Clock(), stop_phase="in-flight")
+    monkeypatch.setattr(RelayHTTP, "validate_credential", lambda self: pytest.fail("source before new owner scan"))
+    later = CollectionOpener()
+    stopped = run(request, store, fresh, later, previous=entered["reference"], max_queries=3, clock=Clock(1))
+    assert later.calls == [] and stopped["receipt"]["latest_attempt"]["source_requests"] == 0
+    assert stopped["receipt"]["latest_attempt"]["reason_code"] == "RELAY_CHECKPOINT_INFLIGHT"
+    assert stopped["collection"]["plan"]["sessions"] == opener.days
+    assert all(stopped["collection"]["units"]["calendar:" + v]["status"] == "complete" for v in ("SSE", "SZSE"))
+    assert encoded(latest_market_reference(fresh(), REGISTRY,
+        checkpoint_id=checkpoint_id(request, "20260701:daily"))) == encoded(hidden["reference"])
+
+
+@pytest.mark.parametrize("kind", ["in-flight", "auth"])
+def test_hidden_repair_stop_blocks_ordinary_work_without_advancing_the_repair(monkeypatch, kind):
+    from decision_kernel.application.market_collection_repair import REPAIR_SLOTS, repair_checkpoint_id
+    from test_market_terminal_repair import repair_fixture, repair_run
+    fixture = repair_fixture()
+    granted = repair_run(fixture, activate=True)
+    slot, original = REPAIR_SLOTS[-1], CollectionOpener()
+    if kind == "auth":
+        original.before = lambda api, params: (_ for _ in ()).throw(http_error(403))
+    retained_checkpoint(granted["collection"]["plan"], slot, fixture["store"], fixture["fresh"],
+        original, fixture["clock"], owner=repair_checkpoint_id(slot),
+        stop_phase="in-flight" if kind == "in-flight" else None)
+    monkeypatch.setattr(RelayHTTP, "validate_credential", lambda self: pytest.fail("ordinary source after repair stop"))
+    later = CollectionOpener()
+    stopped = run(fixture["plan"], fixture["store"], fixture["fresh"], later,
+        previous=granted["reference"], clock=fixture["clock"], max_queries=1)
+    assert later.calls == [] and stopped["receipt"]["latest_attempt"]["source_requests"] == 0
+    assert stopped["receipt"]["latest_attempt"]["reason_code"] == (
+        "RELAY_CHECKPOINT_INFLIGHT" if kind == "in-flight" else "RELAY_CHECKPOINT_GLOBAL_STOP")
+    assert stopped["receipt"]["execution_error_persisted"] is False
+    assert stopped["collection"]["repair"] == granted["collection"]["repair"]
+    assert stopped["collection"]["units"] == granted["collection"]["units"]
 
 
 def test_missing_credential_blocks_only_this_operation_then_resumes_saved_page(monkeypatch):

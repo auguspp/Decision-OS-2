@@ -86,6 +86,7 @@ class FTShareHTTP:
         self.last_retry_after = ('missing', None)
         key = self.validate_credential()
         request = Request(exact, method='GET', headers={'FTSHARE_API_KEY': key,
+            'X-Client-Name': 'ft-claw',
             'Accept': 'application/json', 'Content-Type': 'application/json',
             'Accept-Encoding': 'identity', 'User-Agent': 'DecisionOS2-FTShareDaily/0.1'})
         self.requests += 1

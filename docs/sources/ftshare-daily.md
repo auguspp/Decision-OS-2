@@ -12,6 +12,7 @@
 
 - 固定 HTTPS origin 为 `https://market.ft.tech`，前缀 `/gateway`；凭据仅发送到该 origin 的已列举接口，不接受任意 URL、代理、跳转或调用方请求头。
 - 日 K 使用 `GET /api/v2/market/data/stock-candlesticks/batch`；`symbols` 为重复 query 参数，`interval_unit=day`，`adjust_kind=none|forward`。
+- 请求头沿官方 handler 提供 `FTSHARE_API_KEY`、`Content-Type: application/json` 及 `X-Client-Name: ft-claw`；本项目仍使用自己的 User-Agent。客户端标识是官方请求兼容性的一部分，不能据此保证账户有接口权限。
 - `since_ts_millis` / `until_ts_millis` 按 UTC+8 完整自然日首尾限定。本地最多 100 个 SH/SZ A 股标识、119 个自然日；同时给出时间上下界，不发送可能截断整段的 `limit`。
 - 业务成功外层为 `code=200`、`message=success` 和 `[symbol, bars]` 列表。每个请求证券必须出现一次；明确空列表和遗漏证券分别处理。遗漏证券、重复日、错误日期及时间越界拒绝整批；可定位的 OHLC / 成交字段错误按证券和日期隔离。
 - 价格和成交额用 Decimal 精确字符串保留，禁止浮点改值。成交额单位为 CNY；成交量保存原整数，单位尚未证明，不能直接与另一来源不同单位的 volume 相等比较。
@@ -36,5 +37,13 @@
 原始 HTTP 正文逐个保留字节数和 SHA-256，另有请求、基准引用及计数回执；release 阶段在不含来源 Secret 的环境重新核验原生 private / main，再上传同一私有仓库的诊断 artifact。SourceInput 的原始正文与 normalized excerpt 明确分开，哈希只证明字节身份，不代替来源认证或保管授权。日配额 1000 仅是待核账户假设；没有上游计量证据时不得把 HTTP 次数等同计费单位或宣称每日余额。
 
 ## 收口所需后续证据
+
+### 2026-10-18 首次实际运行
+
+[运行 39141799035/1](https://github.com/auguspp/Decision-OS-2/actions/runs/39141799035) 使用 main `fd60f1f41e3d311132a1694704d12cda0d605899`，在第一个双股原价请求收到 HTTP 403 后停止：实际请求 1/6，已合格 candle checks 0/5，其余五项未请求。原 artifact `12141618961` 为 34,673 字节，SHA-256 为 `c51d2ea9ddc5167b9de0056716338252fcfd8bad1e9172121c425e5aee59a02f`；原生身份、ZIP 及 Source10 基准已独立复原。该运行不写 records，也没有可用于跨源、重复或历史覆盖验收的 FTShare 行情正文。
+
+对照官方固定版本 handler，发现当前请求遗漏 `X-Client-Name: ft-claw`。补齐该头是已知的代码修正，403 的具体原因仍未确定。不能把这次拒绝直接解释为无效密钥，也不能声称修正后必定可用。
+
+`ftshare-check-continue` 是同一 study 的一次有限接续，不是新的六次预算。prepare 必须验证原失败 run 和原始 artifact，核实际已用 1 次，并验证唯一 continuation、当前 main CI 与 private。接续最多五次：双股 raw、同请求重复、100 股单日、50 股整段 raw、同 50 股整段 forward；可选因子查询取消。总计最多 `1 + 5 = 6` 次。任一失败即停止余项；原失败继续保留，不能 rerun 或另开 continuation 重置额度。只有五项 candle 实际合格才可能形成日线来源资格，因子语义仍未验证。
 
 #10 仍需真实运行原始 artifact、跨源同日原价对照、全声明股票范围的缺失分母、严格 5 / 20 / 60 日窗口、独立 Store 读回和正常 CLI / room 消费。生产切换应使用独立 FTShare 身份，引用旧 Relay 集合为前驱，保留旧失败账，不复制一套 Store 或用有限样本签全市场完成。未来自然日的更新稳定性，只按实际观察积累。

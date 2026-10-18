@@ -82,13 +82,13 @@ def check_private(api, selected):
     require(main.get('object', {}).get('sha') == selected['code_sha'], 'FTSHARE_MAIN_MOVED')
 
 
-def native_ready(api, selected):
+def native_ready(api, selected, *, title=TITLE):
     check_private(api, selected)
     run = api.request('GET', PREFIX + '/actions/runs/' + selected['run_id'])
     require(run.get('id') == int(selected['run_id']) and run.get('head_sha') == selected['code_sha']
         and run.get('head_branch') == 'main' and run.get('run_attempt') == 1
         and run.get('event') == 'workflow_dispatch' and run.get('path') == WORKFLOW
-        and run.get('display_title') == TITLE and run.get('status') == 'in_progress'
+        and run.get('display_title') == title and run.get('status') == 'in_progress'
         and run.get('repository', {}).get('id') == 1420041744, 'FTSHARE_NATIVE_RUN_IDENTITY')
     ci = api.request('GET', PREFIX + '/actions/workflows/ci.yml/runs?' + urlencode({
         'branch': 'main', 'event': 'push', 'head_sha': selected['code_sha'], 'per_page': 5}))
@@ -104,7 +104,7 @@ def native_ready(api, selected):
         history = api.request('GET', PREFIX + '/actions/workflows/ashare-data.yml/runs?'
             + urlencode({'event': 'workflow_dispatch', 'per_page': 100, 'page': page})).get('workflow_runs')
         require(isinstance(history, list) and len(history) <= 100, 'FTSHARE_RUN_INVENTORY')
-        matches.extend(r for r in history if r.get('display_title') == TITLE)
+        matches.extend(r for r in history if r.get('display_title') == title)
         if len(history) < 100:
             break
     else:

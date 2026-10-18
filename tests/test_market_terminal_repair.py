@@ -257,7 +257,10 @@ def test_unknown_checkpoint_write_reconciles_the_same_chain_without_source_repla
 
 
 def test_two_pages_charge_each_attempt_once_and_maximum_additional_requests_is_32():
-    fixture = repair_fixture()
+    # Only the two repaired sessions and their successful evidence day are
+    # relevant here. Keep the production 5000-row page boundary and all four
+    # exhausted owners without carrying unrelated July–October query slots.
+    fixture = repair_fixture(only_three_sessions=True)
     current = repair_run(fixture, activate=True)
     opener = CollectionOpener(count=4998)  # 5001 synthetic whole-market rows, two pages.
     attempts = {}
@@ -269,13 +272,22 @@ def test_two_pages_charge_each_attempt_once_and_maximum_additional_requests_is_3
             raise TimeoutError("SYNTHETIC_FINITE_PAGE_RETRY")
 
     opener.before = succeed_fourth
-    for index, slot in enumerate(REPAIR_SLOTS, 1):
-        current = repair_run(fixture, previous=current["reference"], opener=opener, attempt_id=f"run-200-1-u{index}")
-        unit = current["collection"]["repair"]["units"][slot]
-        assert unit["status"] == "complete" and unit["reserved_requests"] == 8
-        state = restore_market_checkpoint(unit["checkpoint"], REGISTRY, fixture["fresh"]())["state"]
-        assert len(state["capture"]["pages"]) == 2 and checkpoint_reserved_requests(state) == 8
+    # Two real continuations retain the cross-run allowance proof while each
+    # shares admission/restoration for two owners. Their six retries per owner
+    # consume 360 synthetic seconds per run, below the real 600-second limit.
+    for index in range(1, 3):
+        current = repair_run(fixture, previous=current["reference"], opener=opener,
+            attempt_id=f"run-200-1-u{index}", max_queries=2)
+        assert current["receipt"]["repair"]["reserved_requests"] == index * 16
+        for slot in REPAIR_SLOTS[(index - 1) * 2:index * 2]:
+            unit = current["collection"]["repair"]["units"][slot]
+            assert unit["status"] == "complete" and unit["reserved_requests"] == 8
+            state = restore_market_checkpoint(unit["checkpoint"], REGISTRY, fixture["fresh"]())["state"]
+            assert len(state["capture"]["pages"]) == 2 and checkpoint_reserved_requests(state) == 8
+            assert [len(page["attempts"]) for page in state["capture"]["pages"]] == [4, 4]
     assert len(opener.calls) == 32 and set(attempts.values()) == {4}
+    assert all(parameters["limit"] == "5000" for _, parameters in opener.calls)
+    assert {offset for _, _, offset in attempts} == {"0", "5000"}
     assert current["status"] == "repair-complete" and current["receipt"]["repair"]["reserved_requests"] == 32
     assert current["receipt"]["repair"]["original_requests"] == 16
 

@@ -131,9 +131,43 @@ def _pending():
 
 
 def _slots(plan):
-    # Most recent daily reading is useful while older history is still filling.
+    # Canonical inventory; execution priority never changes the retained slots.
     return [*("calendar:" + v for v in EXCHANGES), *("master:" + v for v in EXCHANGES),
             *(d + ":" + api for d in reversed(plan["sessions"]) for api in APIS)]
+
+
+def _execution_slots(collection, calendars, started):
+    """Resume original controls, then fill calendar endpoints and the old tail."""
+    slots = _slots(collection["plan"])
+    priority = []
+    for horizon in (5, 20, 60):
+        for venue in EXCHANGES:
+            days = calendars.get(venue, ())
+            if len(days) <= horizon:
+                continue
+            for day in (days[-1], days[-horizon - 1]):
+                for api in ("daily", "adj_factor"):
+                    slot = day + ":" + api
+                    if slot in collection["units"] and collection["units"][slot]["status"] == "pending":
+                        priority.append(slot)
+    return list(dict.fromkeys([s for s in slots if s in started]
+        + [s for s in slots if s.startswith(("calendar:", "master:"))] + priority + slots))
+
+
+def _safe_checkpoint(state):
+    if state is None:
+        return
+    retry = state["control"]["retry"]
+    frozen = state["control"]["state"] in {"complete", "terminal"}
+    # A complete checkpoint legitimately retains its accepted response phase.
+    require(frozen or not retry or retry["phase"] not in {"in-flight", "response"},
+            "RELAY_CHECKPOINT_INFLIGHT")
+    failures = [state["capture"].get("failure")]
+    if retry and retry["attempts"]:
+        failures.append(retry["attempts"][-1].get("failure"))
+    require(all((failure or {}).get("classification") not in {"auth-or-entitlement", "rate-limit"}
+                for failure in failures) and state["capture"].get("error") != "RELAY_SECRET_REFLECTED",
+            "RELAY_CHECKPOINT_GLOBAL_STOP")
 
 
 def _qualified(result, use, plan, registry):
@@ -354,6 +388,9 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
     selected_slot = None
     persistence_error = None
     calendars_checked = False
+    calendars_by_exchange = {}
+    checked_slots, started_slots = set(), set()
+    repair_checked = preflight_active = False
     execution_error_persisted = True
 
     def save(action, *args, **kwargs):
@@ -401,9 +438,11 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         with market_read_scope(fresh_market_reader(store, fresh_reader)) as calendars:
             for venue in EXCHANGES:
                 result = restore_unit("calendar:" + venue, calendars)
-                dates.update(d.replace("-", "") for d in qualified_trade_calendar(result,
+                days = [d.replace("-", "") for d in qualified_trade_calendar(result,
                     registry=registry, exchange=venue, start=p["start"], end=p["calendar_end"])
-                    if _date(p["start"]) <= date.fromisoformat(d) <= _date(p["end"]))
+                    if _date(p["start"]) <= date.fromisoformat(d) <= _date(p["end"])]
+                calendars_by_exchange[venue] = days
+                dates.update(days)
         days = sorted(dates)
         require(not p["sessions"] or p["sessions"] == days, "ASHARE_DERIVED_SESSIONS_CHANGED")
         calendars_checked = True
@@ -426,6 +465,73 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
                         "ASHARE_REFRESH_CANNOT_RESET_FAILED_QUERY")
             collection["units"][slot] = unit
 
+    def reconcile_checkpoint(slot, unit, checkpoints, *, ordinary=True, resolver=False):
+        use, max_pages = unit_request(collection["plan"], slot, registry)
+        if ordinary:
+            owner = checkpoint_id(collection["plan"], slot)
+        else:
+            from decision_kernel.application.market_collection_repair import repair_checkpoint_id
+            owner = repair_checkpoint_id(slot)
+        cp_ref, state = unit["checkpoint"], None
+        if cp_ref is not None:
+            restored = restore_market_checkpoint(cp_ref, registry, checkpoints)
+            if ordinary:
+                # A reused control retains its original generation's owner.
+                owner = restored["checkpoint_id"]
+            else:
+                require(restored["checkpoint_id"] == owner, "ASHARE_CHECKPOINT_OWNER_CHANGED")
+            state = restored["state"]
+        newer = latest_market_reference(checkpoints, registry, checkpoint_id=owner)
+        require(newer is not None or cp_ref is None, "ASHARE_CHECKPOINT_ROLLBACK")
+        if resolver and latest_checkpoint is not None:
+            offered = latest_checkpoint(owner)
+            require_checkpoint_descendant(offered, cp_ref, registry, checkpoints)
+            require(same_reference(offered, newer), "ASHARE_CHECKPOINT_ROLLBACK")
+        if newer is not None:
+            require_checkpoint_descendant(newer, cp_ref, registry, checkpoints)
+            restored = restore_market_checkpoint(newer, registry, checkpoints)
+            require(restored["checkpoint_id"] == owner, "ASHARE_CHECKPOINT_OWNER_CHANGED")
+            cp_ref, state = restored["reference"], restored["state"]
+        if state is not None:
+            require(state["control"]["request"] == use and state["control"]["max_pages"] == max_pages,
+                    "RELAY_CHECKPOINT_SCOPE_CHANGED")
+        _safe_checkpoint(state)
+        return owner, cp_ref, state
+
+    def preflight():
+        nonlocal selected_slot, preflight_active, repair_checked
+        units = collection["units"]
+        repairs = collection.get("repair", {}).get("units", {})
+        # A later known stop cannot be hidden by an earlier useful endpoint.
+        for unit in [*units.values(), *repairs.values()]:
+            if unit["status"] in {"blocked", "unknown-write"}:
+                collection["attempt"].update(status="blocked", reason_code=unit["reason_code"])
+                return False
+        candidates = [s for s in _slots(collection["plan"]) if s not in checked_slots
+                      and units[s]["status"] not in {"complete", "failed"}]
+        repair_candidates = [] if repair_checked else [s for s, u in repairs.items()
+                                                       if u["status"] not in {"complete", "failed"}]
+        if candidates or repair_candidates:
+            preflight_active = True
+            # All owners share one independent native snapshot and the original
+            # API budget. Keep only small scheduling facts, never every capture.
+            with market_read_scope(reader) as checkpoints:
+                for slot in candidates:
+                    selected_slot = slot
+                    _, cp_ref, _ = reconcile_checkpoint(slot, units[slot], checkpoints)
+                    if cp_ref is not None or units[slot]["status"] != "pending":
+                        started_slots.add(slot)
+                selected_slot = None
+                # Ordinary sync never continues a repair or changes its ledger.
+                # Safe pending repairs do not block unrelated ordinary queries.
+                for slot in repair_candidates:
+                    reconcile_checkpoint(slot, repairs[slot], checkpoints, ordinary=False)
+            preflight_active = False
+        checked_slots.update(units)
+        repair_checked = True
+        selected_slot = None
+        return True
+
     try:
         # The durable, read-back plan precedes credentials and any Relay request.
         persist_collection()
@@ -433,49 +539,32 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         collection["attempt"]["status"] = "in-progress"
         session = None
         queries = 0
-        index = 0
-        while index < len(_slots(collection["plan"])):
-            slot = _slots(collection["plan"])[index]
-            index += 1
+        while queries < max_queries:
+            # Calendars may have added slots since the preceding query. Check
+            # their native owners before selecting any newly available work.
+            if not preflight():
+                break
+            slot = None
+            for candidate in _execution_slots(collection, calendars_by_exchange, started_slots):
+                if collection["units"][candidate]["status"] in {"complete", "failed"}:
+                    continue
+                if candidate.startswith("master:"):
+                    if collection["units"]["calendar:" + candidate[7:]]["status"] != "complete":
+                        continue
+                elif not candidate.startswith("calendar:"):
+                    if not calendars_checked or not any(collection["units"]["master:" + v]["status"] == "complete" for v in EXCHANGES):
+                        continue
+                slot = candidate
+                break
+            if slot is None:
+                break
             unit = collection["units"][slot]
-            if unit["status"] == "complete":
-                continue
-            if unit["status"] == "failed":
-                # A known local terminal result stays a gap; it cannot consume
-                # every later finite unit and starve still-unattempted peers.
-                continue
-            if unit["status"] in {"blocked", "unknown-write"}:
-                collection["attempt"].update(status="blocked", reason_code=unit["reason_code"])
-                break
-            if queries >= max_queries:
-                break
-            if slot.startswith("master:"):
-                if collection["units"]["calendar:" + slot[7:]]["status"] != "complete":
-                    continue
-            elif not slot.startswith("calendar:"):
-                if not calendars_checked or not any(collection["units"]["master:" + v]["status"] == "complete" for v in EXCHANGES):
-                    continue
             selected_slot = slot
             use, max_pages = unit_request(collection["plan"], slot, registry)
-            cp_id = checkpoint_id(collection["plan"], slot)
-            cp_ref = unit["checkpoint"]
-            state = None
             # A fresh scope can see checkpoints published after the initial
             # root; retain no pinned snapshot across the writes below.
             with market_read_scope(reader) as checkpoints:
-                if cp_ref is not None:
-                    restored = restore_market_checkpoint(cp_ref, registry, checkpoints)
-                    cp_id, state = restored["checkpoint_id"], restored["state"]
-                newer = latest_market_reference(checkpoints, registry, checkpoint_id=cp_id)
-                if latest_checkpoint is not None:
-                    offered = latest_checkpoint(cp_id)
-                    require_checkpoint_descendant(offered, cp_ref, registry, checkpoints)
-                    require(same_reference(offered, newer), "ASHARE_CHECKPOINT_ROLLBACK")
-                if newer is not None:
-                    require_checkpoint_descendant(newer, cp_ref, registry, checkpoints)
-                    restored = restore_market_checkpoint(newer, registry, checkpoints)
-                    require(restored["checkpoint_id"] == cp_id, "ASHARE_CHECKPOINT_OWNER_CHANGED")
-                    cp_ref, state = restored["reference"], restored["state"]
+                cp_id, cp_ref, state = reconcile_checkpoint(slot, unit, checkpoints, resolver=True)
             unit.update(status="in-progress", reason_code=None, checkpoint=cp_ref)
 
             def checkpoint_writer(value):
@@ -488,12 +577,6 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
                 emit()
 
             frozen = state is not None and state["control"]["state"] in {"complete", "terminal"}
-            if state is not None and not frozen:
-                retry = state["control"].get("retry")
-                require(not retry or retry["phase"] not in {"in-flight", "response"}, "RELAY_CHECKPOINT_INFLIGHT")
-                require(not retry or not retry["attempts"] or
-                    (retry["attempts"][-1].get("failure") or {}).get("classification") not in
-                    {"auth-or-entitlement", "rate-limit"}, "RELAY_CHECKPOINT_GLOBAL_STOP")
             if session is None and not frozen:
                 source_client = source_client or RelayHTTP(request_timeout_seconds=90)
                 source_before = source_client.requests
@@ -528,6 +611,7 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
                     emit()
                     break
             emit()
+            selected_slot = None
             derive_sessions()
         if collection["attempt"]["status"] != "blocked":
             collection["attempt"].update(status="complete" if _partition_complete(collection) else "partial")
@@ -552,9 +636,10 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
             # A store outage is not a terminal source observation. Leave the
             # durable source state available for the next authorized operation.
             raise
-        if isinstance(exc, (RecordError, MarketInputError, CheckpointStateError)) and selected_slot is not None:
+        if isinstance(exc, (RecordError, MarketInputError, CheckpointStateError)) and (selected_slot is not None or preflight_active):
             reason = _reason(exc)
-            collection["units"][selected_slot].update(query=None, status="blocked", reason_code=reason)
+            if selected_slot is not None:
+                collection["units"][selected_slot].update(query=None, status="blocked", reason_code=reason)
             collection["attempt"].update(status="blocked", reason_code=reason)
             # Invalid caller control or missing credentials are errors in this
             # operation, not observations that permanently terminate a source.

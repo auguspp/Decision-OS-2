@@ -595,13 +595,15 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert flow["permissions"] == {} and flow["concurrency"]["group"] == "decision-os-relay-source"
     assert flow["concurrency"]["cancel-in-progress"] == "false"
     inputs = flow["on"]["workflow_dispatch"]["inputs"]
-    assert inputs["operation"]["options"] == ["status", "sync", "repair"]
+    assert inputs["operation"]["options"] == ["status", "sync", "repair", "ftshare-check"]
     assert inputs["access_and_custody_confirmed"]["default"] == "false"
     assert inputs["public_rights_confirmed"]["default"] == "false"
-    assert set(flow["jobs"]) == {"sync", "status", "repair", "rejected-sync"}
+    assert set(flow["jobs"]) == {"sync", "status", "repair", "ftshare-check", "rejected-sync"}
     rejected = flow["jobs"]["rejected-sync"]
     assert rejected["permissions"] == {"contents": "read"}
-    assert rejected["if"].count("!= true") == 5
+    assert rejected["if"].count("!= true") == 7
+    assert "inputs.operation == 'ftshare-check'" in rejected["if"]
+    assert "inputs.public_rights_confirmed != false" in rejected["if"]
     assert "github.event.repository.private" in rejected["if"]
     assert len(rejected["steps"]) == 1 and "exit 1" in rejected["steps"][0]["run"]
     assert "secrets." not in str(rejected) and "actions/checkout" not in str(rejected)

@@ -455,7 +455,7 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
                     (retry["attempts"][-1].get("failure") or {}).get("classification") not in
                     {"auth-or-entitlement", "rate-limit"}, "RELAY_CHECKPOINT_GLOBAL_STOP")
             if session is None and not frozen:
-                source_client = source_client or RelayHTTP()
+                source_client = source_client or RelayHTTP(request_timeout_seconds=90)
                 source_before = source_client.requests
                 source_client.validate_credential()
                 session = RetryingRelay(source_client, sleep=sleep, monotonic=monotonic,

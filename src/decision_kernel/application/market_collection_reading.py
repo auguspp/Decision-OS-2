@@ -10,7 +10,7 @@ from decision_kernel.application.market_collection_custody import (
     collection_source_id, collection_source_prefix, restore_market_collection,
 )
 from decision_kernel.application.market_collection import (
-    EXCHANGES, _partition_complete, _qualified, _reason, unit_request, validate_collection,
+    EXCHANGES, _partition_complete, _qualified, _reason, effective_unit, unit_request, validate_collection,
 )
 from decision_kernel.application.market_collection_inputs import read_ashare_collection
 from decision_kernel.application.relay_registry import RelayRegistry
@@ -76,7 +76,7 @@ def inspect_market_chain(store, registry, *, collection_id=None, generation=None
         require(len(paths) <= MAX_CURSOR_VERSIONS, "ASHARE_CURSOR_VERSION_BOUND")
         if not paths:
             return {"reference": None, "node_count": 0, "unique_body_bytes": 0}
-        parents, refs, verified, bodies, total = {}, {}, {}, set(), 0
+        parents, refs, verified, repair_nodes, bodies, total = {}, {}, {}, set(), set(), 0
 
         def inspect(reference):
             nonlocal total
@@ -102,6 +102,8 @@ def inspect_market_chain(store, registry, *, collection_id=None, generation=None
             require(parent is None or parent.manifest.repository == reader.backend.repository,
                     "ASHARE_CURSOR_FOREIGN_PREDECESSOR")
             verified[identity] = parent
+            if checkpoint_id is None and "repair" in body["collection"]:
+                repair_nodes.add(identity)
             return parent
 
         for path in paths:
@@ -117,6 +119,17 @@ def inspect_market_chain(store, registry, *, collection_id=None, generation=None
             parent = verified[encoded(asdict(reference))]
             if parent is not None:
                 inspect(parent)
+            if checkpoint_id is None and (encoded(asdict(reference)) in repair_nodes or
+                    parent is not None and encoded(asdict(parent)) in repair_nodes):
+                from decision_kernel.application.market_collection_repair import validate_repair_transition
+                # Keep no historical collection bodies in the cursor cache.
+                # These exact local snapshot reads are a bounded second pass,
+                # with no recursive restore or repeated ancestor traversal.
+                _, current_body = read_manifest(reference, registry, reader)
+                old_body = None if parent is None else read_manifest(parent, registry, reader)[1]
+                validate_repair_transition(None if old_body is None else old_body["collection"],
+                    current_body["collection"], registry,
+                    predecessor=None if parent is None else asdict(parent))
         tips = set(paths) - {p for p in parents.values() if p is not None}
         require(len(tips) == 1, "ASHARE_CURSOR_AMBIGUOUS")
         tip = next(iter(tips))
@@ -180,7 +193,7 @@ def read_collection_version(reference, registry, store, *, offset=0, limit=50,
         p = chosen["plan"]
 
         def load(slot, *, owner=chosen, prefix=""):
-            unit = owner["units"].get(slot)
+            unit = effective_unit(owner, slot)
             key = prefix + slot
             if unit is None or unit["status"] != "complete":
                 outcomes[key] = {"status": "not-retained", "reference": None,
@@ -199,6 +212,11 @@ def read_collection_version(reference, registry, store, *, offset=0, limit=50,
                     "reason_code": _reason(exc)}
                 return None
             outcomes[key] = {"status": "restored", "reference": deepcopy(unit["query"]), "reason_code": None}
+            if "repair" in owner and slot in owner["repair"]["units"] and unit != owner["units"].get(slot):
+                grant = owner["repair"]["grant"]
+                outcomes[key]["repair"] = {"grant_id": grant["grant_id"], "reason": grant["reason"],
+                    "origin": deepcopy(grant["request"]["terminal_references"][slot]),
+                    "checkpoint": deepcopy(unit["checkpoint"])}
             return result
 
         calendars = {v: load("calendar:" + v) for v in EXCHANGES}

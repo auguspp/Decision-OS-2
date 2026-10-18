@@ -11,9 +11,11 @@
 `reference` 必须是以下现役完整整根 SourceRef 之一：
 
 - `market-reading-custody-v1`，其 reading 为 `relay-security-stock-reading-v1`，沿原 `read_stored_market` 读取。
-- `market-collection-custody-v1`，沿 `read_collection_version` 恢复原计划、日历、主表和按日分区；GitHub 后端使用同一绑定及请求预算的只读 `GitMarketReader` 固定原生快照。
+- `market-collection-custody-v1` 或 `market-collection-custody-v2`，沿 `read_collection_version` 恢复原计划、日历、主表和按日分区；GitHub 后端使用同一绑定及请求预算的只读 `GitMarketReader` 固定原生快照。v2 只增加[一次有限维修](../architecture/ashare-data-continuity.md#terminal-repair)的不可变 grant 和独立检查点/查询引用，不更换行情 schema 或收益算法。
 
 根、query、页、Registry 和选择由各自原保管层核验；根路径只选择核验器，不是内容已合格的证明。其他家族仍拒绝。计数检查回执、仅有缺失日期的 factor-audit、研究中的一个价格、裸 SourceInput 和调用者手填收益均不能替代该根。没有合法保管源不启动补抓，也不将私有供应商数据转成公开输出。
+
+对 v2 根，只有完整并独立恢复合格的维修 query 才能按原槽进入正常读取。原失败 unit 和终态仍保留，维修来源与有效计数另行显示；原 `current-complete` / `current-partial` 服务状态及缺口含义继续适用。维修中的成功页、尚未完整的 capture 或一份 grant 都不构成行情输入，读取不会发布 grant 或消耗来源额度。
 
 每页1—50证券（默认20），offset沿原读取器；可指定六位代码加 `.SH` 或 `.SZ`。下一页从本次原 `page.next_offset` 导出，固定同一根而不选择最新；原价/复权必须同页。未知证券的空查询不改变完整主表分母；证券代码不是永久公司身份。目录分页与市场分页各自固定，不把同页研究当市场发现或公司匹配。
 

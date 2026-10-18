@@ -22,6 +22,27 @@ MAX_CALLS = 4
 MAX_BODY = 4 * 1024 * 1024
 DAYS = ('20261015', '20261016')
 
+# A separately authorized OHLCV test; the original one-shot study is immutable.
+FULL_STUDY = 'relay-ohlcv-bulk-retest-20261018'
+FULL_FIELDS = 'ts_code,trade_date,open,high,low,close,vol,amount'
+FULL_MAX_CALLS = 5
+
+
+def full_plan():
+    """Fresh bounded study: small control, normal page, full day, then two days."""
+    common = {'fields': FULL_FIELDS, 'offset': '0'}
+    return [
+        {'id': 'ohlcv-capability', 'kind': 'capability', 'api': 'daily', 'parameters': {}},
+        {'id': 'ohlcv-single-1000', 'kind': 'quote', 'api': 'daily',
+         'parameters': {**common, 'trade_date': DAYS[1], 'limit': '1000'}},
+        {'id': 'ohlcv-single-5000', 'kind': 'quote', 'api': 'daily',
+         'parameters': {**common, 'trade_date': DAYS[1], 'limit': '5000'}},
+        {'id': 'ohlcv-single-6000', 'kind': 'quote', 'api': 'daily',
+         'parameters': {**common, 'trade_date': DAYS[1], 'limit': '6000'}},
+        {'id': 'ohlcv-two-days-12000', 'kind': 'quote', 'api': 'daily',
+         'parameters': {**common, 'start_date': DAYS[0], 'end_date': DAYS[1], 'limit': '12000'}},
+    ]
+
 
 def plan():
     """Not caller-selectable dates/URLs/limits; this authorization is finite."""
@@ -90,6 +111,63 @@ def inspect_quote(raw, spec):
             'requested_limit': int(spec['parameters']['limit']),
             'reported_count': body.get('count'), 'partitions': partitions,
             'rows_sha256': rows_digest(rows),
+            'completeness': 'requires-independent-retained-baseline-comparison',
+            'market_qualification_granted': False}
+
+
+
+def _nonnegative_text(value):
+    """Exact displayed supplier quantity, not an inferred shares/yuan conversion."""
+    from decimal import InvalidOperation
+    require(type(value) in (int, str, Decimal) and len(str(value)) <= 128, 'BULK_QUANTITY_INVALID')
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        require(False, 'BULK_QUANTITY_INVALID')
+    require(number.is_finite() and number >= 0 and -99 <= number.adjusted() <= 99,
+            'BULK_QUANTITY_INVALID')
+    text = format(number, 'f')
+    return text.rstrip('0').rstrip('.') if '.' in text else text
+
+
+def inspect_full_quote(raw, spec):
+    """Validate actual OHLCV supplier fields without granting market/PIT qualification."""
+    require(spec in full_plan()[1:], 'BULK_REQUEST_OUTSIDE_STUDY')
+    _table('daily', spec['parameters'], _decode(raw))
+    body = _decode(raw, decimals=True)
+    table = body['data']
+    fields, items = table['fields'], table['items']
+    required = FULL_FIELDS.split(',')
+    require(set(required) <= set(fields), 'BULK_FIELDS_MISSING')
+    indices = {name: fields.index(name) for name in required}
+    allowed = {DAYS[1]} if 'trade_date' in spec['parameters'] else set(DAYS)
+    records, seen = [], set()
+    for item in items:
+        code, day = item[indices['ts_code']], item[indices['trade_date']]
+        require(isinstance(code, str) and re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', code),
+                'BULK_SECURITY_IDENTITY')
+        require(isinstance(day, str) and day in allowed, 'BULK_DATE_OUTSIDE_REQUEST')
+        require((code, day) not in seen, 'BULK_DUPLICATE_SECURITY_DAY')
+        seen.add((code, day))
+        quotes = {key: _price(item[indices[key]]) for key in ('open', 'high', 'low', 'close')}
+        require(quotes['low'] <= quotes['open'] <= quotes['high']
+                and quotes['low'] <= quotes['close'] <= quotes['high'], 'BULK_OHLC_RANGE')
+        values = [code, day, *(price_text(item[indices[key]])
+                              for key in ('open', 'high', 'low', 'close')),
+                  _nonnegative_text(item[indices['vol']]),
+                  _nonnegative_text(item[indices['amount']])]
+        records.append(values)
+    close_rows = [[row[0], row[1], row[5]] for row in records]
+    counts = Counter(row[1] for row in records)
+    partitions = {day: {'rows': counts[day],
+                        'close_rows_sha256': rows_digest([row for row in close_rows if row[1] == day]),
+                        'full_rows_sha256': rows_digest([row for row in records if row[1] == day])}
+                  for day in sorted(allowed)}
+    return {'rows': len(records), 'fields': required, 'requested_limit': int(spec['parameters']['limit']),
+            'reported_count': body.get('count'), 'returned_above_5000': len(records) > 5000,
+            'returned_above_6000': len(records) > 6000, 'partitions': partitions,
+            'close_rows_sha256': rows_digest(close_rows), 'full_rows_sha256': rows_digest(records),
+            'quantity_units': 'supplier-vol-and-amount-unconverted',
             'completeness': 'requires-independent-retained-baseline-comparison',
             'market_qualification_granted': False}
 

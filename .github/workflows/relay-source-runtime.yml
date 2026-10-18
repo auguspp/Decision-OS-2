@@ -1,9 +1,10 @@
 name: decision-os-relay-source-runtime
+run-name: ${{ inputs.family == 'market-bulk-check' && 'Relay bulk boundary 20261018' || 'decision-os-relay-source-runtime' }}
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'plan is offline; capture retains authorized rows; industry-pmi check emits counts only'
+        description: 'plan is offline; capture retains authorized rows; explicit checks do not write records'
         type: choice
         options: [plan, capture, check]
         default: plan
@@ -13,9 +14,9 @@ on:
         type: string
         required: true
       family:
-        description: 'Typed source family or catalogue-gated public research plan'
+        description: 'Typed source family, catalogue plan, or fixed private bulk diagnostic'
         type: choice
-        options: [financial, participants, research, industry-pmi]
+        options: [financial, participants, research, industry-pmi, market-bulk-check]
         default: financial
       codes:
         description: 'Typed families only: securities separated by spaces or commas'
@@ -42,11 +43,11 @@ on:
         type: string
         default: '100'
       source_plan:
-        description: 'Research source plan, or industry-pmi reference-check plan with exact SourceRef; no credentials'
+        description: 'Research/PMI plan, or fixed bulk diagnostic study identity; no credentials'
         type: string
         required: false
       access_confirmed:
-        description: 'industry-pmi/check only: authorize transient Relay use; NOT source republication'
+        description: 'Explicit check authorization; bulk check requires native PRIVATE custody, not republication'
         type: boolean
         default: false
       public_rights_confirmed:
@@ -60,7 +61,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   source:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main'
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.family != 'market-bulk-check'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -93,5 +94,38 @@ jobs:
         with:
           name: dos2-relay-source-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dos2-relay-source/
+          if-no-files-found: error
+          retention-days: 7
+  bulk-check:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.family == 'market-bulk-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Verify private target, fixed study, exact main CI and unused attempt before source credentials
+        id: prepare
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.relay_bulk_check_cli prepare --out "$RUNNER_TEMP/dos2-relay-bulk"
+      - name: Execute the finite private row-limit experiment without records writes or retries
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+        run: python -m decision_kernel.interfaces.relay_bulk_check_cli capture --out "$RUNNER_TEMP/dos2-relay-bulk"
+      - name: Preserve original finite diagnostic and authenticated private bytes
+        if: always() && steps.prepare.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-relay-bulk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-relay-bulk/
           if-no-files-found: error
           retention-days: 7

@@ -144,7 +144,7 @@ def inspect_full_quote(raw, spec):
     records, seen = [], set()
     for item in items:
         code, day = item[indices['ts_code']], item[indices['trade_date']]
-        require(isinstance(code, str) and re.fullmatch(r'[0-9]{6}\\.(SH|SZ|BJ)', code),
+        require(isinstance(code, str) and re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', code),
                 'BULK_SECURITY_IDENTITY')
         require(isinstance(day, str) and day in allowed, 'BULK_DATE_OUTSIDE_REQUEST')
         require((code, day) not in seen, 'BULK_DUPLICATE_SECURITY_DAY')

@@ -4,10 +4,10 @@ on:
     inputs:
       operation:
         type: choice
-        options: [status, sync]
+        options: [status, sync, repair]
         default: status
         required: true
-        description: 'Read original records or advance SH/SZ daily partitions within native private/rights gate'
+        description: 'Read records, sync normal partitions, or explicitly consume the fixed terminal repair grant'
       code_sha:
         type: string
         required: true
@@ -19,7 +19,11 @@ on:
       work_units:
         type: string
         default: '1'
-        description: '1..32 finite sync units; status requires 1; original page retry budget survives every unit'
+        description: '1..32 finite sync/repair units; status requires 1; retained page retry budgets survive every unit'
+      repair_request:
+        type: string
+        default: ''
+        description: 'Repair only: exact ashare-terminal-repair-request-v1 JSON <=16000 bytes for first grant; empty resumes the retained grant'
       access_and_custody_confirmed:
         type: boolean
         default: false
@@ -60,13 +64,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
   rejected-sync:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true || (github.event.repository.private != true && inputs.public_rights_confirmed != true))
+    if: >-
+      github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
+      ((inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true ||
+      (github.event.repository.private != true && inputs.public_rights_confirmed != true))) ||
+      (inputs.operation == 'repair' && (inputs.access_and_custody_confirmed != true || github.event.repository.private != true)))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - name: Fail without source access when public redistribution rights are not established
+      - name: Fail before source access when the selected operation lacks its access or visibility gate
         run: |
           echo "::error::ASHARE_PUBLIC_RIGHTS_REQUIRED_OR_ACCESS_NOT_CONFIRMED"
           exit 1
@@ -90,6 +98,34 @@ jobs:
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
         run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"
       - name: Preserve only the engineering counts receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-ashare-data-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-ashare-data/result.json
+          if-no-files-found: warn
+          retention-days: 7
+  repair:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'repair' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Consume only the explicit retained repair grant after native transport and query evidence checks
+        env:
+          DECISION_OS_MARKET_STORE_TOKEN: ${{ github.token }}
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+        run: python -m decision_kernel.interfaces.market_collection_cli runtime --out "$RUNNER_TEMP/dos2-ashare-data"
+      - name: Preserve only the engineering repair counts receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

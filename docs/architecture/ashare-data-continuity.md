@@ -37,9 +37,24 @@ Socket timeout 约束阻塞 socket 操作，不是完整 HTTP 请求的绝对墙
 
 新代的 `end` 与 `calendar_end` 不得倒退，已经使用的旧 generation 不能重开。历史版本仍可按原 SourceRef 读取。运行没有可推进单元时明确返回 `ASHARE_NO_PROGRESS`，不会持续空转重建预算。
 
+<a id="terminal-repair"></a>
+## 四个原终态的一次显式有限维修
+
+普通 `sync` 仍跳过已经耗尽的原终态。一次性 `repair` 只适用于原 `cn-eod / g20261016` 中 `20261015`、`20261016` 的 `daily` 与 `adj_factor` 四个指定槽：同一原计划、Registry、use/query_key、参数、两页上限，以及各槽原零成功页、四次 timeout 的完整终态引用必须逐项核回。权限、限流、未知 in-flight 或未知写入不属于可借此重试的失败。旧检查点的 terminal 重启拒绝继续生效；原四个 unit、失败诊断、原次数及等待不会被覆盖。
+
+**维修增加总体来源请求预算。** 原四条查询已经发生的 16 次请求保留；唯一新 episode 每槽最多两页、每页四次尝试和 180 秒等待，合计最多 **32 次新增 HTTP**，原加新最多 48 次。未用额度不能跨槽转移，不追加第三页，不创建第二 episode。成功页不重取，暂停只接续同一新检查点的剩余次数、等待和偏移。用保管链中的每页 attempts 及未解决的请求预留推导已用额度，并对同页的 capture/control 表示去重；运行回执计数不能替代这项预算事实。
+
+首次 `repair` 将集合保管根由 `market-collection-custody-v1` 升为 `market-collection-custody-v2`，在同一次根写入中保存不可变 grant。grant 绑定 then-current 唯一根、原四个 exact terminal refs、原固定请求和成功传输证据；新 capture ID 只用于定位，不自行授予额度。激活独占一个源 HTTP 为零的有限单元，完成原生核验、保存和独立读回后，后续单元才可消耗追加额度。首次写入、以后继承、独立恢复和唯一后继链共同验证 grant，不得删除、替换或降回 v1。换 generation、改变 refresh 或重新命名不能把已使用事实清零。仍使用同一 records、原 CAS 和独立 fresh 读回；保管未知、旧根、分叉或隐藏的新检查点均先对账，不发新的来源 HTTP。
+
+启用证据须包含同原计划中一份完整 `daily` 和一份完整 `adj_factor` 的 exact query、complete checkpoint 及首次完成 collection 根，并由新 reader 恢复原请求、成功页和关联。原生 Actions 元数据另外核同仓 `main / workflow_dispatch`、原 workflow、run/attempt 和代码 SHA；一个因整集合未完成而正常返回 partial 的 run 不会抹去其中完整查询的事实。证据代码 SHA、grant 首次启用代码及每次维修 attempt 的实际执行代码分别保管，并核原生承接关系；执行 SHA 来自受信宿主，不接受输入 JSON 自称“已验证”或自填执行身份。首次发布 grant 和发源请求前，维修代码仍须正常 PR、完整 CI、实际 main 验收，并取得上述真实成功原件的独立恢复证据。
+
+原失败状态与有效查询分别保留。只有完整且通过原 query/页面资格与独立恢复的维修结果可以进入原槽的有效查询选择；summary、集合完整性、换代继承、正常 reader 和运行进展使用同一语义。计数同时呈现原失败和维修后的有效状态，不把只改时间戳视作进展。正常读取继续使用 `current-complete` / `current-partial` 等原服务状态，并附维修来源；raw/qfq 算法、完整分母、停复牌解释、5/20/60 窗口及时效标准保持。
+
+`repair` 必须显式手动调用。首次请求提供有界 `repair_request`，包括原根、四个 terminal refs 和两类传输证据；其中没有可任意提高额度的 budget 字段。后续继续同一 grant 时留空该请求，不发布另一份 grant。普通 `sync` 只推进原 pending/paused 单元并继承已核维修结果；`status` 与读取不取得来源凭据，也不启动维修。原 600 秒准入窗口、240 次 Store API 来源准入、512 次单元硬上限、原生 quota、同串行组及 private/公开权利门禁全部适用。维修再次终止时保留实际剩余缺口，不继续申请第二 episode。
+
 ## 日常操作：沿用现有 records
 
-**唯一保管目标是本仓已经存在的 `records` 分支**，随同仓整体 private 继续使用。`config/store-binding.json` 是可信只读配置，保留现有仓库 ID、分支、anchor、store_id、建仓时的公开标记和单向私有化选项；实时可见性另外由 GitHub 原生 API 核查，不从配置或来源文本推定。绝不把 `write_enabled` 永久修改为 true。运行时的写入能力仅由受信的、显式授权 sync 分支临时授予。无需创建 `Decision-OS-2-data`，也不需要第二种保管平台或新的市场仓。
+**唯一保管目标是本仓已经存在的 `records` 分支**，随同仓整体 private 继续使用。`config/store-binding.json` 是可信只读配置，保留现有仓库 ID、分支、anchor、store_id、建仓时的公开标记和单向私有化选项；实时可见性另外由 GitHub 原生 API 核查，不从配置或来源文本推定。绝不把 `write_enabled` 永久修改为 true。运行时的写入能力仅由受信的、显式授权 `sync` 或原 private 目标的有限 `repair` 分支临时授予。无需创建 `Decision-OS-2-data`，也不需要第二种保管平台或新的市场仓。
 
 先编写有界选择文件，例如：
 
@@ -66,7 +81,7 @@ python -m decision_kernel.interfaces.market_collection_cli read \
   --out /runtime/reading.json
 ```
 
-GitHub Actions 的 `decision-os-ashare-data` 仅手动 `main` 运行 `status` 或 `sync`，填写精确 `code_sha` 与 selection；`status` 只读，**不需要来源密钥或公开授权声明**。如果尚无市场集合，返回 `ASHARE_COLLECTION_NOT_RETAINED`，并不表示空数据已经通过验收。
+GitHub Actions 的 `decision-os-ashare-data` 仅手动 `main` 运行 `status`、`sync` 或上述有限 `repair`，填写精确 `code_sha` 与 selection；`status` 只读，**不需要来源密钥或公开授权声明**。如果尚无市场集合，返回 `ASHARE_COLLECTION_NOT_RETAINED`，并不表示空数据已经通过验收。`repair` 限原生核验 private 的原保管目标；首次 `repair_request` JSON 最多 16,000 UTF-8 字节，续取同 grant 时留空。`sync` / `status` 不接受非空维修请求。这个手动托管入口负责原生运行/代码关系核验，本地 plan/read 不成为跳过该核验的维修入口。
 
 `sync` 每次 1..32 个明确有限单元。操作人必须确认 **原来源访问及保管范围** `access_and_custody_confirmed`；当 GitHub API 验证仓库为 **public** 时，还必须确认 **所选全部来源行可公开再分发的独立法律/许可依据** `public_rights_confirmed`。当前原生核验 private 时，已获准的原任务可运行 sync，无需虚填公开权利，但仍须遵守原来源使用及保管许可。公开权利确认只表示已有的独立依据；选择 `records`、购买接口访问权、知道密钥或资料来自公开信息，都不能单独证明公开再分发权。授权未满足时，workflow 执行**无源凭据的拒绝作业并明确失败**，不进入 sync job；工作流的 GitHub 事件私有标记仅用于保守路由，入口自身重新通过 GitHub API 核真实可见性，在任何来源 HTTP 和 Store 写入之前拒绝假私有。不能为取得绿灯而绕过该检查。
 
@@ -74,7 +89,7 @@ GitHub Actions 的 `decision-os-ashare-data` 仅手动 `main` 运行 `status` �
 
 ## 手动托管运行与资料权利
 
-新 `.github/workflows/ashare-data.yml` 分别运行：`status` 获得 `contents:read`、无 Relay 密钥；`sync` 仅在来源范围授权且（公开再分发授权成立，或事件中仓库为私有）时进入，获得 `contents:write` 和既有 `TUSHARE_PROXY_API_KEY`；入口在源调用前再次用 GitHub 原生 API 核当前可见性。二者使用受信 `config/store-binding.json` 确认同一历史公开建仓的 `records`；GitHub 作业令牌直接传给原 `GitHubStore`，**无需新增数据仓、私有绑定 Secret 或专用市场 Store Token**。注意 `contents:write` 在 GitHub 平台层面是仓库权限而不是分支级隔离；唯一分支目标由应用绑定/anchor、CAS 和单一 writer 约束，不宣传它具有更强的平台强制隔离。
+`.github/workflows/ashare-data.yml` 分别运行：`status` 获得 `contents:read`、无 Relay 密钥；`sync` 仅在来源范围授权且（公开再分发授权成立，或事件中仓库为私有）时进入，获得 `contents:write` 和既有 `TUSHARE_PROXY_API_KEY`；有限 `repair` 另外要求原目标 private，并以 `actions:read` 核原传输 run。入口在源调用前再次用 GitHub 原生 API 核当前可见性。三个入口沿同一串行组和受信 `config/store-binding.json` 确认原历史公开建仓的 `records`；GitHub 作业令牌直接传给原 `GitHubStore`，**无需新增数据仓、私有绑定 Secret 或专用市场 Store Token**。注意 `contents:write` 在 GitHub 平台层面是仓库权限而不是分支级隔离；唯一分支目标由应用绑定/anchor、CAS 和单一 writer 约束，不宣传它具有更强的平台强制隔离。
 
 Actions 的 `result.json` 仍仅可包含操作、计数、日期、状态、允许的原生额度字段与代码/run 身份，不能包含任意来源行、证券名称、价格、SourceRef、Token 或原供应商错误正文。宿主同时将这同一份安全回执输出到 stdout，使 artifact 无法取得时仍可沿原生 job 日志诊断；不是另造一份成功状态或输出源数据。这个回执不等于已把数据集合保管成功；仅原 `records` 上可独立读回的 exact 引用才证明保管。
 
@@ -101,3 +116,5 @@ GitHub writer 在发送任何提交前还检查新文件加入后的完整树：
 ## 验证责任
 
 新反例分别覆盖源执行检查点、保管和 native snapshot、5000 以上证券与多日窗口、跨进程续取、增量和旧完整版本、全代防回退、普通 CLI/room、有限运行宿主与容量边界。全部合成数据测试明确不代签供应商返回是否正确、资料权利或生产长期健康。完整精确 head CI、普通 merge 后实际 main、真实运行与独立消费者各自保留原生证据。
+
+一次维修的保护由 collection owner 维护：旧 terminal 重启仍拒绝，重复 grant、降版、换代清账、错槽/引用/use、隐藏 tip、未知写与成功页重放均拒绝；同 grant 跨单元接续、预算推导和正常消费须实际验证。追加执行结束不删除其历史语义；以后退役该次执行入口时，同步移除专属手动 job 与启用核验，保留 v2 独立恢复、有效查询选择和原链约束，不能让已保管数据失去现役读取器。

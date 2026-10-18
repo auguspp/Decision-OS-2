@@ -22,6 +22,7 @@ from decision_kernel.domain.records import (
 
 CHECKPOINT_SCHEMA = "market-capture-checkpoint-custody-v1"
 COLLECTION_SCHEMA = "market-collection-custody-v1"
+REPAIR_COLLECTION_SCHEMA = "market-collection-custody-v2"
 MAX_CONTROL_BYTES = 512 * 1024
 MAX_CHECKPOINT_PAGES = 100
 ORIGIN = "https://github.com/auguspp/Decision-OS-2"
@@ -53,7 +54,7 @@ def checkpoint_source_id(checkpoint_id):
 def _source(content):
     require(isinstance(content, dict), "MARKET_COLLECTION_CUSTODY_SCHEMA")
     schema = content.get("schema")
-    require(schema in (CHECKPOINT_SCHEMA, COLLECTION_SCHEMA), "MARKET_COLLECTION_CUSTODY_SCHEMA")
+    require(schema in (CHECKPOINT_SCHEMA, COLLECTION_SCHEMA, REPAIR_COLLECTION_SCHEMA), "MARKET_COLLECTION_CUSTODY_SCHEMA")
     if schema == CHECKPOINT_SCHEMA:
         source_id = checkpoint_source_id(content.get("checkpoint_id"))
         title = "Retained market execution checkpoint"
@@ -82,7 +83,7 @@ def _read_manifest(reference, registry, store, schema):
     ref = _reference(reference, store.backend.repository)
     _, view = _read_source(store, ref)
     content = _document(view["data"].encode())
-    require(isinstance(content, dict) and content.get("schema") == schema,
+    require(isinstance(content, dict) and content.get("schema") in (schema if isinstance(schema, tuple) else (schema,)),
             "MARKET_COLLECTION_CUSTODY_SCHEMA")
     require(content.get("registry") == registry.snapshot, "MARKET_COLLECTION_REGISTRY_CHANGED")
     expected = _source(content)
@@ -261,35 +262,79 @@ def _collection(collection, registry, repository):
         for key in ("query", "checkpoint"):
             _reference(unit[key], repository, optional=True)
     _reference(checked["last_qualified"], repository, optional=True)
+    if "repair" in checked:
+        repair = checked["repair"]
+        request = repair["grant"]["request"]
+        _reference(request["base_reference"], repository)
+        for reference in request["terminal_references"].values():
+            _reference(reference, repository)
+        for evidence in request["transport_evidence"].values():
+            for key in ("collection_reference", "checkpoint_reference", "query_reference"):
+                _reference(evidence[key], repository)
+        for unit in repair["units"].values():
+            for key in ("query", "checkpoint"):
+                _reference(unit[key], repository, optional=True)
     return checked
 
 
 def _collection_manifest(reference, registry, store):
-    ref, content = _read_manifest(reference, registry, store, COLLECTION_SCHEMA)
+    ref, content = _read_manifest(reference, registry, store, (COLLECTION_SCHEMA, REPAIR_COLLECTION_SCHEMA))
     require(set(content) == {"schema", "registry", "predecessor", "collection"},
             "MARKET_COLLECTION_MANIFEST")
     _reference(content["predecessor"], store.backend.repository, optional=True)
     checked = _collection(content["collection"], registry, store.backend.repository)
+    require((content["schema"] == REPAIR_COLLECTION_SCHEMA) == ("repair" in checked),
+            "MARKET_COLLECTION_REPAIR_SCHEMA")
     return ref, {**content, "collection": checked}
 
 
 def retain_market_collection(collection, registry, store, *, fresh_reader, predecessor=None,
-                             custody_authorized=False, public_rights_confirmed=False):
+                             custody_authorized=False, public_rights_confirmed=False,
+                             verify_evidence=None):
     """Retain the exact finite plan and SourceRef slots, never supplier tables.
 
-    Only the manifest is independently restored here. The normal collection
-    reader follows source dependencies separately and reports their real state.
+    V1 restores the manifest. V2 also independently proves its immutable grant,
+    original exhausted terminals, transport evidence and repair dependencies.
+    A trusted native verifier is required at the one explicit v1-to-v2 edge.
     """
-    authorize_market_custody(store, custody_authorized=custody_authorized,
+    visibility = authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
     checked = _collection(collection, registry, store.backend.repository)
+    require("repair" not in checked or visibility in {"private", "synthetic"},
+            "ASHARE_REPAIR_PRIVATE_CUSTODY_REQUIRED")
     reader = fresh_market_reader(store, fresh_reader)
     predecessor = _reference(predecessor, store.backend.repository, optional=True)
+    previous = None
     if predecessor is not None:
         _, previous = _collection_manifest(predecessor, registry, store)
         require(previous["collection"]["plan"]["collection_id"] == checked["plan"]["collection_id"],
                 "MARKET_COLLECTION_PREDECESSOR_CHANGED")
-    content = {"schema": COLLECTION_SCHEMA, "registry": deepcopy(registry.snapshot),
+    from decision_kernel.application.market_collection_repair import (
+        validate_native_context, validate_repair_records, validate_repair_transition,
+    )
+    old = None if previous is None else previous["collection"]
+    validate_repair_transition(old, checked, registry, predecessor=predecessor)
+    activation = "repair" in checked and (old is None or "repair" not in old)
+    if activation:
+        require(callable(verify_evidence), "ASHARE_REPAIR_NATIVE_EVIDENCE_REQUIRED")
+        context = verify_evidence(deepcopy(checked["repair"]["grant"]["request"]))
+        grant = checked["repair"]["grant"]
+        validate_native_context(context, grant["request"], grant["execution_code_sha"])
+        require(context["transport_runs"] == grant["transport_runs"], "ASHARE_REPAIR_NATIVE_RUNS_CHANGED")
+    if "repair" in checked:
+        from decision_kernel.application.market_collection_reading import inspect_market_chain, same_reference
+        with market_read_scope(reader) as grouped:
+            chain = inspect_market_chain(grouped, registry, collection_id=checked["plan"]["collection_id"])
+            require(same_reference(chain["reference"], predecessor), "ASHARE_COLLECTION_STALE_REFERENCE")
+            _, fresh_previous = _collection_manifest(predecessor, registry, grouped)
+            validate_repair_transition(fresh_previous["collection"], checked, registry, predecessor=predecessor)
+            validate_repair_records(checked, registry, grouped, activation=activation, chain=chain,
+                reference=None if activation else predecessor, previous=fresh_previous["collection"])
+        # The grant is a new object. Its readback uses a newly constructed
+        # independent reader, never this pre-write verification state.
+        reader = fresh_market_reader(store, fresh_reader)
+    content = {"schema": REPAIR_COLLECTION_SCHEMA if "repair" in checked else COLLECTION_SCHEMA,
+               "registry": deepcopy(registry.snapshot),
                "predecessor": predecessor, "collection": checked}
     source = _source(content)
     reference = _put(store, source)
@@ -307,6 +352,11 @@ def restore_market_collection(reference, registry, store):
 
 def _restore_market_collection(reference, registry, store):
     ref, content = _collection_manifest(reference, registry, store)
+    if "repair" in content["collection"]:
+        from decision_kernel.application.market_collection_repair import validate_repair_records
+        _, previous = _collection_manifest(content["predecessor"], registry, store)
+        validate_repair_records(content["collection"], registry, store, reference=ref,
+            previous=previous["collection"])
     plan = content["collection"]["plan"]
     return {"status": "restored-collection-manifest", "reference": ref,
             "collection": content["collection"], "predecessor": content["predecessor"],

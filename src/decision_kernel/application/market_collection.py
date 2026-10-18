@@ -152,7 +152,8 @@ def _qualified(result, use, plan, registry):
 
 
 def validate_collection(collection, registry):
-    require(isinstance(collection, dict) and set(collection) == {"plan", "units", "last_qualified", "attempt"},
+    required = {"plan", "units", "last_qualified", "attempt"}
+    require(isinstance(collection, dict) and set(collection) in (required, required | {"repair"}),
             "ASHARE_COLLECTION_SHAPE")
     plan = validate_collection_plan(collection["plan"], registry)
     units = collection["units"]
@@ -171,8 +172,13 @@ def validate_collection(collection, registry):
     if collection["last_qualified"] is not None:
         SourceRef.from_dict(collection["last_qualified"])
     attempt = collection["attempt"]
-    require(isinstance(attempt, dict) and set(attempt) == {"id", "status", "reason_code", "started_at", "updated_at", "source_requests"},
+    attempt_fields = {"id", "status", "reason_code", "started_at", "updated_at", "source_requests"}
+    require(isinstance(attempt, dict) and (set(attempt) == attempt_fields or "repair" in collection
+            and set(attempt) == attempt_fields | {"repair_execution_code_sha"}),
             "ASHARE_COLLECTION_ATTEMPT")
+    if "repair_execution_code_sha" in attempt:
+        require(isinstance(attempt["repair_execution_code_sha"], str)
+            and re.fullmatch(r"[0-9a-f]{40}", attempt["repair_execution_code_sha"]), "ASHARE_REPAIR_CODE_SHA")
     identifier(attempt["id"])
     require(attempt["status"] in {"planned", "in-progress", "complete", "partial", "blocked"}
             and type(attempt["source_requests"]) is int and attempt["source_requests"] >= 0,
@@ -180,19 +186,42 @@ def validate_collection(collection, registry):
     require(attempt["reason_code"] is None or isinstance(attempt["reason_code"], str)
             and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", attempt["reason_code"]), "ASHARE_COLLECTION_REASON")
     source_time(attempt["started_at"]); source_time(attempt["updated_at"])
+    if "repair" in collection:
+        from decision_kernel.application.market_collection_repair import validate_repair_shape
+        validate_repair_shape(collection, registry)
     return deepcopy(collection)
+
+
+def effective_unit(collection, slot):
+    """A complete, independently retained repair can serve its original slot.
+
+    The old terminal unit remains the immutable record of its original budget.
+    This selector is used only after the collection custody owner has restored
+    the grant and dependencies; shape validation alone is not a trust boundary.
+    """
+    original = collection["units"].get(slot)
+    repair = collection.get("repair")
+    replacement = None if repair is None else repair["units"].get(slot)
+    if original is not None and replacement is not None and replacement["status"] == "complete":
+        return {key: replacement[key] for key in ("query", "checkpoint", "status", "reason_code")}
+    return original
+
+
+def collection_progress_digest(collection):
+    """Attempt timestamps and fresh root versions cannot manufacture progress."""
+    return digest(encoded({"units": collection["units"], "repair": collection.get("repair")}))
 
 
 def collection_summary(collection, reference=None):
     """No source rows, company names, prices or private source locations."""
     counts = {state: sum(u["status"] == state for u in collection["units"].values())
         for state in ("pending", "in-progress", "complete", "paused", "failed", "blocked", "unknown-write")}
-    return {"schema": "ashare-collection-receipt-v1", "collection_id": collection["plan"]["collection_id"],
+    result = {"schema": "ashare-collection-receipt-v1", "collection_id": collection["plan"]["collection_id"],
         "generation": collection["plan"]["generation"], "start": collection["plan"]["start"],
         "end": collection["plan"]["end"], "calendar_end": collection["plan"]["calendar_end"],
         "scope": deepcopy(SCOPE), "session_count": len(collection["plan"]["sessions"]),
         "unit_counts": counts, "latest_attempt": deepcopy(collection["attempt"]),
-        "all_partitions_retained": counts["complete"] == len(collection["units"]),
+        "all_partitions_retained": _partition_complete(collection),
         "trading_interval": "has-market-sessions" if collection["plan"]["sessions"] else "no-derived-market-sessions",
         "has_previous_readable_version": collection["last_qualified"] is not None,
         "reference_sha256": digest(encoded(reference)) if reference is not None else None,
@@ -200,6 +229,12 @@ def collection_summary(collection, reference=None):
         "limitations": ["SH_SZ_CURRENT_L_NOT_HISTORICAL_OR_ALL_A_SHARE_UNIVERSE",
             "COLLECTION_COMPLETENESS_NOT_PRICE_CORRECTNESS_OR_LONG_TERM_HEALTH",
             "PREVIOUS_SHANGHAI_DATE_END_OF_DAY_SERVICE_NOT_INTRADAY_LIVE"]}
+    if "repair" in collection:
+        from decision_kernel.application.market_collection_repair import repair_summary
+        result["effective_unit_counts"] = {state: sum(effective_unit(collection, slot)["status"] == state
+            for slot in collection["units"]) for state in counts}
+        result["repair"] = repair_summary(collection)
+    return result
 
 
 class CollectionSyncInterrupted(RecordError):
@@ -215,7 +250,7 @@ class _PersistenceStopped(RuntimeError):
 
 def _partition_complete(collection):
     return len(collection["units"]) >= 4 and all(
-        u["status"] == "complete" for u in collection["units"].values())
+        effective_unit(collection, slot)["status"] == "complete" for slot in collection["units"])
 
 
 def _new_collection(plan, previous, previous_ref, attempt_id, at, registry):
@@ -235,8 +270,13 @@ def _new_collection(plan, previous, previous_ref, attempt_id, at, registry):
                     "ASHARE_COLLECTION_DATE_ROLLBACK")
             require(all(u["status"] in {"complete", "failed"}
                         for u in previous["units"].values()), "ASHARE_RECONCILE_ORIGINAL_GENERATION")
+            if "repair" in previous:
+                from decision_kernel.application.market_collection_repair import repair_finished
+                require(repair_finished(previous), "ASHARE_RECONCILE_REPAIR_EPISODE")
             collection = {"plan": plan, "units": {slot: _pending() for slot in _slots(plan)},
                 "last_qualified": previous_ref if _partition_complete(previous) else previous["last_qualified"]}
+            if "repair" in previous:
+                collection["repair"] = deepcopy(previous["repair"])
             # Calendars can be reused only with precisely the same range. New
             # generations refresh current-L masters, keeping their old versions.
             for venue in EXCHANGES:
@@ -343,7 +383,7 @@ def sync_collection(*, plan, registry, store, fresh_reader, attempt_id, previous
         emit()
 
     def restore_unit(slot, reader):
-        unit = collection["units"][slot]
+        unit = effective_unit(collection, slot)
         require(unit["status"] == "complete" and unit["query"] is not None, "ASHARE_QUERY_NOT_RETAINED")
         result = restore_market_query(unit["query"], registry, reader)["result"]
         use, _ = unit_request(collection["plan"], slot, registry)

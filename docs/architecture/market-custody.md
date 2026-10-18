@@ -10,6 +10,24 @@ private native reading and their explicit runtime are described in
 entry remains supported; its normal read dispatcher also accepts exact collection
 roots without concatenating multi-day data into the old payload envelope.
 
+Collection custody reads both `market-collection-custody-v1` and the explicit
+`market-collection-custody-v2` used for the single bounded terminal repair in
+the [continuity contract](ashare-data-continuity.md#terminal-repair). The v2 root
+retains the original failed units and an immutable grant, with separate repair
+checkpoint/query references. Grant creation binds the exact predecessor and
+original terminal references; subsequent retention, restoration and unique-chain
+inspection reject grant replacement, removal, downgrade and a second episode
+across generations. The original capture checkpoint remains v1, and its terminal
+restart guard is unchanged.
+
+Repair pages and completed queries use the existing exporters, exact references,
+qualification and independent readers. Only a fully restored repair query can
+be selected for its original slot. Original failures remain available alongside
+effective state and repair provenance; an additional budget is not presented as
+unused original allowance. Normal readers neither create grants nor acquire
+sources. Native transport-run identity and execution-code continuity are checked
+by the trusted explicit runtime, not by a source document claiming verification.
+
 ## Reuse and ownership
 
 `market_custody` uses `research_sources.source_inputs` as the **only page exporter**,

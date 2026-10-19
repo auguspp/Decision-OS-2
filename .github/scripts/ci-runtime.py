@@ -320,7 +320,7 @@ def execute(out, group):
     _, remaining = E["partition"](plan["collection"], plan["contract_paths"])
     args = list(plan["contract_paths"]) if group == "contracts" else ["--ignore=" + p for p in plan["contract_paths"]]
     if group != "contracts" and remaining:
-        args += ["--splits", "4", "--group", group, "--splitting-algorithm", "duration_based_chunks", "--durations-path", str(out / "durations-hint.json")]
+        args += ["--splits", "4", "--group", group, "--splitting-algorithm", "least_duration", "--durations-path", str(out / "durations-hint.json")]
     code, text = pytest_run(out, "selected", args, collect=True)
     selected = E["nodes"](text)
     require(code == (0 if selected else 5), "COLLECTION_EXIT")

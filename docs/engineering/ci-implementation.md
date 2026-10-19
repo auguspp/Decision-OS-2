@@ -18,7 +18,7 @@ python -m decision_kernel --version
 
 ## 实现归属
 
-- `.github/workflows/ci.yml`：原生事件、并发、prepare、合同小环境、四个 runner、最终 `CI Gate`。每个剩余分片由 pytest-split 分配，pytest-xdist 执行两个 worker；没有自建调度器或影响图。
+- `.github/workflows/ci.yml`：原生事件、并发、prepare、合同小环境、八个 runner、最终 `CI Gate`。每个剩余分片由 pytest-split 分配，pytest-xdist 执行两个 worker；没有自建调度器或影响图。
 - `.github/scripts/ci-runtime.py`：Git/Actions 只读适配、安装后实际环境观察、pytest 调用、固定数据文件恢复和最终归档。不执行下载产物里的代码。
 - `.github/scripts/ci-evidence.py`：身份、ZIP、集合、环境和原生执行结果的纯检查。失败、取消、缺片、异常 skipped、重复测试或并集缺项不能通过。
 - `.github/ci-contracts.txt`：真实合同测试文件清单；prepare 收集全部现役测试后分区，小环境和剩余集合必须互斥且并集完整。空分片只接受实际收集为空及 pytest 的空执行回执，不造测试填片。
@@ -31,16 +31,18 @@ python -m decision_kernel --version
 |---|---|
 | `content` | 精确 base 已有本仓最新合格 main 证据，Git raw/NUL 差异仅为普通文件 `CHANGELOG.md` 的新增/修改；校验提交字节。规则、方法、README、删除、重命名和模式变化不享有此资格。 |
 | `draft_feedback` | 同仓明确 Draft、普通 src/tests 修改且不触及 CI/合同/全局配置；固定安装入口 smoke 加直接变更测试，明确 `merge_eligible=false`。 |
-| `full` | 本次完整 collect；独立合同小环境和四片实际执行；每片 JUnit 与 collection 对应，全局精确并集；最终原生 needs 全部成功。 |
+| `full` | 本次完整 collect；独立合同小环境和八片实际执行；每片 JUnit 与 collection 对应，全局精确并集；最终原生 needs 全部成功。 |
 | `merge_reuse` | main 首次运行、真实两父普通 merge、同 tree、无策略变化、最新同仓 Ready PR full 原件、环境严格相同；本次仍执行 main smoke，明确复用而非重跑全量。任一条件不成立则新 full。 |
 
 首次没有可信 base，必须由首个代码 PR 自举 full。CI/锁本身变化即使在 Draft 也运行 full，但 Draft 产物不可作为 Ready 合并资格；`ready_for_review` 触发新的正式运行。第一次 main 因策略变化预期 full。content/reuse 未在自然变更中采用时如实标明，不制造空 PR 取证。
 
 每个 job 实测代码 tree、完整 Python、系统/架构、托管镜像标识及实际包版本。新执行仅允许格式合格的镜像批次差异，保留各自观察；小环境只能省包、不能漂移共享版本。main 复用不接受镜像差异。
 
-时长仅为分配提示：优先读取精确 base 的最新一次 main 合格最终产物。未取得合格 base 摘要时，保持其失败原因和 `baseline=None`，只额外解析一次 `base^1`，按相同原生运行、摘要、原件哈希与时长格式规则核第一父提交的最新一次 main 产物；仅采用其中时长，以独立 `timing_fallback` 保留 head/run/attempt/artifact/digest 和仅供分配的标记。父也不合格、无有效时长或读取失败就保持无提示，不继续查祖先，也不跳过同一 head 的最新失败。base 摘要已有效而仅时长文件有误时，保留原 baseline 赋值。此提示不授予 content 或 merge_reuse 资格；独立 merge_reuse 证据覆盖时长时清除该标记。仍使用现有 pytest-split 算法、4×2 与执行时限，未知新测试照常执行，最终集合和实际运行门禁不变。
+时长仅为分配提示：优先读取精确 base 的最新一次 main 合格最终产物。未取得合格 base 摘要时，保持其失败原因和 `baseline=None`，只额外解析一次 `base^1`，按相同原生运行、摘要、原件哈希与时长格式规则核第一父提交的最新一次 main 产物；仅采用其中时长，以独立 `timing_fallback` 保留 head/run/attempt/artifact/digest 和仅供分配的标记。父也不合格、无有效时长或读取失败就保持无提示，不继续查祖先，也不跳过同一 head 的最新失败。base 摘要已有效而仅时长文件有误时，保留原 baseline 赋值。此提示不授予 content 或 merge_reuse 资格；独立 merge_reuse 证据覆盖时长时清除该标记。
 
-产物名绑定 `run_id` 与 `run_attempt`：`dos2-plan-*`、`dos2-part-{contracts,1,2,3,4}-*`、`dos2-ci-*`。最终产物保留计划、实际 summary、五组原始 ZIP/API 元数据及时长。下载须通过原生归属、唯一产物、大小、SHA-256、CRC、安全路径和展开上限；只读取固定数据名。最终 full 可重新验证所有原始分片。原生最新失败或 rerun 不被旧成功替代；读取不确定不产生复用资格。
+现役按实际集合与耗时校准为 8×2，使用锁定 pytest-split 的 `least_duration`；分片数跟随证据组，片内使用 pytest-xdist 的 `loadfile` 与 `--no-loadscope-reorder`，保留原文件顺序，避免按测试数量把耗时较长的单测试文件排到末尾。后续可按完整 CI 合同继续校准参数；未知新测试照常执行，原 300 秒测试进程时限、完整集合和实际运行门禁不变。
+
+产物名绑定 `run_id` 与 `run_attempt`：`dos2-plan-*`、`dos2-part-{contracts,1,2,3,4,5,6,7,8}-*`、`dos2-ci-*`。最终产物保留计划、实际 summary、九组原始 ZIP/API 元数据及时长。下载须通过原生归属、唯一产物、大小、SHA-256、CRC、安全路径和展开上限；只读取固定数据名。最终 full 可重新验证所有原始分片。原生最新失败或 rerun 不被旧成功替代；读取不确定不产生复用资格。
 
 GH_TOKEN 仅给必要 Git/Actions 只读步骤，不给安装、collect 或测试；checkout 不保留凭据。CI 不接收业务 secrets，不配置外发/研究任务。最终 gate 的 `always()` 只保证验证失败路径也被执行，不把前置失败转成功。原始失败日志保留，不循环 rerun 换绿。
 
@@ -50,7 +52,7 @@ GH_TOKEN 仅给必要 Git/Actions 只读步骤，不给安装、collect 或测�
 
 | 旧定位 | 新 owner / 保留与差异 |
 |---|---|
-| `docs/CI-MAINLINE.md`、`.github/workflows/ci-full-v2.yml` | 本仓工作流；保留四 scope、原生矩阵与 4×2，重绑 repo/event/head/artifact；不重跑旧性能实验。 |
+| `docs/CI-MAINLINE.md`、`.github/workflows/ci-full-v2.yml` | 本仓工作流；从四 scope、原生矩阵与旧 4×2 起点接续，现役按实际集合校准为 8×2，重绑 repo/event/head/artifact；不重跑旧性能实验。 |
 | `.github/scripts/ci-content-scope.py` | runtime 路由；保留 raw/NUL 精确差异、可信 base、Draft/Ready 分离；内容范围缩到本仓真实非规范 CHANGELOG，不带旧研究文件例外。 |
 | `.github/scripts/ci-merge-reuse.py` | evidence 与 runtime 适配；提炼环境、JUnit、ZIP、严格原生 merge 关联；退出旧单体/旧分组 codec 和旧研究身份。 |
 | `.github/scripts/ci-matrix.py` | runtime 固定数据恢复和 full 汇总；仍由 pytest-split 分配，证据只检查不调度；显式支持真实空分片。 |

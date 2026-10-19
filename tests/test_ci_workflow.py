@@ -13,10 +13,12 @@ def workflow():
     return yaml.load((ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
 
 
-def test_native_graph_and_four_runners():
+def test_native_graph_and_eight_runners(evidence):
     flow = workflow()
     assert set(flow["jobs"]) == {"prepare", "contracts", "remaining", "gate"}
-    assert flow["jobs"]["remaining"]["strategy"]["matrix"]["group"] == ["1", "2", "3", "4"]
+    groups = flow["jobs"]["remaining"]["strategy"]["matrix"]["group"]
+    assert groups == [str(n) for n in range(1, 9)]
+    assert ["contracts", *groups] == list(evidence.GROUPS)
     assert flow["jobs"]["gate"]["needs"] == ["prepare", "contracts", "remaining"]
     assert flow["jobs"]["gate"]["if"] == "always()"
     assert "ready_for_review" in flow["on"]["pull_request"]["types"]

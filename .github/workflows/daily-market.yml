@@ -1,0 +1,107 @@
+name: decision-os-daily-market
+on:
+  schedule:
+    - cron: '35 10 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [status, update]
+        default: status
+        required: true
+        description: 'Read current status or advance one retained daily six-stock cycle'
+      code_sha:
+        type: string
+        required: true
+        description: 'Exact reviewed current main commit; automatic schedule uses native main SHA'
+permissions: {}
+concurrency:
+  group: decision-os-relay-source
+  cancel-in-progress: false
+jobs:
+  status:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.event.repository.private == true && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Read the current immutable cycle without source credentials
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_market_cli runtime --out "$RUNNER_TEMP/dos2-daily-market"
+      - name: Build daily reading from saved Brief, research and the actual market attempt
+        id: reading
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_reading_cli --out "$RUNNER_TEMP/dos2-daily-market"
+      - name: Recheck native private visibility before releasing exact references
+        id: release
+        if: always()
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_market_cli release
+      - name: Show the private daily reading summary
+        if: always() && steps.release.outcome == 'success' && steps.reading.outcome == 'success'
+        run: cat "$RUNNER_TEMP/dos2-daily-market/reading-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the private daily status and exact consumer input
+        if: always() && steps.release.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-daily-market-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-daily-market/
+          if-no-files-found: warn
+          retention-days: 30
+  daily:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'update'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Advance at most two calendar requests and twelve FTShare whole-range requests
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
+          FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
+        run: python -m decision_kernel.interfaces.daily_market_cli runtime --out "$RUNNER_TEMP/dos2-daily-market"
+      - name: Build daily reading from saved Brief, research and the actual market attempt
+        id: reading
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_reading_cli --out "$RUNNER_TEMP/dos2-daily-market"
+      - name: Recheck native private visibility before releasing exact references
+        id: release
+        if: always()
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_market_cli release
+      - name: Show the private daily reading summary
+        if: always() && steps.release.outcome == 'success' && steps.reading.outcome == 'success'
+        run: cat "$RUNNER_TEMP/dos2-daily-market/reading-summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the private daily status and exact consumer input
+        if: always() && steps.release.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-daily-market-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-daily-market/
+          if-no-files-found: warn
+          retention-days: 30

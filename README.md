@@ -4,6 +4,12 @@
 
 这是 `auguspp/Decision-OS-2` 的代码与工程规范入口。产品帮助用户主动发现现实/产业变化、开展 Quick 与 Full Research、持续检验判断，并支持独立人工 Decision；不推断持仓、不自动交易。
 
+## 日常阅读
+
+打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，选择最近一次运行，在 Summary 查看更新情况、内容日期与行情覆盖。完整离线页面在该次运行的 `dos2-daily-market-*` 产物中，下载后打开 `reading-room.html`，集中阅读最新已存 Brief、研究原文和到期待复核问题。新生成的页面不代表已存 Brief 已更新。
+
+现有六股池按北京时间工作日 18:35 更新原价和前复权日线，并刷新同一个阅读入口。交易日以实际交易所日历为准；GitHub 调度可能延迟，实际状态以该次运行回执为准。需要提前阅读时，可以在该工作流选择 `status` 并填写当前 `main` 的确切代码版本，只读取已存内容。范围、暂停及接续方式见[日常更新合同](docs/architecture/daily-market.md)；直接使用原阅读宿主见[统一阅读室](docs/delivery/reading-room.md)。
+
 ## 从这里开始
 
 | 你要做什么 | 唯一入口 |
@@ -46,4 +52,4 @@ decision-os info --json
 
 首个代码责任是完整 CI 与可安装骨架；共同保管的必要合同可用后，直接 Full/Quick 与市场雷达、产业商品、披露资料及日常交付按依赖并行。首发可用不等于全部雷达或500+覆盖完成，未完成责任须明确接续。文档/规则已落地、CI已配置、产品已使用分别成立，实际结果读对应任务。
 
-本仓公开；`main` 仅提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，独立 `records` 分支可保管有公开权利的来源与原创研究，默认[只读绑定](config/store-binding.json)；保密数据未来可另行迁往独立私有仓库。密钥、个人及第三方隐私、无再分发许可的原件和正式人工Decision不得公开；数据分支不是权限隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。
+本仓已沿[#10原任务](https://github.com/auguspp/Decision-OS-2/issues/10)整体转为 private；`main` 仍只提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，同仓独立 `records` 分支保管原范围获准资料与研究，默认[只读绑定](config/store-binding.json)；保留原 repository_id、store_id、anchor 和历史公开建仓标记，运行时另核真实可见性。私有化不增加来源、研究、公开再分发或人工 Decision 权限；数据分支不是角色隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。

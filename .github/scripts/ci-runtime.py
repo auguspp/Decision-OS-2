@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from importlib.metadata import distributions
 import json
 import os
@@ -125,6 +126,26 @@ def fallback(exc):
 READ_FAILURES = (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError, subprocess.SubprocessError, E["zipfile"].BadZipFile)
 
 
+@contextmanager
+def verified_main_artifact(sha):
+    """Read the exact main head's latest qualified artifact, never an older run."""
+    run = E["latest_run"](api(run_query(sha, "push")), sha, "push")
+    raw, meta = artifact(dict(run_id=str(run["id"]), code_sha=sha), f"dos2-ci-{run['id']}-1")
+    with E["verified_archive"](raw, meta) as archive:
+        summary = json.loads(archive.read("summary.json"))
+        require(summary["identity"]["code_sha"] == sha and summary["identity"]["run_id"] == str(run["id"])
+                and summary["identity"]["repo"] == REPO and summary["identity"]["event"] == "push"
+                and summary["identity"]["attempt"] == "1" and summary["merge_eligible"] is True
+                and summary["scope"] in ("full", "content", "merge_reuse"), "BASE_PROOF")
+        yield archive, dict(head_sha=sha, run_id=run["id"], attempt=1,
+                            artifact_id=meta["id"], digest=meta["digest"], scope=summary["scope"])
+
+
+def timing_hints(archive):
+    hint = json.loads(archive.read("durations.json"))
+    return hint if E["valid_hints"](hint) else {}
+
+
 def route(out):
     ident = identity()
     base = os.environ.get("CI_BASE_SHA", "")
@@ -139,20 +160,22 @@ def route(out):
         except READ_FAILURES as exc:
             plan["reason"] = "DIFF_UNAVAILABLE_" + fallback(exc)
         try:
-            run = E["latest_run"](api(run_query(base, "push")), base, "push")
-            raw, meta = artifact(dict(run_id=str(run["id"]), code_sha=base), f"dos2-ci-{run['id']}-1")
-            with E["verified_archive"](raw, meta) as z:
-                summary = json.loads(z.read("summary.json"))
-                require(summary["identity"]["code_sha"] == base and summary["identity"]["run_id"] == str(run["id"])
-                        and summary["identity"]["repo"] == REPO and summary["identity"]["event"] == "push"
-                        and summary["identity"]["attempt"] == "1" and summary["merge_eligible"] is True
-                        and summary["scope"] in ("full", "content", "merge_reuse"), "BASE_PROOF")
-                plan["baseline"] = dict(id=run["id"], head_sha=base)
-                hint = json.loads(z.read("durations.json"))
-                if E["valid_hints"](hint):
-                    plan["durations"] = hint
+            with verified_main_artifact(base) as (archive, source):
+                plan["baseline"] = dict(id=source["run_id"], head_sha=base)
+                plan["durations"] = timing_hints(archive)
         except READ_FAILURES as exc:
             plan["reason"] = "BASE_UNAVAILABLE_" + fallback(exc)
+        if plan["baseline"] is None:
+            try:
+                parent = git("rev-parse", "--verify", base + "^1")
+                require(SHA.fullmatch(parent) and parent not in (base, "0" * 40), "NO_FIRST_PARENT")
+                with verified_main_artifact(parent) as (archive, source):
+                    hint = timing_hints(archive)
+                    if hint:
+                        plan["durations"] = hint
+                        plan["timing_fallback"] = dict(source, base_sha=base, advisory_only=True)
+            except READ_FAILURES:
+                pass  # One parent only; missing hints never grant baseline or reuse qualification.
     if plan["baseline"] and plan["changes"] and all(prose(r) for r in plan["changes"]):
         plan.update(scope="content", reason="RELEASE_NOTES_ON_TRUSTED_MAIN")
     elif ident["event"] == "pull_request" and draft_allowed(plan["changes"], payload, ident["code_sha"], base):
@@ -250,6 +273,7 @@ def prepare(out):
         proof = read(out, "reuse.json")
         if proof["reuse"]:
             plan.update(scope="merge_reuse", source=proof["source"], durations=proof["durations"])
+            plan.pop("timing_fallback", None)
         if plan["scope"] == "full":
             code, text = pytest_run(out, "collection", [], collect=True)
             require(code == 0, "EMPTY_FULL_COLLECTION")

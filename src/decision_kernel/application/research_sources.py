@@ -243,8 +243,13 @@ def capture_plan(plan, registry, *, client=None, public_rights_confirmed=False, 
                'status': 'captured' if capture['complete'] else 'capture-incomplete', 'capture': capture}
 
 
-def inspect_result(result, registry):
-    """Recheck captured bytes locally, not their publisher/authenticity or economic meaning."""
+def _inspect_result(result, registry):
+    """Check every supplied page without creating an unused export copy.
+
+    The private result borrows the input pages. Callers may inspect its metadata
+    synchronously; only ``inspect_result`` exposes a detached page projection.
+    This remains local validation, not publisher or economic authentication.
+    """
     require(isinstance(result, dict) and isinstance(result.get('use'), dict), 'SOURCE_RESULT_INVALID')
     use = result['use']
     checked = validate_plan({'schema': SCHEMA, 'case_id': result.get('case_id'),
@@ -261,7 +266,6 @@ def inspect_result(result, registry):
     require(isinstance(pages, list) and len(encoded(pages)) <= 16 * 1024 * 1024, 'SOURCE_CAPTURE_PAGES_INVALID')
     params = checked['parameters']
     offset, count, declared, seen, previous = int(params.get('offset', 0)), 0, 0, set(), None
-    exported = []
     for index, page in enumerate(pages):
         require(isinstance(page, dict) and set(page) == {'offset', 'captured_at', 'table', 'transport', 'attempts'}
                 and type(page['offset']) is int and page['offset'] == offset, 'SOURCE_PAGE_SEQUENCE_INVALID')
@@ -293,16 +297,23 @@ def inspect_result(result, registry):
         require(index == len(pages)-1 or len(table['items']) == int(params['limit']), 'SOURCE_PAGE_AFTER_TERMINAL')
         offset += len(table['items']); count += len(table['items'])
         declared = max(declared, table['reported_count'] or 0)
-        # Execution diagnostics stay in the capture. Do not turn arbitrary edited diagnostic
-        # keys/prose into a source excerpt merely because the caller supplied a capture JSON.
-        exported.append({k: deepcopy(page[k]) for k in ('offset', 'captured_at', 'table', 'transport')})
     complete = bool(pages) and capture['error'] is None and len(pages[-1]['table']['items']) < int(params['limit']) and declared <= offset
     require(capture['complete'] == complete, 'SOURCE_COMPLETENESS_MISMATCH')
     return {'query_key': checked['query_key'], 'stage': checked['stage'], 'purpose': checked['purpose'],
         'api': checked['api'], 'parameters': params, 'complete': complete, 'row_count': count,
-        'page_count': len(pages), 'pages': exported, 'error': capture['error'],
+        'page_count': len(pages), 'pages': pages, 'error': capture['error'],
         'coverage': 'REQUESTED_PAGE_TERMINATION_NOT_HISTORY_COMPLETENESS',
         'units': 'NOT_ESTABLISHED_BY_GENERIC_READER', 'economic_assessment': 'not-performed'}
+
+
+def inspect_result(result, registry):
+    """Recheck captured bytes and return an independent source-page projection."""
+    checked = _inspect_result(result, registry)
+    # Execution diagnostics stay in the capture. Do not turn arbitrary edited
+    # diagnostic keys/prose into a source excerpt because capture JSON supplied them.
+    return {**checked, 'pages': [
+        {key: deepcopy(page[key]) for key in ('offset', 'captured_at', 'table', 'transport')}
+        for page in checked['pages']]}
 
 
 def source_inputs(result, registry):

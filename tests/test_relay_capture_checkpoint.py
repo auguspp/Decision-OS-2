@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from decision_kernel.application.relay_capture_checkpoint import (
-    CheckpointStateError, CheckpointWriteError, validate_capture_checkpoint, validate_capture_transition,
+    CaptureCheckpoint, CheckpointStateError, CheckpointWriteError,
+    validate_capture_checkpoint, validate_capture_transition,
 )
 from decision_kernel.application.research_sources import (
     capture_registered, inspect_result, source_inputs, source_page_inputs, validate_plan,
@@ -68,6 +69,99 @@ def test_completed_checkpoint_reuses_exact_query_without_a_credential_or_http():
     again = capture_registered(use, registry(), session, max_pages=4, checkpoint=checkpoint)
     assert again == capture and client.requests == 1
     assert source_inputs(result(capture, use), registry()) == source_page_inputs(result(capture, use), registry())
+
+
+@pytest.mark.parametrize('kind', ['checkpoint', 'transition', 'unchanged-transition'])
+def test_public_validation_returns_nested_copies_without_mutating_inputs(kind):
+    _, saved, _, _, _ = run(body())
+    previous, current = saved[-2:]
+    use = current['control']['request']
+    original = deepcopy((previous, current))
+
+    def check():
+        if kind == 'checkpoint':
+            return validate_capture_checkpoint(current, use, registry(), max_pages=4)
+        return validate_capture_transition(current if kind == 'unchanged-transition' else previous,
+            current, use, registry(), max_pages=4)
+
+    checked = check()
+    assert checked == current and (previous, current) == original
+    checked['capture']['pages'][0]['table']['items'][0][-1] = 'changed returned row'
+    checked['capture']['pages'][0]['attempts'][0]['transport']['wire_sha256'] = 'changed'
+    checked['control']['request']['parameters']['trade_date'] = '20260101'
+    assert (previous, current) == original
+
+    later = check()
+    expected = deepcopy(later)
+    current['capture']['pages'][0]['table']['items'][0][-1] = 'changed supplied row'
+    current['control']['retry']['attempts'].clear()
+    assert later == expected
+
+
+@pytest.mark.parametrize('side', ['previous', 'current', 'both'])
+def test_transition_rechecks_both_supplied_states_after_their_prior_validation(side):
+    _, saved, _, _, _ = run(body())
+    previous, current = deepcopy(saved[-1]), deepcopy(saved[-1])
+    use = deepcopy(current['control']['request'])
+    assert validate_capture_transition(previous, current, use, registry(), max_pages=4) == current
+    for label, state in (('previous', previous), ('current', current)):
+        if side in (label, 'both'):
+            state['capture']['pages'][0]['table']['items'][0][1] = '20260929'
+    with pytest.raises(RecordError, match='SOURCE_RETURNED_SCOPE_MISMATCH'):
+        validate_capture_transition(previous, current, use, registry(), max_pages=4)
+
+
+def test_writer_mutation_cannot_change_capture_control_or_the_next_predecessor():
+    _, saved, client, _, _ = run(body())
+    current = saved[-1]
+    use = current['control']['request']
+    writes = []
+
+    def writer(value):
+        writes.append(value)
+        value['capture']['pages'][0]['table']['items'][0][-1] = 'writer mutation'
+        value['control']['retry']['attempts'].clear()
+        value['control']['request']['parameters']['limit'] = '1'
+
+    controller = CaptureCheckpoint(use, registry(), RetryingRelay(client, clock=lambda: STAMP),
+        current['capture'], max_pages=4, value=current, writer=writer)
+    expected = deepcopy(controller.previous)
+    controller.persist()
+    assert len(writes) == 1 and writes[0] != expected
+    assert controller.previous == expected
+    assert controller.capture == expected['capture'] and controller.control == expected['control']
+    assert current == expected
+    controller.capture['pages'][0]['table']['items'][0][-1] = 'later capture change'
+    assert controller.previous == expected and current == expected
+    assert client.requests == 1
+
+
+def test_failed_mutating_writer_does_not_advance_the_previous_checkpoint():
+    _, saved, client, _, _ = run(body())
+    use = saved[0]['control']['request']
+    failure, writes = [], []
+
+    def writer(value):
+        writes.append(value)
+        if failure:
+            value['control']['request']['parameters']['trade_date'] = '20260101'
+            value['capture']['pages'].append({'changed': True})
+            raise RuntimeError('synthetic unknown write')
+
+    controller = CaptureCheckpoint(use, registry(), RetryingRelay(client, clock=lambda: STAMP),
+        deepcopy(saved[0]['capture']), max_pages=4, writer=writer)
+    controller.persist()
+    previous = deepcopy(controller.previous)
+    controller.control.update(state='paused', pause_reason='STORAGE_BUDGET')
+    controller.capture.update(error='RELAY_STORAGE_BUDGET', next_parameters=deepcopy(use['parameters']))
+    candidate = deepcopy({'schema': previous['schema'], 'capture': controller.capture, 'control': controller.control})
+    failure.append(True)
+    with pytest.raises(CheckpointWriteError, match='WRITE_UNSETTLED'):
+        controller.persist()
+    assert controller.previous == previous
+    assert controller.capture == candidate['capture'] and controller.control == candidate['control']
+    assert len(writes) == 2 and writes[-1] != candidate
+    assert client.requests == 1
 
 
 def test_page_pause_preserves_original_pages_and_resumes_only_exact_next_offset():

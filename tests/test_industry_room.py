@@ -43,6 +43,12 @@ def root_for(store, view):
         return prepare(store)[0]
     if view == 'operating-cycle':
         return operating_data(store)[0]
+    if view == 'industry-uses':
+        from test_industry_uses import prepare as use_data
+        return use_data(store)[0]
+    if view == 'livestock-weekly':
+        from test_livestock_weekly import retain
+        return retain(store)[0]
     from test_vehicle_flows import retain
     return retain(store)[0]
 
@@ -58,7 +64,8 @@ def test_original_reader_result_is_unchanged_and_reopens(store, view):
     second = ReadingRoom(fresh).build(value)
     assert encoded(first['industry']['view']) == encoded(expected)
     assert first == second and value == plan(ref, view)
-    assert first['industry']['status'] == 'readable' and first['status'] == 'readable'
+    assert first['industry']['status'] == 'readable'
+    assert first['status'] == ('partial' if view == 'industry-uses' else 'readable')
     assert first['persistence'] == 'not-written' and store.backend.head() == before
     assert first['industry']['view']['source_requests'] == first['industry']['view']['writes'] == 0
     assert 'public_sources_custody_confirmed' not in first['industry']['open_request']['payload']
@@ -80,11 +87,12 @@ def test_server_query_does_not_change_scope_or_infer_company_links(store, select
         assert all(r['applicability_at_cutoff'] == 'historical' for r in part['relations'])
 
 
+@pytest.mark.parametrize('view', ['industry', 'industry-uses', 'livestock-weekly'])
 @pytest.mark.parametrize('flag', [None, False, 'true', 1])
-def test_native_permission_is_independent_before_any_output_or_store(host, tmp_path, flag):
+def test_native_permission_is_independent_before_any_output_or_store(host, tmp_path, flag, view):
     writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
-    ref, _ = prepare(writer)
-    value = public(plan(ref), public_sources_custody_confirmed=flag,
+    ref = root_for(writer, view)
+    value = public(plan(ref, view), public_sources_custody_confirmed=flag,
                    public_material_custody_confirmed=True, public_feedback_custody_confirmed=True)
     head, calls, writes = host.git.head(), len(host.requests), host.writes
     out = tmp_path / 'denied'
@@ -237,19 +245,26 @@ def test_literal_payload_and_output_does_not_overwrite(store, tmp_path):
 def exercise_installed_industry_room(outside, python, env, store):
     """Extend the one existing wheel installation, preserving all previous consumers."""
     fixture_store = VersionedStore(GitStore(Path(store)))
-    ref, _ = prepare(fixture_store)
-    head = fixture_store.backend.head()
-    source = outside / 'industry-room-plan.json'
-    source.write_text(json.dumps(plan(ref)), encoding='utf-8')
     executable = Path(python).parent / 'decision-os'
-    outputs = []
-    for name in ('industry-room.html', 'industry-room-reopened.html'):
-        run = subprocess.run([str(executable), 'store', '--path', str(store), 'research-room',
-            '--input', str(source), '--out', str(outside / name)], cwd=outside, env=env,
-            capture_output=True, text=True)
-        assert run.returncode == 0, run.stderr
-        outputs.append(json.loads(run.stdout))
-    assert outputs[0] == outputs[1] and fixture_store.backend.head() == head
-    assert len(outputs[0]['industry']['view']['relations']) == 2
-    assert outputs[0]['industry']['view']['relations'][0]['net_benefit'] is None
-    assert (outside / 'industry-room.html').read_bytes() == (outside / 'industry-room-reopened.html').read_bytes()
+    for view in ('industry', 'livestock-weekly', 'industry-uses'):
+        ref = root_for(fixture_store, view)
+        head = fixture_store.backend.head()
+        source = outside / (view + '-room-plan.json')
+        source.write_text(json.dumps(plan(ref, view)), encoding='utf-8')
+        outputs, pages = [], []
+        for suffix in ('', '-reopened'):
+            path = outside / (view + '-room' + suffix + '.html')
+            run = subprocess.run([str(executable), 'store', '--path', str(store), 'research-room',
+                '--input', str(source), '--out', str(path)], cwd=outside, env=env,
+                capture_output=True, text=True)
+            assert run.returncode == 0, run.stderr
+            outputs.append(json.loads(run.stdout)); pages.append(path.read_bytes())
+        assert outputs[0] == outputs[1] and pages[0] == pages[1] and fixture_store.backend.head() == head
+        result = outputs[0]['industry']['view']
+        if view == 'industry':
+            assert len(result['relations']) == 2 and result['relations'][0]['net_benefit'] is None
+        elif view == 'livestock-weekly':
+            assert result['scope']['price_points'] == 9 and not result['relations']
+        else:
+            assert len(result['uses']) == 6 and result['scope']['source_blocked_uses'] == 1
+            assert result['uses'][3]['series'] == [] and result['uses'][0]['relations'][0]['net_benefit'] is None

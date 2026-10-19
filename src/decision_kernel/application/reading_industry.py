@@ -5,9 +5,11 @@ from dataclasses import asdict
 from decision_kernel.application.industry_operations import industry_source_scope, read_industry_operations
 from decision_kernel.application.industry_reading import read_industry
 from decision_kernel.application.vehicle_flows import read_vehicle_flows
+from decision_kernel.application.livestock_weekly import read_livestock_weekly
+from decision_kernel.application.industry_uses import read_industry_uses
 from decision_kernel.domain.records import Selection, SourceRef, encoded, identifier, require
 
-VIEWS = ("industry", "operating-cycle", "vehicle-flows")
+VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses")
 MAX_INDUSTRY_BYTES = 2 * 1024 * 1024
 
 
@@ -34,7 +36,11 @@ def open_industry(store, value):
     plan = industry_plan(value)
     ref = SourceRef.from_dict(plan["reference"])
     query = {key: plan[key] for key in ("subject_id", "company_id")}
-    if plan["view"] == "vehicle-flows":
+    if plan["view"] == "industry-uses":
+        result = read_industry_uses(ref, store, **query)
+    elif plan["view"] == "livestock-weekly":
+        result = read_livestock_weekly(ref, store, **query)
+    elif plan["view"] == "vehicle-flows":
         result = read_vehicle_flows(ref, store, **query)
     elif plan["view"] == "operating-cycle":
         result = read_industry_operations(ref, store, **query)

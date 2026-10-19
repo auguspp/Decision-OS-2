@@ -94,6 +94,27 @@ def test_operating_consumer_uses_original_formulas_and_limits(host, tmp_path):
     assert result['write'] == 'not-requested' and host.git.head() == before and host.writes == writes
 
 
+def test_native_named_uses_keeps_source_block_and_original_query(host, tmp_path, monkeypatch, capsys):
+    from decision_kernel.application.industry_uses import read_industry_uses
+    from test_industry_uses import prepare
+    from test_industry_reading import BUYER
+    writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
+    root, _ = prepare(writer)
+    direct = read_industry_uses(root, VersionedStore(GitHubStore(host.binding, host)), company_id=BUYER.entity_id)
+    chosen = payload(asdict(root), 'industry-uses', company_id=BUYER.entity_id)
+    native_environment(monkeypatch, host, tmp_path, inputs(OP, chosen))
+    before, writes = host.git.head(), host.writes
+    assert runtime.main(['--out', str(tmp_path / 'out')]) == 2
+    assert capsys.readouterr().err == ''
+    report = json.loads((tmp_path / 'out/report.json').read_bytes())
+    assert report['status'] == 'industry-reading-partial' and report['write'] == 'not-requested'
+    assert encoded(report['result']) == encoded(direct)
+    assert len(report['result']['uses']) == 6 and report['result']['scope']['read_uses'] == 5
+    assert report['result']['uses'][3]['status'] == 'source-blocked'
+    assert report['result']['uses'][3]['series'] == []
+    assert host.git.head() == before and host.writes == writes
+
+
 def test_company_and_subject_queries_keep_same_version_denominator_and_unknowns(host, vehicle, tmp_path):
     root, _, _ = vehicle
     outputs = [invoke(host, tmp_path / str(i), OP, payload(asdict(root), **query))['result']

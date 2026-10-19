@@ -596,7 +596,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert flow["concurrency"]["cancel-in-progress"] == "false"
     inputs = flow["on"]["workflow_dispatch"]["inputs"]
     assert inputs["operation"]["options"] == ["status", "sync", "repair", "ftshare-check",
-        "ftshare-check-continue", "ftshare-calendar", "ftshare-sync", "ftshare-status"]
+        "ftshare-check-continue", "ftshare-check-kernel", "ftshare-calendar", "ftshare-sync", "ftshare-status"]
     assert inputs["operation"]["default"] == "ftshare-status"
     assert inputs["selection"]["required"] == "true"
     assert json.loads(inputs["selection"]["default"]) == {
@@ -608,6 +608,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert flow["run-name"] == (
         "${{ inputs.operation == 'ftshare-check' && 'FTShare daily check 20261018' || "
         "inputs.operation == 'ftshare-check-continue' && 'FTShare daily check continuation 20261018' || "
+        "inputs.operation == 'ftshare-check-kernel' && 'FTShare Kernel v1 daily check 20261019' || "
         "inputs.operation == 'ftshare-calendar' && 'FTShare calendar continuity 20261018' || "
         "'decision-os-ashare-data' }}")
     assert {name: job["permissions"] for name, job in flow["jobs"].items()} == {
@@ -616,6 +617,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
         "rejected-sync": {"contents": "read"},
         "ftshare-check": {"contents": "read", "actions": "read"},
         "ftshare-check-continue": {"contents": "read", "actions": "read"},
+        "ftshare-check-kernel": {"contents": "read", "actions": "read"},
         "ftshare-calendar": {"contents": "write", "actions": "read"},
         "ftshare-sync": {"contents": "write", "actions": "read"},
         "ftshare-status": {"contents": "read", "actions": "read"}}
@@ -629,7 +631,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert rejected["permissions"] == {"contents": "read"}
     assert rejected["if"].count("!= true") == 8
     assert rejected["if"].count("inputs.public_rights_confirmed != false") == 2
-    for operation in ("sync", "repair", "ftshare-check", "ftshare-check-continue",
+    for operation in ("sync", "repair", "ftshare-check", "ftshare-check-continue", "ftshare-check-kernel",
                       "ftshare-calendar", "ftshare-sync", "ftshare-status"):
         assert "inputs.operation == '" + operation + "'" in rejected["if"]
     assert "github.event.repository.private" in rejected["if"]

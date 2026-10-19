@@ -69,15 +69,14 @@ def predecessor_identity():
         "outcome": "first-raw-pair-http-403-other-five-not-requested"}
 
 
-def _archive_documents(raw, *, sha256, size):
+def _archive_documents(raw, *, sha256, size, names=("baseline.json", "request.json", "result.json")):
     """Private parser: the native admission caller supplies the fixed original digest."""
     require(isinstance(raw, bytes) and 0 < len(raw) == size <= 1024 * 1024
         and digest(raw) == sha256, "FTSHARE_PREDECESSOR_ARCHIVE_DIGEST")
     try:
         with zipfile.ZipFile(BytesIO(raw)) as archive:
             items = archive.infolist()
-            require(len(items) == 3 and {item.filename for item in items} == {
-                "baseline.json", "request.json", "result.json"}
+            require(len(items) == len(names) and {item.filename for item in items} == set(names)
                 and all(not item.is_dir() and not item.flag_bits & 1
                     and item.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
                     and (item.external_attr >> 16) & 0o170000 != 0o120000 for item in items)

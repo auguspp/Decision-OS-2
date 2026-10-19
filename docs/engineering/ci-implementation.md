@@ -36,7 +36,9 @@ python -m decision_kernel --version
 
 首次没有可信 base，必须由首个代码 PR 自举 full。CI/锁本身变化即使在 Draft 也运行 full，但 Draft 产物不可作为 Ready 合并资格；`ready_for_review` 触发新的正式运行。第一次 main 因策略变化预期 full。content/reuse 未在自然变更中采用时如实标明，不制造空 PR 取证。
 
-每个 job 实测代码 tree、完整 Python、系统/架构、托管镜像标识及实际包版本。新执行仅允许格式合格的镜像批次差异，保留各自观察；小环境只能省包、不能漂移共享版本。main 复用不接受镜像差异。时长仅为分配提示：最多读取精确 base 的合格最终产物，不扫描历史；未知新测试照常执行。
+每个 job 实测代码 tree、完整 Python、系统/架构、托管镜像标识及实际包版本。新执行仅允许格式合格的镜像批次差异，保留各自观察；小环境只能省包、不能漂移共享版本。main 复用不接受镜像差异。
+
+时长仅为分配提示：优先读取精确 base 的最新一次 main 合格最终产物。未取得合格 base 摘要时，保持其失败原因和 `baseline=None`，只额外解析一次 `base^1`，按相同原生运行、摘要、原件哈希与时长格式规则核第一父提交的最新一次 main 产物；仅采用其中时长，以独立 `timing_fallback` 保留 head/run/attempt/artifact/digest 和仅供分配的标记。父也不合格、无有效时长或读取失败就保持无提示，不继续查祖先，也不跳过同一 head 的最新失败。base 摘要已有效而仅时长文件有误时，保留原 baseline 赋值。此提示不授予 content 或 merge_reuse 资格；独立 merge_reuse 证据覆盖时长时清除该标记。仍使用现有 pytest-split 算法、4×2 与执行时限，未知新测试照常执行，最终集合和实际运行门禁不变。
 
 产物名绑定 `run_id` 与 `run_attempt`：`dos2-plan-*`、`dos2-part-{contracts,1,2,3,4}-*`、`dos2-ci-*`。最终产物保留计划、实际 summary、五组原始 ZIP/API 元数据及时长。下载须通过原生归属、唯一产物、大小、SHA-256、CRC、安全路径和展开上限；只读取固定数据名。最终 full 可重新验证所有原始分片。原生最新失败或 rerun 不被旧成功替代；读取不确定不产生复用资格。
 

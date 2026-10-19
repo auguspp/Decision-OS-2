@@ -47,7 +47,7 @@ raw/qfq arithmetic, member time limits and pagination stay with their owners.
 ## Saved representation, not reconstructed originals
 
 `retain_market_reading(payload, registry, store, fresh_reader=...,
-public_rights_confirmed=True)` accepts the **existing** reading payload, containing
+custody_authorized=True, public_rights_confirmed=False)` accepts the **existing** reading payload, containing
 full capture results, without adding a source schema to the provider. It preflights
 all supplied captures and the reading before any write. Supply only complete
 captures; incomplete capture diagnostics are not silently turned into zero rows
@@ -108,11 +108,17 @@ shared calendar is missing returns `view=null` and a separate reading error.
 Partial restoration returns nonzero from the CLI even when peer surfaces remain
 readable. Paging never changes the unpaged source/market denominators.
 
-The caller must establish source-specific disclosure and redistribution rights.
-A boolean is a required declaration, not a license check or independent approval.
-Engineering permission, an enabled Relay endpoint or purchasing access does not
-establish those rights. The public `records` branch is not privacy/role isolation.
-No credentials, private diagnostics or restricted full text belong in these inputs.
+The caller must establish source-specific access and custody authorization.
+`custody_authorized` permits retention only in the natively checked private
+store (or an explicitly synthetic test store). It does not assert public
+redistribution rights. The separate `public_rights_confirmed` flag remains false
+unless those rights have actually been established; a public target still
+requires that declaration. Both use the existing `authorize_market_custody`
+checks, and a source-supplied visibility value cannot choose a target.
+Engineering permission, an enabled Relay endpoint or purchasing access alone
+does not establish publication rights. The same repository's `records` branch
+and shared credentials do not provide role isolation. Credentials, private
+execution diagnostics and unlicensed full text are not admitted by this adapter.
 The runtime strips unretained capture diagnostics **before writing input artifacts**.
 
 ## Explicit consumers
@@ -122,7 +128,7 @@ The module CLI uses an existing synthetic local store or a trusted GitHub bindin
 ```sh
 python -m decision_kernel.interfaces.market_custody_cli save \
   --binding authorized-write-binding.json --registry docs/sources/relay-registry.json \
-  --input retained-market-reading.json --public-rights-confirmed
+  --input retained-market-reading.json --custody-authorized
 
 python -m decision_kernel.interfaces.market_custody_cli read \
   --binding config/store-binding.json --registry docs/sources/relay-registry.json \
@@ -146,6 +152,25 @@ results/unknown attempts. A green workflow without the expected successful
 operation result is not a custody receipt. Run receipts and temporary artifacts
 are retained for seven days; immutable records are the source of recovery, not
 those temporary artifacts. No guarantee of permanent disaster recovery is added.
+
+The manual host accepts independent `custody_authorized` and
+`public_rights_confirmed` inputs and forwards their actual values to the source
+or discovery CLI. It does not fill publication permission on behalf of a private
+save. Read/build jobs remain read-only, and neither provider's credentials are
+passed to these source-free consumers. Native private visibility is checked again
+before releasing the operation artifacts.
+
+The source-only read factory reuses `GitMarketReader` with the same `GitHubAPI`
+instance as the original writer. Query checks and the final reading each use
+independently pinned Git snapshots. The final root and all dependencies share
+one bounded read scope, followed by its native reachability/private check; this
+does not repeat live-head requests for every immutable blob. Before releasing
+the successful result, the original writer checks native visibility again,
+preserving this operation's observed private upgrade across new reader scopes.
+The original 512
+API limit and Git download/capacity bounds remain unchanged. Global access or
+request-budget failures stop the operation immediately; genuinely missing query
+objects still retain the original dependent-surface isolation.
 
 ## Source acquisition and remaining production acceptance
 

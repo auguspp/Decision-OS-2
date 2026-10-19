@@ -24,9 +24,9 @@ def test_trusted_multiboard_generation_has_exact_retained_predecessor_and_budget
         },
         "selection": {
             "columns": [],
-            "end": null,
+            "end": None,
             "kind": "all",
-            "start": null
+            "start": None
         }
     }
     assert (sync["start"], sync["end"]) == ("20260701", "20261016")

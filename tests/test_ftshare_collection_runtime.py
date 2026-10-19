@@ -9,10 +9,10 @@ import pytest
 from decision_kernel.application.ftshare_collection import latest_ftshare_reference, restore_ftshare_collection
 from decision_kernel.application.market_collection_custody import restore_market_collection
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, UnknownWrite, encoded
+from decision_kernel.domain.records import RecordError, UnknownWrite, digest, encoded
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubRateLimits
 from decision_kernel.interfaces import ftshare_collection_cli as cli
-from test_ftshare_collection import _capture, _setup, STAMP
+from test_ftshare_collection import _capture, _setup, kernel_adoption_fixture, STAMP
 from test_market_collection_runtime import InventoriedBackend
 from test_market_custody import MemoryBackend
 from test_market_relay_inputs import REGISTRY
@@ -24,7 +24,8 @@ STUDY_SHA = "b" * 40
 def config():
     return {"schema": cli.SCHEMA, "collection_id": "ftshare-cn-eod", "generation": "g20261016",
         "legacy_reference": deepcopy(cli.BASE_REFERENCE), "qualification": {
-            "run_id": 7001, "artifact_id": 9001, "sha256": "c" * 64, "code_sha": STUDY_SHA}}
+            "run_id": 7001, "artifact_id": 9001, "sha256": "c" * 64, "code_sha": STUDY_SHA},
+        "kernel_adoption": None}
 
 
 def runtime_input(tmp_path):
@@ -602,3 +603,306 @@ def test_pending_qualification_sync_refuses_before_store_or_source_client(tmp_pa
     assert constructed == [] and not (out / "control.json").exists()
     assert len(api.calls) == 4 and not any("/records" in path or "/artifacts/" in path for path in api.calls)
     assert env["FTSHARE_API_KEY"] not in capsys.readouterr().out
+
+
+KERNEL_ARCHIVE = b"synthetic original archive for native admission only"
+
+
+def kernel_config(raw=KERNEL_ARCHIVE):
+    value = config()
+    value["kernel_adoption"] = {**value["qualification"], "sha256": digest(raw)}
+    value["qualification"] = None
+    return value
+
+
+def kernel_input(tmp_path):
+    event, env = runtime_input(tmp_path)
+    event["inputs"].update(operation="ftshare-adopt-kernel", work_units="1")
+    env.pop("FTSHARE_API_KEY")
+    return event, env
+
+
+class KernelNativeAPI(NativeAPI):
+    def __init__(self, token="synthetic-store-token", *, raw=KERNEL_ARCHIVE):
+        super().__init__(token)
+        self.run.update(name=cli.ADOPTION_TITLE, display_title=cli.ADOPTION_TITLE)
+        self.study.update(name=cli.KERNEL_TITLE, display_title=cli.KERNEL_TITLE)
+        self.artifact.update(name="dos2-ftshare-check-kernel-7001-1", size_in_bytes=len(raw),
+                             digest="sha256:" + digest(raw))
+        self.artifact["workflow_run"].update(repository_id=1420041744, head_repository_id=1420041744)
+        self.ci["total_count"] = 1
+        self.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
+            repository={"id": 1420041744}, head_repository={"id": 1420041744})
+
+
+def test_kernel_adoption_uses_separate_config_without_unlocking_batch_sync(tmp_path):
+    cfg = kernel_config()
+    assert cli.configuration(cfg) == cfg and cfg["qualification"] is None
+    event, env = kernel_input(tmp_path)
+    selected = cli.settings(event, env, cfg)
+    api = KernelNativeAPI()
+    checked = cli.native_ready(api, selected, cfg)
+    assert checked["kernel_adoption"] == {**cfg["kernel_adoption"], "run_attempt": 1,
+                                          "size_in_bytes": len(KERNEL_ARCHIVE)}
+    event["inputs"]["operation"] = "ftshare-sync"
+    api.run.update(name="decision-os-ashare-data")
+    with pytest.raises(RecordError, match="QUALIFICATION_PENDING"):
+        cli.native_ready(api, cli.settings(event, env, cfg), cfg)
+
+
+@pytest.mark.parametrize("key,value", [("work_units", "2"), ("access_and_custody_confirmed", False),
+    ("public_rights_confirmed", True), ("repair_request", "{}"),
+    ("selection", '{"collection_id":"another","generation":"g20261016"}')])
+def test_kernel_adoption_scope_is_one_authorized_private_fixed_unit(tmp_path, key, value):
+    event, env = kernel_input(tmp_path)
+    event["inputs"][key] = value
+    with pytest.raises(RecordError):
+        cli.settings(event, env, kernel_config())
+
+
+def test_kernel_adoption_rejects_calendar_override_and_extra_proof_fields(tmp_path):
+    event, env = kernel_input(tmp_path)
+    selection = json.loads(event["inputs"]["selection"])
+    selection["calendar_references"] = {venue: deepcopy(cli.BASE_REFERENCE) for venue in ("SSE", "SZSE")}
+    event["inputs"]["selection"] = json.dumps(selection)
+    with pytest.raises(RecordError, match="CALENDAR_OVERRIDE"):
+        cli.settings(event, env, kernel_config())
+    bad = kernel_config()
+    bad["kernel_adoption"]["archive_url"] = "https://example.invalid/other.zip"
+    with pytest.raises(RecordError, match="QUALIFICATION_REQUIRED"):
+        cli.configuration(bad)
+
+
+@pytest.mark.parametrize("family,key,value", [
+    ("study", "run_attempt", 2), ("study", "conclusion", "failure"),
+    ("study", "head_sha", SHA), ("study", "display_title", cli.QUALIFICATION_TITLE),
+    ("artifact", "name", "dos2-ftshare-check-continuation-7001-1"),
+    ("artifact", "digest", "sha256:" + "d" * 64), ("artifact", "expired", True),
+    ("artifact", "size_in_bytes", 0), ("run", "display_title", cli.KERNEL_TITLE),
+    ("meta", "private", False),
+])
+def test_kernel_adoption_requires_this_native_run_and_original_kernel_artifact(tmp_path, family, key, value):
+    event, env = kernel_input(tmp_path)
+    api = KernelNativeAPI()
+    getattr(api, family)[key] = value
+    with pytest.raises(RecordError):
+        cli.native_ready(api, cli.settings(event, env, kernel_config()), kernel_config())
+
+
+@pytest.mark.parametrize("change", [{"run_attempt": 2}, {"conclusion": "failure"},
+    {"repository": {"id": 99}}, {"head_repository": {"id": 99}}, {"event": "pull_request"}])
+def test_kernel_adoption_cannot_reuse_a_newer_failed_or_wrong_main_ci(tmp_path, change):
+    event, env = kernel_input(tmp_path)
+    api = KernelNativeAPI()
+    # An older successful first row cannot hide a newer run later in the response.
+    api.ci["workflow_runs"].append({**api.ci["workflow_runs"][0], "id": 6002, **change})
+    api.ci["total_count"] = 2
+    with pytest.raises(RecordError, match="MAIN_CI"):
+        cli.native_ready(api, cli.settings(event, env, kernel_config()), kernel_config())
+    assert not any(path.endswith("/runs/7001") for path in api.calls)
+
+
+def test_kernel_adoption_download_uses_native_id_and_checks_the_original_bytes():
+    api, calls = KernelNativeAPI(), []
+    def load(repo, artifact_id):
+        calls.append((repo, artifact_id))
+        return KERNEL_ARCHIVE
+    original = cli.load_kernel_archive(api, kernel_config(), archive_loader=load)
+    assert original["archive"] == KERNEL_ARCHIVE and calls == [(cli.REPO, 9001)]
+    assert original["proof"] == {**kernel_config()["kernel_adoption"], "run_attempt": 1,
+                                  "size_in_bytes": len(KERNEL_ARCHIVE)}
+    with pytest.raises(RecordError, match="ARCHIVE_DIGEST"):
+        cli.load_kernel_archive(api, kernel_config(), archive_loader=lambda *_: KERNEL_ARCHIVE + b"changed")
+    api.artifact["workflow_run"]["repository_id"] = 99
+    with pytest.raises(RecordError, match="KERNEL_ARTIFACT"):
+        cli.load_kernel_archive(api, kernel_config(), archive_loader=lambda *_: pytest.fail("must not download"))
+
+
+def test_kernel_adoption_runtime_supplies_only_store_token_and_normal_read_control(tmp_path, monkeypatch, capsys):
+    from decision_kernel.infrastructure import ftshare_http
+    event, values = kernel_input(tmp_path)
+    class Environment(dict):
+        def get(self, key, *args):
+            assert key not in {"FTSHARE_API_KEY", "RELAY_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"}
+            return super().get(key, *args)
+    env = Environment(values)
+    config_path = tmp_path / "kernel-config.json"
+    config_path.write_bytes(encoded(kernel_config()))
+    monkeypatch.setattr(cli, "CONFIG_FILE", config_path)
+    monkeypatch.setattr(ftshare_http, "FTShareHTTP", lambda *a, **k: pytest.fail("must not construct a source client"))
+    downloads = []
+    def download(repo, artifact_id, *, token):
+        downloads.append((repo, artifact_id, token))
+        return KERNEL_ARCHIVE
+    monkeypatch.setattr(cli, "download_archive", download)
+    def execute(**kwargs):
+        assert kwargs["operation"] == "ftshare-adopt-kernel" and kwargs["max_work_units"] == 1
+        assert kwargs["client_factory"] is None
+        original = kwargs["kernel_loader"](KernelNativeAPI())
+        assert original["archive"] == KERNEL_ARCHIVE
+        ref = deepcopy(cli.BASE_REFERENCE)
+        return {"receipt": {"status": "complete", "source_requests": 0}, "reference": ref,
+                "reading_request": {"reference": ref, "offset": 0, "limit": 50}}
+    out = tmp_path / "adopted"
+    assert cli.run_runtime(event, env, out, execute=execute) == 0
+    assert downloads == [(cli.REPO, 9001, env[cli.TOKEN_ENV])]
+    control = json.loads((out / "control.json").read_bytes())
+    assert control["reading_request"]["reference"] == control["reference"] == cli.BASE_REFERENCE
+    printed = capsys.readouterr().out
+    assert "source-views/" not in printed and env[cli.TOKEN_ENV] not in printed
+
+
+def test_missing_kernel_approval_blocks_before_store_or_archive_download(tmp_path, monkeypatch, capsys):
+    event, env = kernel_input(tmp_path)
+    pending = kernel_config()
+    pending["kernel_adoption"] = None
+    config_path = tmp_path / "pending-kernel.json"
+    config_path.write_bytes(encoded(pending))
+    monkeypatch.setattr(cli, "CONFIG_FILE", config_path)
+    api = KernelNativeAPI()
+    monkeypatch.setattr(cli, "GitHubAPI", lambda _token: api)
+    monkeypatch.setattr(cli, "GitHubStore", lambda *a, **k: pytest.fail("must not construct a Store"))
+    monkeypatch.setattr(cli, "download_archive", lambda *a, **k: pytest.fail("must not download an artifact"))
+    out = tmp_path / "pending-kernel"
+    assert cli.run_runtime(event, env, out) == 2
+    receipt = json.loads((out / "result.json").read_bytes())
+    assert receipt["reason_code"] == "FTSHARE_RUNTIME_KERNEL_ADOPTION_PENDING"
+    assert receipt["source_requests"] == 0 and receipt["work_units"] == []
+    assert not (out / "control.json").exists()
+
+
+class KernelHost(Host):
+    def __init__(self):
+        self.fixture = kernel_adoption_fixture()
+        self.shared = self.fixture["backend"].shared
+        self.old_ref, self.old = self.fixture["legacy_reference"], self.fixture["old"]
+        self.config = {key: self.fixture[key] for key in ("collection_id", "generation", "legacy_reference")}
+        self.now = self.fixture["created_at"]
+        self.apis, self.commits, self.archive_reads = [], [], []
+        self.after_commit = self.read_error = None
+        self.initial_api_count = 0
+        self.limits = GitHubRateLimits()
+        self.limits.observe({"x-ratelimit-resource": "core", "x-ratelimit-limit": "5000",
+            "x-ratelimit-remaining": "5000", "x-ratelimit-reset": "2000000000"})
+
+    def original(self, api):
+        self.archive_reads.append(api)
+        return {key: self.fixture[key] for key in ("archive", "proof")}
+
+
+def adopt_in_runtime(host, **options):
+    arguments = {"operation": "ftshare-adopt-kernel", "config": host.config, "registry": REGISTRY,
+        "open_unit": host.open, "access_confirmed": True, "custody_authorized": True,
+        "kernel_loader": host.original, "clock": lambda: host.now,
+        "client_factory": lambda: pytest.fail("adoption must not construct a source client")}
+    return cli.run_collection(**{**arguments, **options})
+
+
+def test_runtime_adopts_originals_once_and_status_uses_only_the_retained_store():
+    host = KernelHost()
+    updates = []
+    saved = adopt_in_runtime(host, progress=lambda receipt: updates.append(receipt))
+    receipt = saved["receipt"]
+    assert receipt["status"] == "complete", receipt
+    assert receipt["source_requests"] == receipt["source_budget"] == receipt["reserved_requests"] == 0
+    assert (receipt["historical_source_requests"], receipt["prior_source_requests"],
+            receipt["cumulative_source_requests"]) == (4, 2, 6)
+    assert receipt["retained_response_count"] == 4 and receipt["unique_series_count"] == 3
+    assert receipt["revision"] == 0 and len(receipt["work_units"]) == 1
+    assert receipt["capacity"]["admit_work_unit"] is True
+    assert saved["reading_request"] == {"reference": saved["reference"], "offset": 0, "limit": 50}
+    assert all(value["source_requests"] == 0 for value in updates)
+    assert b"source-views/" not in encoded(receipt) and b"ts_millis" not in encoded(receipt)
+    restored = host.latest()
+    assert restored["reference"] == saved["reference"]
+    assert restored["collection"]["plan"]["adoption"]["proof"] == host.fixture["proof"]
+    assert len(restored["collection"]["units"]) == 3
+    assert restore_market_collection(host.old_ref, REGISTRY, host.read())["collection"] == host.old
+
+    before, commits = host.read().backend.head(), len(host.commits)
+    host.now = "2026-10-20T12:00:00+00:00"
+    repeated = adopt_in_runtime(host, capacity=lambda _: pytest.fail("existing adoption requires no new capacity"))
+    assert repeated["receipt"]["status"] == "complete"
+    assert repeated["reference"] == saved["reference"] and repeated["reading_request"] == saved["reading_request"]
+    assert host.read().backend.head() == before and len(host.commits) == commits
+    assert host.latest()["collection"]["plan"]["created_at"] == host.fixture["created_at"]
+
+    reading = adopt_in_runtime(host, operation="ftshare-status", access_confirmed=False,
+        custody_authorized=False, kernel_loader=lambda _: pytest.fail("normal status must not download an artifact"))
+    assert reading["receipt"]["status"] == "read" and reading["receipt"]["source_requests"] == 0
+    assert reading["receipt"]["health"]["raw"]["horizon_counts"][2]["observed_count"] == 2
+    assert reading["receipt"]["health"]["qfq"]["horizon_counts"][2]["observed_count"] == 1
+    assert reading["reference"] == saved["reference"] and len(host.archive_reads) == 2
+    assert host.read().backend.head() == before and len(host.commits) == commits
+
+
+@pytest.mark.parametrize("gate", ["capacity", "api-budget", "main-moved"])
+def test_kernel_runtime_admission_failure_cannot_retain_or_create_a_source_client(gate):
+    host = KernelHost()
+    calls, options = [], {}
+    if gate == "capacity":
+        options["capacity"] = lambda _: {"admit_work_unit": False}
+    elif gate == "api-budget":
+        host.initial_api_count = 240
+    else:
+        def guard(api):
+            calls.append(api)
+            if len(calls) == 2:
+                raise RecordError("FTSHARE_MAIN_MOVED")
+        options["guard"] = guard
+    before = host.read().backend.head()
+    outcome = adopt_in_runtime(host, **options)
+    assert outcome["receipt"]["status"] == "blocked"
+    assert outcome["receipt"]["source_requests"] == outcome["receipt"]["reserved_requests"] == 0
+    assert outcome["reference"] is None and host.read().backend.head() == before
+    assert host.commits == [] and host.latest() is None
+
+
+def test_kernel_runtime_reconstructs_archive_before_any_storage_admission_or_write():
+    host = KernelHost()
+    # A matching digest for corrupt bytes still cannot stand in for the original ZIP.
+    host.fixture["archive"] = b"invalid archive with a self-consistent digest"
+    host.fixture["proof"].update(sha256=digest(host.fixture["archive"]), size_in_bytes=len(host.fixture["archive"]))
+    before = host.read().backend.head()
+    outcome = adopt_in_runtime(host, capacity=lambda _: pytest.fail("malformed original must fail first"))
+    assert outcome["receipt"]["status"] == "blocked"
+    assert outcome["receipt"]["reason_code"] == "FTSHARE_ADOPTION_ARCHIVE_INVALID"
+    assert outcome["receipt"]["source_requests"] == 0 and "historical_source_requests" not in outcome["receipt"]
+    assert host.read().backend.head() == before and not host.commits
+
+
+@pytest.mark.parametrize("uncertain_at", ["first-original", "published-root"])
+def test_kernel_runtime_unknown_write_stops_and_explicit_reentry_reconciles(uncertain_at):
+    host = KernelHost()
+    failures = []
+    def lose_receipt(backend, files):
+        original = uncertain_at == "first-original" and len(host.commits) == 1
+        root = uncertain_at == "published-root" and any(
+            b"ftshare-collection-state-v1" in value for value in files.values())
+        if original or root:
+            failures.append(backend.head())
+            raise UnknownWrite("REMOTE_WRITE_UNCONFIRMED")
+    host.after_commit = lose_receipt
+    first = adopt_in_runtime(host)
+    assert first["receipt"]["status"] == "persistence-unconfirmed", first["receipt"]
+    assert first["receipt"]["next_run_can_resume"] is False
+    assert first["receipt"]["source_requests"] == first["receipt"]["reserved_requests"] == 0
+    assert len(failures) == 1 and first["reference"] is None
+    host.after_commit = None
+    existing = host.latest()
+    assert (existing is not None) == (uncertain_at == "published-root")
+    if existing is not None:
+        previous_head, previous_commits = host.read().backend.head(), len(host.commits)
+    host.now = "2026-10-20T12:00:00+00:00"
+    resumed = adopt_in_runtime(host)
+    assert resumed["receipt"]["status"] == "complete", resumed["receipt"]
+    assert resumed["receipt"]["source_requests"] == resumed["receipt"]["source_budget"] == 0
+    assert resumed["receipt"]["historical_source_requests"] == 4
+    if existing is not None:
+        assert resumed["reference"] == existing["reference"]
+        assert host.read().backend.head() == previous_head and len(host.commits) == previous_commits
+    final_head, final_commits = host.read().backend.head(), len(host.commits)
+    repeated = adopt_in_runtime(host)
+    assert repeated["reference"] == resumed["reference"]
+    assert host.read().backend.head() == final_head and len(host.commits) == final_commits
+    assert restore_market_collection(host.old_ref, REGISTRY, host.read())["collection"] == host.old

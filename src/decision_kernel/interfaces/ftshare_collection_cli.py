@@ -1,4 +1,4 @@
-"""Finite, native-gated FTShare daily sync/status in the existing records Store."""
+"""Finite, native-gated FTShare sync, adoption and status in the existing records Store."""
 from __future__ import annotations
 
 import argparse
@@ -25,11 +25,12 @@ from decision_kernel.application.market_collection_runtime import health_receipt
 from decision_kernel.application.market_custody import market_read_scope
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, Selection, SourceRef, encoded, require
+from decision_kernel.domain.records import RecordError, Selection, SourceRef, UnknownWrite, digest, encoded, require
 from decision_kernel.infrastructure.github_store import (
     MAX_REQUESTS, GitHubAPI, GitHubRateLimits, GitHubStore,
 )
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
+from decision_kernel.infrastructure.research_receipts import download_archive
 from decision_kernel.interfaces.ftshare_check_cli import (
     BASE_REFERENCE, PREFIX, REPO, WORKFLOW, _regular, _safe_error, check_private,
 )
@@ -42,22 +43,25 @@ SCHEMA = "ftshare-daily-runtime-v1"
 SOURCE_ADMISSION_API_REQUESTS = 240
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 QUALIFICATION_TITLE = "FTShare daily check continuation 20261018"
+KERNEL_TITLE = "FTShare Kernel v1 daily check 20261019"
+ADOPTION_TITLE = "FTShare Kernel v1 adoption 20261019"
+OPERATIONS = {"ftshare-sync", "ftshare-status", "ftshare-adopt-kernel"}
 
 
 def configuration(value):
     require(isinstance(value, dict) and set(value) == {
-        "schema", "collection_id", "generation", "legacy_reference", "qualification"}
+        "schema", "collection_id", "generation", "legacy_reference", "qualification", "kernel_adoption"}
         and value["schema"] == SCHEMA and value["collection_id"] == "ftshare-cn-eod"
         and value["generation"] == "g20261016" and value["legacy_reference"] == BASE_REFERENCE,
         "FTSHARE_RUNTIME_FIXED_CONFIG")
-    proof = value["qualification"]
-    if proof is None:
-        return deepcopy(value)
-    require(isinstance(proof, dict) and set(proof) == {"run_id", "artifact_id", "sha256", "code_sha"}
-        and all(type(proof[k]) is int and 0 < proof[k] < 10 ** 15 for k in ("run_id", "artifact_id"))
-        and isinstance(proof["sha256"], str) and re.fullmatch(r"[a-f0-9]{64}", proof["sha256"])
-        and isinstance(proof["code_sha"], str) and re.fullmatch(r"[a-f0-9]{40}", proof["code_sha"]),
-        "FTSHARE_RUNTIME_QUALIFICATION_REQUIRED")
+    for field in ("qualification", "kernel_adoption"):
+        proof = value[field]
+        require(proof is None or isinstance(proof, dict)
+            and set(proof) == {"run_id", "artifact_id", "sha256", "code_sha"}
+            and all(type(proof[k]) is int and 0 < proof[k] < 10 ** 15 for k in ("run_id", "artifact_id"))
+            and isinstance(proof["sha256"], str) and re.fullmatch(r"[a-f0-9]{64}", proof["sha256"])
+            and isinstance(proof["code_sha"], str) and re.fullmatch(r"[a-f0-9]{40}", proof["code_sha"]),
+            "FTSHARE_RUNTIME_QUALIFICATION_REQUIRED")
     return deepcopy(value)
 
 
@@ -71,11 +75,11 @@ def settings(event, env, config):
     require(isinstance(data, dict) and set(data) <= {"operation", "code_sha", "selection", "work_units",
         "repair_request", "access_and_custody_confirmed", "public_rights_confirmed"}, "FTSHARE_RUNTIME_INPUT")
     operation = data.get("operation")
-    require(operation in {"ftshare-sync", "ftshare-status"} and not data.get("repair_request"),
+    require(operation in OPERATIONS and not data.get("repair_request"),
         "FTSHARE_RUNTIME_OPERATION")
     authorized = (data.get("access_and_custody_confirmed") is True
         or data.get("access_and_custody_confirmed") == "true")
-    require(operation != "ftshare-sync" or authorized, "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
+    require(operation == "ftshare-status" or authorized, "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
     require(data.get("public_rights_confirmed") is False
         or data.get("public_rights_confirmed") == "false", "FTSHARE_RUNTIME_PRIVATE_ONLY")
     raw = data.get("selection")
@@ -110,21 +114,24 @@ def settings(event, env, config):
 
 
 def native_ready(api, selected, config):
-    """Authenticate private main execution; only sync requires the source proof.
+    """Authenticate private main execution and the operation's distinct evidence.
 
     Artifact contents are reviewed before their digest enters trusted main config;
     sync of this finite generation still requires its original continuation artifact.
+    Kernel adoption has separate authority for four already acquired v1 responses.
     Source-free status restores records independently of that artifact's lifetime.
     """
-    require(selected.get("operation") in {"ftshare-sync", "ftshare-status"},
-        "FTSHARE_RUNTIME_OPERATION")
+    require(selected.get("operation") in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
+    adopting = selected["operation"] == "ftshare-adopt-kernel"
     check_private(api, selected)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))
     require(type(run.get("id")) is int and run["id"] == selected["run_id"]
         and run.get("head_sha") == selected["code_sha"] and run.get("head_branch") == "main"
         and run.get("event") == "workflow_dispatch" and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
-        and run.get("name") == "decision-os-ashare-data" and run.get("status") == "in_progress"
+        and run.get("name") == (ADOPTION_TITLE if adopting else "decision-os-ashare-data")
+        and (not adopting or run.get("display_title") == ADOPTION_TITLE)
+        and run.get("status") == "in_progress"
         and run.get("repository", {}).get("id") == 1420041744
         and run.get("head_repository", {}).get("id") == 1420041744, "FTSHARE_RUNTIME_NATIVE_RUN")
     ci = api.request("GET", PREFIX + "/actions/workflows/ci.yml/runs?" + urlencode({
@@ -132,12 +139,23 @@ def native_ready(api, selected, config):
     rows = ci.get("workflow_runs")
     require(isinstance(rows, list) and 0 < len(rows) <= 5, "FTSHARE_RUNTIME_MAIN_CI")
     latest = rows[0]
+    if adopting:
+        require(type(ci.get("total_count")) is int and ci["total_count"] == len(rows)
+            and all(isinstance(row, dict) and type(row.get("id")) is int and row["id"] > 0 for row in rows),
+            "FTSHARE_RUNTIME_MAIN_CI")
+        latest = max(rows, key=lambda row: row["id"])
+        require(type(latest.get("run_attempt")) is int and latest["run_attempt"] == 1
+            and latest.get("name") == "decision-os-ci"
+            and latest.get("repository", {}).get("id") == 1420041744
+            and latest.get("head_repository", {}).get("id") == 1420041744, "FTSHARE_RUNTIME_MAIN_CI")
     require(latest.get("head_sha") == selected["code_sha"] and latest.get("head_branch") == "main"
         and latest.get("event") == "push" and latest.get("path") == ".github/workflows/ci.yml"
         and latest.get("status") == "completed" and latest.get("conclusion") == "success",
         "FTSHARE_RUNTIME_MAIN_CI")
     if selected["operation"] == "ftshare-status":
         return {"main_ci_run": latest["id"], "source_qualification": "not-required-for-status"}
+    if adopting:
+        return {"main_ci_run": latest["id"], "kernel_adoption": _kernel_native_proof(api, config)}
     proof = config["qualification"]
     require(proof is not None, "FTSHARE_RUNTIME_QUALIFICATION_PENDING")
     study = api.request("GET", PREFIX + "/actions/runs/" + str(proof["run_id"]))
@@ -160,10 +178,44 @@ def native_ready(api, selected, config):
         "qualification_artifact": proof["artifact_id"], "artifact_digest_verified": True}
 
 
+def _kernel_native_proof(api, config):
+    proof = config["kernel_adoption"]
+    require(proof is not None, "FTSHARE_RUNTIME_KERNEL_ADOPTION_PENDING")
+    run = api.request("GET", PREFIX + "/actions/runs/" + str(proof["run_id"]))
+    require(type(run.get("id")) is int and run["id"] == proof["run_id"]
+        and run.get("head_sha") == proof["code_sha"] and run.get("head_branch") == "main"
+        and run.get("event") == "workflow_dispatch" and type(run.get("run_attempt")) is int
+        and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
+        and run.get("name") == KERNEL_TITLE and run.get("display_title") == KERNEL_TITLE
+        and run.get("status") == "completed" and run.get("conclusion") == "success"
+        and run.get("repository", {}).get("id") == 1420041744
+        and run.get("head_repository", {}).get("id") == 1420041744, "FTSHARE_RUNTIME_KERNEL_RUN")
+    artifact = api.request("GET", PREFIX + "/actions/artifacts/" + str(proof["artifact_id"]))
+    producer = artifact.get("workflow_run", {})
+    require(type(artifact.get("id")) is int and artifact["id"] == proof["artifact_id"]
+        and artifact.get("name") == "dos2-ftshare-check-kernel-" + str(proof["run_id"]) + "-1"
+        and artifact.get("expired") is False and artifact.get("digest") == "sha256:" + proof["sha256"]
+        and type(artifact.get("size_in_bytes")) is int and 0 < artifact["size_in_bytes"] <= 1024 * 1024
+        and type(producer.get("id")) is int and producer["id"] == proof["run_id"]
+        and producer.get("head_sha") == proof["code_sha"] and producer.get("head_branch") == "main"
+        and producer.get("repository_id") == 1420041744 and producer.get("head_repository_id") == 1420041744,
+        "FTSHARE_RUNTIME_KERNEL_ARTIFACT")
+    return {**proof, "run_attempt": 1, "size_in_bytes": artifact["size_in_bytes"]}
+
+
+def load_kernel_archive(api, config, *, archive_loader=download_archive):
+    """Obtain the fixed original with the Store token; the application replays it."""
+    proof = _kernel_native_proof(api, config)
+    raw = archive_loader(REPO, proof["artifact_id"])
+    require(type(raw) is bytes and len(raw) == proof["size_in_bytes"]
+        and digest(raw) == proof["sha256"], "FTSHARE_RUNTIME_KERNEL_ARCHIVE_DIGEST")
+    return {"archive": raw, "proof": proof}
+
+
 def _open_remote(binding, token, selected, config):
     limits = GitHubRateLimits()
     def open_unit(write):
-        require(type(write) is bool and write == (selected["operation"] == "ftshare-sync"),
+        require(type(write) is bool and write == (selected["operation"] != "ftshare-status"),
             "FTSHARE_RUNTIME_OPERATION_BINDING")
         require(not write or binding.write_enabled, "REMOTE_READ_ONLY")
         api = GitHubAPI(token)
@@ -232,17 +284,92 @@ def _source_instruction(transport):
     return None, 2
 
 
+def _run_kernel_adoption(*, config, registry, open_unit, kernel_loader,
+                         guard, progress, clock, monotonic, capacity):
+    """One bounded adoption of existing bytes; there is no source client here."""
+    from decision_kernel.application.ftshare_adoption import read_kernel_archive
+    from decision_kernel.application.ftshare_collection import adopt_ftshare_kernel
+    clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
+    guard = guard or (lambda _api: None)
+    started = monotonic()
+    receipt = {"schema": "ftshare-collection-runtime-receipt-v1", "operation": "ftshare-adopt-kernel",
+        "status": "started", "source_requests": 0, "source_budget": 0, "reserved_requests": 0,
+        "work_units": [], "reason_code": None, "supplier_rows_in_receipt": False,
+        "private_locations_in_receipt": False, "normal_read_required": True,
+        "account_daily_limit_verified": False, "long_term_uptime_certified": False,
+        "full_market_coverage_certified": False, "factor_qualification_granted": False,
+        "started_at": clock()}
+    reference = reading_request = api = unit = None
+    def report():
+        if progress is not None:
+            progress(deepcopy(receipt))
+    report()
+    try:
+        require(callable(kernel_loader), "FTSHARE_RUNTIME_KERNEL_ARCHIVE_READER_REQUIRED")
+        store, fresh, api = open_unit(True)
+        unit = {"number": 1, "source_requests": 0, "status": "admission"}
+        receipt["work_units"].append(unit)
+        guard(api)
+        original = kernel_loader(api)
+        read_kernel_archive(original["archive"], original["proof"])
+        receipt.update(historical_source_requests=4, prior_source_requests=2, cumulative_source_requests=6)
+        with market_read_scope(fresh()) as reader:
+            reference = latest_ftshare_reference(reader, registry,
+                collection_id=config["collection_id"], generation=config["generation"])
+        if reference is None:
+            receipt["capacity"] = capacity(fresh())
+            require(receipt["capacity"]["admit_work_unit"], "FTSHARE_STORAGE_CAPACITY")
+        require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+        guard(api)
+        require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+        unit["status"] = "retaining"
+        report()
+        saved = adopt_ftshare_kernel(original["archive"], original["proof"],
+            config["legacy_reference"], registry, store, collection_id=config["collection_id"],
+            generation=config["generation"], created_at=clock(), fresh_reader=fresh,
+            custody_authorized=True, public_rights_confirmed=False)
+        require(saved["source_requests"] == saved["source_budget"] == saved["reserved_requests"] == 0
+            and saved["historical_source_requests"] == 4 and saved["cumulative_source_requests"] == 6
+            and len(saved["capture_references"]) == 4 and len(saved["collection"]["units"]) == 3,
+            "FTSHARE_RUNTIME_KERNEL_ADOPTION_RESULT")
+        reference, reading_request = saved["reference"], saved["reading_request"]
+        unit["status"] = "complete"
+        receipt.update(status="complete", retained_response_count=4, unique_series_count=3,
+            revision=saved["collection"]["revision"])
+    except Exception as exc:
+        uncertain = isinstance(exc, UnknownWrite)
+        receipt.update(status="persistence-unconfirmed" if uncertain else "blocked", reason_code=_safe_error(exc))
+        if uncertain:
+            receipt["next_run_can_resume"] = False
+        if unit is not None:
+            unit["status"] = receipt["status"]
+    finally:
+        if unit is not None:
+            unit["store_api_requests"] = getattr(api, "_requests", None)
+        limits = getattr(api, "rate_limits", None)
+        if isinstance(limits, GitHubRateLimits):
+            receipt["store_rate_limits"] = limits.receipt()
+        receipt.update(finished_at=clock(), elapsed_seconds=round(max(0, monotonic() - started), 6))
+        report()
+    return {"receipt": receipt, "reference": reference, "reading_request": reading_request}
+
+
 def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                    access_confirmed=False, custody_authorized=False, client_factory=None,
                    guard=None, progress=None, clock=None, monotonic=time.monotonic,
-                   sleep=time.sleep, capacity=market_capacity, calendar_references=None):
-    """One irreversible reservation and at most one FTShare request per work unit."""
-    require(operation in {"ftshare-sync", "ftshare-status"}, "FTSHARE_RUNTIME_OPERATION")
-    writing = operation == "ftshare-sync"
+                   sleep=time.sleep, capacity=market_capacity, calendar_references=None, kernel_loader=None):
+    """Finite source sync, source-free adoption, or independently restored status."""
+    require(operation in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
+    writing = operation != "ftshare-status"
     require(type(max_work_units) is int and 1 <= max_work_units <= 32
-        and (writing or max_work_units == 1), "FTSHARE_RUNTIME_WORK_UNIT_BOUND")
+        and (operation == "ftshare-sync" or max_work_units == 1), "FTSHARE_RUNTIME_WORK_UNIT_BOUND")
     require(not writing or access_confirmed is True and custody_authorized is True,
         "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
+    if operation == "ftshare-adopt-kernel":
+        require(calendar_references is None, "FTSHARE_RUNTIME_STATUS_CALENDAR_OVERRIDE")
+        return _run_kernel_adoption(config=config, registry=registry, open_unit=open_unit,
+            kernel_loader=kernel_loader, guard=guard, progress=progress, clock=clock,
+            monotonic=monotonic, capacity=capacity)
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda _api: None)
     receipt = {"schema": "ftshare-collection-runtime-receipt-v1", "operation": operation,
@@ -421,21 +548,28 @@ def run_runtime(event, env, out, *, execute=run_collection):
     try:
         require(not env.get(BINDING_ENV), "FTSHARE_RUNTIME_BINDING_OVERRIDE_FORBIDDEN")
         require(bool(env.get(TOKEN_ENV)), "FTSHARE_STORE_TOKEN_REQUIRED")
-        binding = _records_runtime_binding("sync" if selected["operation"] == "ftshare-sync" else "status")
-        from decision_kernel.infrastructure.ftshare_http import FTShareHTTP
+        binding = _records_runtime_binding("status" if selected["operation"] == "ftshare-status" else "sync")
+        client_factory = None
+        if selected["operation"] == "ftshare-sync":
+            from decision_kernel.infrastructure.ftshare_http import FTShareHTTP
+            client_factory = lambda: FTShareHTTP(credential=env.get("FTSHARE_API_KEY", ""))
+        kernel_loader = None
+        if selected["operation"] == "ftshare-adopt-kernel":
+            kernel_loader = lambda api: load_kernel_archive(api, config,
+                archive_loader=lambda repo, artifact_id: download_archive(repo, artifact_id, token=env[TOKEN_ENV]))
         result = execute(operation=selected["operation"], config=config, registry=RelayRegistry(REGISTRY),
             open_unit=_open_remote(binding, env[TOKEN_ENV], selected, config),
             max_work_units=selected["max_work_units"], access_confirmed=selected["access_confirmed"],
             custody_authorized=selected["custody_authorized"],
             calendar_references=selected["calendar_references"],
-            client_factory=lambda: FTShareHTTP(credential=env.get("FTSHARE_API_KEY", "")),
+            client_factory=client_factory, kernel_loader=kernel_loader,
             guard=lambda api: check_private(api, selected),
             progress=lambda value: _save_receipt(receipt_path, {**context, **value}))
         _save_receipt(receipt_path, {**context, **result["receipt"]})
         if result["reference"] is not None:
             # Only the private control artifact carries the exact source locator.
             _save_receipt(out / "control.json", {"schema": "ftshare-reading-control-v1",
-                "reference": result["reference"], "reading_request": {
+                "reference": result["reference"], "reading_request": result.get("reading_request") or {
                     "reference": result["reference"], "offset": 0, "limit": 50}})
         return 0 if result["receipt"]["status"] in {"complete", "already-complete", "read"} else 2
     except Exception as exc:

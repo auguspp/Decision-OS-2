@@ -11,5 +11,11 @@
     },
     "selection": {"kind": "all", "start": null, "end": null, "columns": []}
   },
-  "qualification": null
+  "qualification": null,
+  "kernel_adoption": {
+    "run_id": 39187632132,
+    "artifact_id": 12158493623,
+    "sha256": "f1c15e0712a46b4c17e96739562f3b3c294d39edc3338033c96e34af1fd9f147",
+    "code_sha": "23cbac467af01c943f5a52d2dbd5331001536f15"
+  }
 }

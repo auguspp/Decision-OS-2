@@ -8,16 +8,16 @@ on:
         options: [status, sync, repair, ftshare-check, ftshare-check-continue, ftshare-check-kernel, ftshare-adopt-kernel, ftshare-calendar, ftshare-sync, ftshare-status]
         default: ftshare-status
         required: true
-        description: 'Read records, adopt verified Kernel v1 originals without new market requests, retain bounded FTShare daily batches, or advance the explicit legacy Relay plan'
+        description: 'Read records, advance the trusted finite Kernel v1 whole-range plan, or use an explicit historical operation'
       code_sha:
         type: string
         required: true
         description: 'Exact reviewed current main commit'
       selection:
         type: string
-        default: '{"collection_id":"ftshare-cn-eod","generation":"g20261016"}'
+        default: '{"collection_id":"ftshare-cn-eod","generation":"g20261016-v1"}'
         required: true
-        description: 'FTShare: fixed collection_id/generation, optional first-run calendar_references; check/continue/calendar: exact study; legacy operations require their explicit existing selection; <=6000 bytes'
+        description: 'FTShare: trusted finite collection_id/generation, optional first-run calendar_references; check/continue/calendar: exact study; legacy operations require their explicit existing selection; <=6000 bytes'
       work_units:
         type: string
         default: '1'
@@ -314,7 +314,7 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Retain bounded FTShare daily batches and irreversible per-slot reservations
+      - name: Retain bounded FTShare whole-range daily requests and irreversible per-slot reservations
         id: runtime
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}

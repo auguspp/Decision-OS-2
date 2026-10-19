@@ -11,9 +11,10 @@ import zipfile
 import pytest
 
 from decision_kernel.application.ftshare_collection import (
+    SINGLE_PLAN_SCHEMA,
     begin_ftshare_slot, finish_ftshare_slot, latest_ftshare_reference,
-    plan_ftshare_collection, restore_ftshare_batch, restore_ftshare_collection,
-    retain_ftshare_batch, retain_ftshare_collection, validate_ftshare_collection,
+    plan_ftshare_collection, plan_ftshare_single_collection, restore_ftshare_batch, restore_ftshare_collection,
+    retain_ftshare_batch, retain_ftshare_collection, retain_ftshare_single, validate_ftshare_collection,
 )
 from decision_kernel.application.ftshare_daily import capture_batch
 from decision_kernel.application.market_collection import plan_collection
@@ -89,16 +90,17 @@ def _settle(collection, slot, reference, store, fresh):
     return finished, _retain(finished, store, fresh, reserved["reference"]), raw
 
 
-def _new_calendars(store, fresh, *, through="20261017", changed_history=False):
-    opener = CollectionOpener(through=through)
+def _new_calendars(store, fresh, *, through="20261017", changed_history=False,
+                   start="20260701", changed_day=None):
+    opener = CollectionOpener(start=start, through=through)
     refs = {}
     for venue in ("SSE", "SZSE"):
         for row in opener.rows["trade_cal", venue]:
             if row["cal_date"] in {"20261001", "20261002", "20261005", "20261006"}:
                 row["is_open"] = 0
-            if changed_history and row["cal_date"] == "20261015":
+            if changed_history and row["cal_date"] == "20261015" or row["cal_date"] == changed_day:
                 row["is_open"] = 0
-        result = relay_capture(opener, "trade_cal", {"exchange": venue, "start_date": "20260701",
+        result = relay_capture(opener, "trade_cal", {"exchange": venue, "start_date": start,
             "end_date": through}, {"exchange", "cal_date", "is_open"})
         refs[venue] = json.loads(encoded(retain_market_query(result, REGISTRY, store, fresh_reader=fresh,
                                                             custody_authorized=True)["reference"]))
@@ -117,7 +119,7 @@ def kernel_archive(documents, captures):
     return buffer.getvalue()
 
 
-def kernel_adoption_fixture(*, storage=None):
+def kernel_adoption_fixture(*, storage=None, count=3):
     """Real legacy custody and a synthetic source-free four-response adoption input."""
     from decision_kernel.application.ftshare_adoption import PRIOR_IDENTITY, kernel_check_plan
     from decision_kernel.application.ftshare_collection import _legacy_context
@@ -125,7 +127,7 @@ def kernel_adoption_fixture(*, storage=None):
     from decision_kernel.application.market_custody import restore_market_query
     from decision_kernel.domain.records import digest
 
-    backend, store, fresh, legacy, old, _ = _setup(count=3, quarantine_last=True, storage=storage)
+    backend, store, fresh, legacy, old, _ = _setup(count=count, quarantine_last=True, storage=storage)
     context = _legacy_context(legacy, REGISTRY, fresh())
     codes = sorted([code for code in context["eligible_symbols"] if code.endswith(".SH")][:50]
         + [code for code in context["eligible_symbols"] if code.endswith(".SZ")][:50])
@@ -193,6 +195,49 @@ def adopt_kernel(fixture, **options):
                  "collection_id", "generation", "created_at")}
     arguments.update(registry=REGISTRY, fresh_reader=fixture["fresh"], custody_authorized=True)
     return adopt_ftshare_kernel(**{**arguments, **options})
+
+
+def single_collection_fixture(*, storage=None, count=3):
+    fixture = kernel_adoption_fixture(storage=storage, count=count)
+    fixture["adopted"] = adopt_kernel(fixture)
+    fixture["single"] = plan_single(fixture)
+    return fixture
+
+
+def plan_single(fixture, *, base=None, **options):
+    arguments = {"collection_id": fixture["collection_id"], "generation": "g20261016-v1",
+        "created_at": fixture["created_at"], "start": "20260701", "end": "20261016",
+        "targets": [{"symbol": "600000.SH", "adjust_kind": "forward"}], "source_budget": 1}
+    return plan_ftshare_single_collection(base or fixture["adopted"]["reference"], REGISTRY, fixture["fresh"](),
+                                         **{**arguments, **options})
+
+
+def single_capture(collection, slot, *, acquired_at=None):
+    from decision_kernel.application.ftshare_single import capture_single
+    plan = collection["plan"]
+    params = plan["requests"][slot]["parameters"]
+    venue = "SSE" if params["symbol"].endswith(".SH") else "SZSE"
+    price = "8" if params["adjust_kind"] == "forward" else "10"
+    bars = [{"open": price, "high": price, "low": price, "close": price, "volume": 100,
+        "turnover": "1000", "ts_millis_open": _millis(day, "09:30:00.000"),
+        "ts_millis": _millis(day, "15:00:00.000")} for day in plan["sessions"][venue]]
+    return capture_single(encoded({"code": 0, "data": bars}),
+        **{key: params[key] for key in ("symbol", "adjust_kind", "since", "until")},
+        acquired_at=acquired_at or collection["updated_at"])
+
+
+def settle_single(fixture, collection, saved, slot=None, *, reason_code=None, source_hold=None):
+    slot = slot or collection["plan"]["new_slots"][0]
+    at, store, fresh = collection["updated_at"], fixture["store"], fixture["fresh"]
+    started = begin_ftshare_slot(collection, slot, at=at)
+    reserved = _retain(started, store, fresh, saved["reference"])
+    args = {"reason_code": reason_code}
+    if reason_code is None:
+        retained = retain_ftshare_single(single_capture(started, slot), store, fresh_reader=fresh,
+                                        custody_authorized=True)
+        args = {"reference": retained["reference"]}
+    finished = finish_ftshare_slot(started, slot, at=at, source_hold=source_hold, **args)
+    return finished, _retain(finished, store, fresh, reserved["reference"])
 
 
 def test_plan_reuses_exact_220_slot_legacy_without_reopening_its_allowance():
@@ -711,3 +756,270 @@ def test_kernel_native_git_new_process_normal_cli_and_room_need_no_source_creden
     assert room["status"] == "readable" and room["partial"] is True
     assert room["view"]["view"]["freshness"]["status"] == "unknown"
     assert len(room["view"]["view"]["source_lineage"]["adoption"]["capture_references"]) == 4
+
+
+def test_single_plan_and_real_store_inherit_three_owners_and_reserve_only_one_new_call():
+    from decision_kernel.application.ftshare_single import restore_single
+    f = single_collection_fixture()
+    current = f["single"]
+    plan = current["plan"]
+    assert plan["schema"] == SINGLE_PLAN_SCHEMA and current["schema"] == f["adopted"]["collection"]["schema"]
+    assert plan["base_reference"] == f["adopted"]["reference"]
+    assert plan["legacy_reference"] == f["legacy_reference"]
+    assert plan["new_slots"] == ["forward:600000.SH"] and plan["source_budget"] == 1
+    assert current["revision"] == current["reserved_requests"] == plan["prior_generation_reserved_requests"] == 0
+    assert plan["adoption"] == f["adopted"]["collection"]["plan"]["adoption"]
+    assert len(plan["inherited_units"]) == 3 and len(current["units"]) == 4
+    for role in ("raw-sz-history", "raw-sh-history", "forward-sz-history"):
+        request = f["captures"][role]["request"]
+        params = request["parameters"]
+        slot = params["adjust_kind"] + ":" + params["symbol"]
+        assert plan["requests"][slot] == request
+        assert current["units"][slot] == {"status": "complete", "request_count": 0, "reason_code": None,
+                                         "reference": f["adopted"]["capture_references"][role]}
+        assert restore_single(current["units"][slot]["reference"], f["fresh"](), request=request) == f["captures"][role]
+    initial = _retain(current, f["store"], f["fresh"])
+    restored = restore_ftshare_collection(initial["reference"], REGISTRY, f["fresh"]())
+    assert restored["predecessor"] == f["adopted"]["reference"] and restored["source_requests"] == 0
+    finished, final = settle_single(f, current, initial)
+    restored = restore_ftshare_collection(final["reference"], REGISTRY, f["fresh"]())
+    assert restored["collection"] == finished
+    assert finished["revision"] == 2 and finished["reserved_requests"] == 1
+    assert finished["units"]["forward:600000.SH"]["request_count"] == 1
+    assert plan["inherited_units"] == {slot: finished["units"][slot] for slot in plan["inherited_units"]}
+    assert restore_ftshare_collection(f["adopted"]["reference"], REGISTRY, f["fresh"]())["collection"] == f["adopted"]["collection"]
+    assert restore_market_collection(f["legacy_reference"], REGISTRY, f["fresh"]())["collection"] == f["old"]
+
+
+def test_single_owner_new_whole_range_replaces_old_reference_and_calendar_can_roll():
+    f = single_collection_fixture()
+    calendars = _new_calendars(f["store"], f["fresh"], start="20260710", through="20261102")
+    current = plan_single(f, start="20260710", end="20261102", created_at="2026-11-03T12:00:00+00:00",
+        targets=[{"symbol": "000001.SZ", "adjust_kind": "forward"}], calendar_references=calendars)
+    plan = current["plan"]
+    assert plan["new_slots"] == ["forward:000001.SZ"] and len(plan["requests"]) == 3
+    assert set(plan["inherited_units"]) == {"none:000001.SZ", "none:600000.SH"}
+    assert current["units"]["forward:000001.SZ"]["reference"] is None
+    assert plan["requests"]["none:000001.SZ"] == f["captures"]["raw-sz-history"]["request"]
+    initial = _retain(current, f["store"], f["fresh"])
+    finished, final = settle_single(f, current, initial)
+    restored = restore_ftshare_collection(final["reference"], REGISTRY, f["fresh"]())
+    assert restored["context"]["start"] == "20260710" and restored["context"]["end"] == "20261102"
+    assert restored["context"]["sessions"]["SZSE"][-1] == "2026-11-02"
+    assert restored["context"]["calendar_references"] == calendars
+    assert restored["context"]["baseline_daily_reference"] == f["context"]["baseline_daily_reference"]
+    assert restored["context"]["legacy"] == f["context"]["legacy"]
+    assert finished["units"]["forward:000001.SZ"]["reference"] != f["adopted"]["capture_references"]["forward-sz-history"]
+    assert plan["adoption"]["capture_references"]["forward-sz-history"] == f["adopted"]["capture_references"]["forward-sz-history"]
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("missing-new-calendar", "CALENDAR_COVERAGE_REQUIRED"),
+    ("calendar-history", "CALENDAR_HISTORY_CHANGED"),
+    ("missing-venue", "CALENDAR_REFERENCES"),
+    ("future-price-day", "READ_AS_OF_BEFORE_END"),
+    ("range-rollback", "RANGE_ROLLBACK"),
+    ("too-many-days", "RANGE_BOUND"),
+])
+def test_single_new_date_requires_actual_complete_overlapping_calendar_and_completed_day(case, reason):
+    f = single_collection_fixture()
+    options = {"end": "20261019", "created_at": "2026-10-20T12:00:00+00:00"}
+    if case != "missing-new-calendar":
+        options["calendar_references"] = _new_calendars(f["store"], f["fresh"], through="20261019",
+                                                        changed_history=case == "calendar-history")
+    if case == "missing-venue":
+        options["calendar_references"].pop("SZSE")
+    elif case == "future-price-day":
+        options["created_at"] = KERNEL_STAMP
+    elif case == "range-rollback":
+        options["start"] = "20260630"
+    elif case == "too-many-days":
+        options["end"] = "20261101"
+    before = f["backend"].head()
+    with pytest.raises((RecordError, ValueError), match=reason):
+        plan_single(f, **options)
+    assert f["backend"].head() == before
+
+
+def test_single_new_calendar_must_preserve_newer_prior_dates_beyond_the_original_baseline():
+    f = single_collection_fixture()
+    calendars = _new_calendars(f["store"], f["fresh"], through="20261019")
+    current = plan_single(f, end="20261019", created_at="2026-10-20T12:00:00+00:00",
+                          calendar_references=calendars)
+    initial = _retain(current, f["store"], f["fresh"])
+    _, final = settle_single(f, current, initial)
+    bad = _new_calendars(f["store"], f["fresh"], through="20261020", changed_day="20261019")
+    before = f["backend"].head()
+    with pytest.raises(RecordError, match="CALENDAR_HISTORY_CHANGED"):
+        plan_single(f, base=final["reference"], generation="g20261020-v1", end="20261020",
+            created_at="2026-10-21T12:00:00+00:00", calendar_references=bad)
+    assert f["backend"].head() == before
+
+
+def test_single_failed_owner_is_retained_without_cost_while_an_unrelated_owner_can_progress():
+    f = single_collection_fixture()
+    initial = _retain(f["single"], f["store"], f["fresh"])
+    failed, terminal = settle_single(f, f["single"], initial, reason_code="FTSHARE_HTTP_503")
+    with pytest.raises(RecordError, match="REQUEST_ALREADY_CONSUMED"):
+        plan_single(f, base=terminal["reference"], generation="g20261016-v2")
+    peer = plan_single(f, base=terminal["reference"], generation="g20261016-v2",
+                      targets=[{"symbol": "600001.SH", "adjust_kind": "none"}])
+    assert peer["plan"]["prior_generation_reserved_requests"] == 1
+    assert peer["revision"] == peer["reserved_requests"] == 0
+    assert peer["units"]["forward:600000.SH"] == {
+        "status": "failed", "request_count": 0, "reference": None, "reason_code": "FTSHARE_HTTP_503"}
+    saved = _retain(peer, f["store"], f["fresh"])
+    finished, final = settle_single(f, peer, saved)
+    restored = restore_ftshare_collection(final["reference"], REGISTRY, f["fresh"]())
+    assert restored["collection"] == finished and finished["reserved_requests"] == 1
+    assert finished["units"]["forward:600000.SH"]["reason_code"] == "FTSHARE_HTTP_503"
+    assert restored["collection"]["plan"]["adoption"]["cumulative_source_requests"] == 6
+    assert restore_ftshare_collection(terminal["reference"], REGISTRY, f["fresh"]())["collection"] == failed
+    with pytest.raises(RecordError, match="REQUEST_ALREADY_CONSUMED"):
+        plan_single(f, base=final["reference"], generation="g20261016-v3")
+
+
+@pytest.mark.parametrize("stage", ["pending", "in-flight", "failed", "held"])
+def test_single_old_base_cannot_open_a_second_generation_around_unresolved_or_failed_successor(stage):
+    f = single_collection_fixture()
+    competing = plan_single(f, generation="g20261016-competing")
+    current = f["single"]
+    saved = _retain(current, f["store"], f["fresh"])
+    if stage == "in-flight":
+        current = begin_ftshare_slot(current, "forward:600000.SH", at=KERNEL_STAMP)
+        saved = _retain(current, f["store"], f["fresh"], saved["reference"])
+    elif stage in ("failed", "held"):
+        current, saved = settle_single(f, current, saved,
+            reason_code="FTSHARE_HTTP_403" if stage == "held" else "FTSHARE_HTTP_503",
+            source_hold="FTSHARE_HTTP_403" if stage == "held" else None)
+    before = f["backend"].head()
+    with pytest.raises(RecordError, match="BASE_ALREADY_HAS_SUCCESSOR"):
+        plan_single(f, generation="g20261016-competing")
+    with pytest.raises(RecordError, match="BASE_ALREADY_HAS_SUCCESSOR"):
+        _retain(competing, f["store"], f["fresh"])
+    if stage != "failed":
+        with pytest.raises(RecordError, match="BASE_NOT_TERMINAL|SOURCE_HOLD"):
+            plan_single(f, base=saved["reference"], generation="g20261016-next",
+                        targets=[{"symbol": "600001.SH", "adjust_kind": "none"}])
+    assert f["backend"].head() == before
+    assert restore_ftshare_collection(f["adopted"]["reference"], REGISTRY, f["fresh"]())["collection"] == f["adopted"]["collection"]
+
+
+@pytest.mark.parametrize("case", ["genesis", "reservation", "settlement"])
+def test_single_unknown_control_write_reconciles_exact_original_state_without_reopening_allowance(monkeypatch, case):
+    f = single_collection_fixture()
+    current, predecessor = f["single"], None
+    if case != "genesis":
+        initial = _retain(current, f["store"], f["fresh"])
+        predecessor = initial["reference"]
+        current = begin_ftshare_slot(current, "forward:600000.SH", at=KERNEL_STAMP)
+    if case == "settlement":
+        reserved = _retain(current, f["store"], f["fresh"], predecessor)
+        predecessor = reserved["reference"]
+        capture = retain_ftshare_single(single_capture(current, "forward:600000.SH"), f["store"],
+                                        fresh_reader=f["fresh"], custody_authorized=True)
+        current = finish_ftshare_slot(current, "forward:600000.SH", at=KERNEL_STAMP,
+                                      reference=capture["reference"])
+    original = f["backend"].commit
+    def unknown(files, *, expected):
+        original(files, expected=expected)
+        raise UnknownWrite("SYNTHETIC_RESPONSE_LOST")
+    monkeypatch.setattr(f["backend"], "commit", unknown)
+    with pytest.raises(UnknownWrite):
+        _retain(current, f["store"], f["fresh"], predecessor)
+    after = f["backend"].head()
+    monkeypatch.setattr(f["backend"], "commit", original)
+    saved = _retain(current, f["store"], f["fresh"], predecessor)
+    assert f["backend"].head() == after
+    assert restore_ftshare_collection(saved["reference"], REGISTRY, f["fresh"]())["collection"] == current
+    again = _retain(current, f["store"], f["fresh"], predecessor)
+    assert again["reference"] == saved["reference"] and f["backend"].head() == after
+
+
+def test_single_wrong_convention_and_changed_inherited_owners_are_rejected_before_root_write():
+    from decision_kernel.application.ftshare_single import FTShareSingleError
+    f = single_collection_fixture()
+    current = f["single"]
+    initial = _retain(current, f["store"], f["fresh"])
+    started = begin_ftshare_slot(current, "forward:600000.SH", at=KERNEL_STAMP)
+    reserved = _retain(started, f["store"], f["fresh"], initial["reference"])
+    forged = finish_ftshare_slot(started, "forward:600000.SH", at=KERNEL_STAMP,
+                                 reference=f["adopted"]["capture_references"]["raw-sh-history"])
+    before = f["backend"].head()
+    with pytest.raises(FTShareSingleError, match="SOURCE_CHANGED"):
+        _retain(forged, f["store"], f["fresh"], reserved["reference"])
+    changed = deepcopy(started)
+    changed["units"]["none:600000.SH"]["reference"] = f["adopted"]["capture_references"]["raw-sz-history"]
+    with pytest.raises(RecordError, match="INHERITED_UNIT_CHANGED"):
+        validate_ftshare_collection(changed)
+    assert f["backend"].head() == before
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("repeat", "REQUEST_ALREADY_CONSUMED"), ("duplicate", "DUPLICATE_TARGET"),
+    ("budget", "BUDGET_CHANGED"), ("bool-budget", "BUDGET_CHANGED"),
+    ("quarantined", "OUTSIDE_ELIGIBLE_SCOPE"), ("extra-field", "TARGETS"),
+    ("new-collection", "BASE_IDENTITY"),
+])
+def test_single_planning_rejects_replays_and_unbounded_target_substitution(case, reason):
+    f = single_collection_fixture()
+    options = {}
+    if case == "repeat":
+        options["targets"] = [{"symbol": "000001.SZ", "adjust_kind": "forward"}]
+    elif case == "duplicate":
+        options.update(targets=[{"symbol": "600000.SH", "adjust_kind": "forward"}] * 2, source_budget=2)
+    elif case in ("budget", "bool-budget"):
+        options["source_budget"] = True if case == "bool-budget" else 2
+    elif case == "quarantined":
+        options["targets"] = [{"symbol": "600002.SH", "adjust_kind": "forward"}]
+    elif case == "extra-field":
+        options["targets"] = [{"symbol": "600000.SH", "adjust_kind": "forward", "limit": 100}]
+    elif case == "new-collection":
+        options["collection_id"] = "ftshare-new-budget"
+    before = f["backend"].head()
+    with pytest.raises(RecordError, match=reason):
+        plan_single(f, **options)
+    assert f["backend"].head() == before
+
+
+def test_single_active_slots_and_root_bytes_keep_the_existing_bounds():
+    f = single_collection_fixture(count=215)
+    targets = [{"symbol": code, "adjust_kind": "none"} for code in f["context"]["eligible_symbols"]
+               if code not in ("000001.SZ", "600000.SH")]
+    current = plan_single(f, targets=targets[:209], source_budget=209)
+    assert len(current["units"]) == 212 and len(current["plan"]["inherited_units"]) == 3
+    before = f["backend"].head()
+    with pytest.raises(RecordError, match="REQUEST_BOUND"):
+        plan_single(f, targets=targets[:210], source_budget=210)
+    with pytest.raises(RecordError, match="TARGETS"):
+        plan_single(f, targets=targets[:213], source_budget=213)
+    current["plan"]["legacy"]["oversized"] = "x" * (512 * 1024)
+    with pytest.raises(RecordError, match="STATE_BOUND"):
+        validate_ftshare_collection(current)
+    assert f["backend"].head() == before
+
+
+def test_single_source_body_retention_is_idempotent_and_requires_existing_custody_permission():
+    f = single_collection_fixture()
+    capture = single_capture(f["single"], "forward:600000.SH")
+    before = f["backend"].head()
+    with pytest.raises(RecordError):
+        retain_ftshare_single(capture, f["store"], fresh_reader=f["fresh"])
+    assert f["backend"].head() == before
+    saved = retain_ftshare_single(capture, f["store"], fresh_reader=f["fresh"], custody_authorized=True)
+    after = f["backend"].head()
+    again = retain_ftshare_single(capture, f["store"], fresh_reader=f["fresh"], custody_authorized=True)
+    assert saved["reference"] == again["reference"] and f["backend"].head() == after
+    assert saved["restored"] == capture
+
+
+def test_old_batch_remains_readable_but_cannot_grant_v1_qualification():
+    f = single_collection_fixture()
+    batch = plan_ftshare_collection(f["legacy_reference"], REGISTRY, f["fresh"](),
+        collection_id=f["collection_id"], generation="g20261016-old-batch", created_at=KERNEL_STAMP)
+    saved = _retain(batch, f["store"], f["fresh"])
+    assert restore_ftshare_collection(saved["reference"], REGISTRY, f["fresh"]())["collection"] == batch
+    before = f["backend"].head()
+    with pytest.raises(RecordError, match="RETAINED_V1_QUALIFICATION_REQUIRED"):
+        plan_single(f, base=saved["reference"])
+    assert f["backend"].head() == before

@@ -1,7 +1,7 @@
 {
   "schema": "ftshare-daily-runtime-v1",
   "collection_id": "ftshare-cn-eod",
-  "generation": "g20261016",
+  "generation": "g20261016-v1",
   "legacy_reference": {
     "manifest": {
       "commit": "3fcaa33e745afa0084ff20136538a06ce8c38877",
@@ -9,7 +9,12 @@
       "repository": "auguspp/Decision-OS-2",
       "sha256": "a1f9884e92df80d834adc41eca7c65de97ecdde443eaa5b419f00792ccff3acc"
     },
-    "selection": {"kind": "all", "start": null, "end": null, "columns": []}
+    "selection": {
+      "kind": "all",
+      "start": null,
+      "end": null,
+      "columns": []
+    }
   },
   "qualification": null,
   "kernel_adoption": {
@@ -17,5 +22,30 @@
     "artifact_id": 12158493623,
     "sha256": "f1c15e0712a46b4c17e96739562f3b3c294d39edc3338033c96e34af1fd9f147",
     "code_sha": "23cbac467af01c943f5a52d2dbd5331001536f15"
+  },
+  "kernel_sync": {
+    "base_reference": {
+      "manifest": {
+        "commit": "ca6477ccdb6de562a0764499b81876c50a3be737",
+        "path": "source-views/ftshare-collection-e3e03dd4fd114dfd50d70cb433dcd327-r000/5e7d50c5797c77bd619b1490e26831f8e63dfe68d258cb3f40ed2922e8592619/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "b078bf3889b314faaa50690f1454179cd44268ba48eadbf3122f338944d80203"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "start": "20260701",
+    "end": "20261016",
+    "targets": [
+      {
+        "symbol": "600000.SH",
+        "adjust_kind": "forward"
+      }
+    ],
+    "source_budget": 1
   }
 }

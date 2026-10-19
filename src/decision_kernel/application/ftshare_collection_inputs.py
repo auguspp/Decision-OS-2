@@ -11,6 +11,7 @@ from datetime import date
 import hashlib
 
 from decision_kernel.application.ftshare_adoption import ADOPTION_PLAN_SCHEMA
+from decision_kernel.application.ftshare_collection import SINGLE_PLAN_SCHEMA
 from decision_kernel.application.market_collection_inputs import (
     _empty_endpoint_observation, _empty_observation, _reading_clock,
 )
@@ -26,11 +27,33 @@ NORMALIZATION = "provider-supplied-forward-close-single-request-v1"
 HORIZONS = (5, 20, 60)
 VENUES = {"SSE": "SH", "SZSE": "SZ"}
 KINDS = {"none": "raw", "forward": "qfq"}
+SINGLE_PLANS = (ADOPTION_PLAN_SCHEMA, SINGLE_PLAN_SCHEMA)
 
 
 def _reason(exc):
     from decision_kernel.application.market_collection import _reason as safe_reason
     return safe_reason(exc)
+
+
+def _requested_scope(plan, context):
+    """Inherited queries must cover the actual calendar sessions of this plan."""
+    if plan.get("schema") not in SINGLE_PLANS:
+        return True
+    from decision_kernel.application.ftshare_daily import _bounds
+    owners = {adjustment: set() for adjustment in KINDS}
+    for request in plan["requests"].values():
+        params = request["parameters"]
+        code = params["symbol"]
+        venue = next(v for v, suffix in VENUES.items() if code.endswith("." + suffix))
+        days = context["sessions"][venue]
+        lo, hi = _bounds(params["since"], params["until"])
+        # An independently qualified closed day does not require a new price
+        # request. A new open day beyond the original query remains a gap.
+        if days and not (lo.date().isoformat() <= days[0]
+                         and days[-1] <= hi.date().isoformat()):
+            return False
+        owners[params["adjust_kind"]].add(code)
+    return all(codes == set(context["eligible_symbols"]) for codes in owners.values())
 
 
 def _surface(kind, *, scope, page, cutoffs, versions, endpoint=False):
@@ -65,8 +88,8 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     if entity_id is not None:
         _symbol(entity_id)
     plan, units = collection["plan"], collection["units"]
-    adopted = plan.get("schema") == ADOPTION_PLAN_SCHEMA
-    lineage_key = "single_queries" if adopted else "batches"
+    single = plan.get("schema") in SINGLE_PLANS
+    lineage_key = "single_queries" if single else "batches"
     start, end = _range(plan["start"], plan["end"])
     codes = sorted(context["scope_symbols"])
     require(codes == sorted(set(codes)) and len(codes) <= 10000, "FTSHARE_READING_SCOPE")
@@ -86,8 +109,14 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     owners = {kind: {} for kind in KINDS.values()}
     sources, lineage = {}, {"provider": "FTSHARE", "calendars": deepcopy(context["calendar_references"]),
         "masters": deepcopy(context["master_references"]), lineage_key: {}}
-    if adopted:
+    if single:
         lineage["adoption"] = deepcopy(plan["adoption"])
+    if plan.get("schema") == SINGLE_PLAN_SCHEMA:
+        lineage["kernel_sync"] = {"base_reference": deepcopy(plan["base_reference"]),
+            "new_slots": list(plan["new_slots"]),
+            "inherited_slots": sorted(plan["inherited_units"]),
+            "source_budget": plan["source_budget"],
+            "prior_generation_reserved_requests": plan["prior_generation_reserved_requests"]}
     for role in ("calendar", "master"):
         for venue, reference in context[role + "_references"].items():
             sources[role + ":" + venue] = {"status": "restored", "reference": deepcopy(reference),
@@ -95,7 +124,7 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     for slot, request in sorted(plan["requests"].items()):
         params = request["parameters"]
         kind = KINDS[params["adjust_kind"]]
-        requested_codes = [params["symbol"]] if adopted else params["symbols"]
+        requested_codes = [params["symbol"]] if single else params["symbols"]
         for code in requested_codes:
             require(code in references and code not in owners[kind], "FTSHARE_READING_DUPLICATE_SERIES")
             owners[kind][code] = slot
@@ -186,12 +215,12 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                 security_reference=deepcopy(reference), qualification=qualification,
                 history_quote_explanation={"status": "not-assessed", "evidence_status": "not-supplied",
                     "all_day_halt_certified": False, "raw_qfq_reclassified": False},
-                lineage_representation="original-ftshare-whole-range-single-query" if adopted
+                lineage_representation="original-ftshare-whole-range-single-query" if single
                     else "original-ftshare-whole-range-batch-query",
                 source_query_slot=slot)
             endpoint.update(security_reference=deepcopy(reference), availability=availability,
                 qualification=qualification, source_query_slot=slot,
-                lineage_representation="original-ftshare-whole-range-single-query" if adopted
+                lineage_representation="original-ftshare-whole-range-single-query" if single
                     else "original-ftshare-whole-range-batch-query")
             for purpose, observed, surface in (("daily", daily, surfaces[kind]),
                                                ("endpoints", endpoint, endpoints[kind])):
@@ -216,9 +245,8 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                 if surface["incomplete_count"] else "observed")
             surface["requested_end"] = end
     clock, through = _reading_clock(read_as_of, end)
-    scope_requested = (not adopted or all(set(owners[kind]) == set(context["eligible_symbols"])
-                                         for kind in KINDS.values()))
-    complete = scope_requested and all(source["status"] == "restored" for source in sources.values())
+    complete = _requested_scope(plan, context) and all(
+        source["status"] == "restored" for source in sources.values())
     calendar_through = date(int(plan["calendar_end"][:4]), int(plan["calendar_end"][4:6]),
                             int(plan["calendar_end"][6:])).isoformat()
     for venue in VENUES:
@@ -264,16 +292,15 @@ def read_ftshare_collection_version(reference, registry, store, *, offset=0, lim
         restored = restore_ftshare_collection(reference, registry, reader)
         collection, context = restored["collection"], restored["context"]
         adopted = collection["plan"]["schema"] == ADOPTION_PLAN_SCHEMA
-        loader = restore_single if adopted else restore_ftshare_batch
+        single = collection["plan"]["schema"] in SINGLE_PLANS
+        loader = restore_single if single else restore_ftshare_batch
         view, sources = _read_ftshare_inputs(collection, context,
             lambda ref, *, request: loader(ref, reader, request=request),
             offset=offset, limit=limit, entity_id=entity_id, read_as_of=read_as_of)
         unavailable = sum(source["status"] != "restored" for source in sources.values())
-        scope_requested = (not adopted or all({request["parameters"]["symbol"]
-            for request in collection["plan"]["requests"].values()
-            if request["parameters"]["adjust_kind"] == adjustment} == set(context["eligible_symbols"])
-            for adjustment in KINDS))
-        complete = scope_requested and all(unit["status"] == "complete" for unit in collection["units"].values())
+        complete = _requested_scope(collection["plan"], context) and all(
+            unit["status"] == "complete" for unit in collection["units"].values()) and (
+                not single or unavailable == 0)
         status = "complete" if complete else "partial"
         return {"status": "partial-restoration" if unavailable else "restored",
             "reference": deepcopy(restored["reference"]), "selected_reference": deepcopy(restored["reference"]),
@@ -283,7 +310,14 @@ def read_ftshare_collection_version(reference, registry, store, *, offset=0, lim
                 "source_hold": deepcopy(collection.get("source_hold")),
                 **({"adoption": "four-original-captures-three-price-series", "source_requests": 0,
                     "historical_source_requests": 4, "cumulative_source_requests": 6}
-                   if adopted else {})},
+                   if adopted else {}),
+                **({"collection_mode": "kernel-v1-single-range",
+                    "source_budget": collection["plan"]["source_budget"],
+                    "new_query_count": len(collection["plan"]["new_slots"]),
+                    "inherited_query_count": len(collection["plan"]["inherited_units"]),
+                    "prior_generation_reserved_requests": collection["plan"]["prior_generation_reserved_requests"],
+                    "base_reference": deepcopy(collection["plan"]["base_reference"])}
+                   if collection["plan"]["schema"] == SINGLE_PLAN_SCHEMA else {})},
             "latest_requested_end": collection["plan"]["end"], "selected_requested_end": collection["plan"]["end"],
             "query_count": len(sources), "unavailable_queries": unavailable, "sources": sources,
             "view": view, "reading_error": None, "source_requests": 0,

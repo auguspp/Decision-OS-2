@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 from dataclasses import asdict, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -14,18 +14,22 @@ import time
 from urllib.parse import urlencode
 
 from decision_kernel.application.ftshare_collection import (
+    MAX_REQUESTS as MAX_SOURCE_REQUESTS, PLAN_SCHEMA, SINGLE_PLAN_SCHEMA,
     begin_ftshare_slot, finish_ftshare_slot, latest_ftshare_reference,
-    plan_ftshare_collection, restore_ftshare_collection,
-    retain_ftshare_batch, retain_ftshare_collection,
+    plan_ftshare_collection, plan_ftshare_single_collection, restore_ftshare_collection,
+    retain_ftshare_batch, retain_ftshare_collection, retain_ftshare_single,
 )
 from decision_kernel.application.ftshare_collection_inputs import read_ftshare_collection_version
 from decision_kernel.application.ftshare_daily import capture_batch
+from decision_kernel.application.ftshare_single import capture_single, single_request
 from decision_kernel.application.market_capacity import market_capacity
 from decision_kernel.application.market_collection_runtime import health_receipt
 from decision_kernel.application.market_custody import market_read_scope
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, Selection, SourceRef, UnknownWrite, digest, encoded, require
+from decision_kernel.domain.records import (
+    RecordError, Selection, SourceRef, UnknownWrite, digest, encoded, identifier, require,
+)
 from decision_kernel.infrastructure.github_store import (
     MAX_REQUESTS, GitHubAPI, GitHubRateLimits, GitHubStore,
 )
@@ -49,10 +53,10 @@ OPERATIONS = {"ftshare-sync", "ftshare-status", "ftshare-adopt-kernel"}
 
 
 def configuration(value):
-    require(isinstance(value, dict) and set(value) == {
-        "schema", "collection_id", "generation", "legacy_reference", "qualification", "kernel_adoption"}
+    fields = {"schema", "collection_id", "generation", "legacy_reference", "qualification", "kernel_adoption"}
+    require(isinstance(value, dict) and fields <= set(value) <= fields | {"kernel_sync"}
         and value["schema"] == SCHEMA and value["collection_id"] == "ftshare-cn-eod"
-        and value["generation"] == "g20261016" and value["legacy_reference"] == BASE_REFERENCE,
+        and value["legacy_reference"] == BASE_REFERENCE,
         "FTSHARE_RUNTIME_FIXED_CONFIG")
     for field in ("qualification", "kernel_adoption"):
         proof = value[field]
@@ -62,7 +66,50 @@ def configuration(value):
             and isinstance(proof["sha256"], str) and re.fullmatch(r"[a-f0-9]{64}", proof["sha256"])
             and isinstance(proof["code_sha"], str) and re.fullmatch(r"[a-f0-9]{40}", proof["code_sha"]),
             "FTSHARE_RUNTIME_QUALIFICATION_REQUIRED")
+    sync = value.get("kernel_sync")
+    if sync is None:
+        require(value["generation"] == "g20261016", "FTSHARE_RUNTIME_FIXED_CONFIG")
+    else:
+        require(isinstance(sync, dict) and set(sync) == {
+            "base_reference", "start", "end", "targets", "source_budget"},
+            "FTSHARE_RUNTIME_KERNEL_SYNC_CONFIG")
+        reference = SourceRef.from_dict(sync["base_reference"])
+        require(reference.selection == Selection() and reference.manifest.repository == REPO,
+            "FTSHARE_RUNTIME_KERNEL_SYNC_BASE")
+        identifier(value["generation"])
+        require(value["generation"] != "g20261016" and value["kernel_adoption"] is not None,
+            "FTSHARE_RUNTIME_KERNEL_SYNC_CONFIG")
+        _single_requests(sync)
     return deepcopy(value)
+
+
+def _single_requests(sync):
+    """Canonical finite v1 requests; configuration supplies every source parameter."""
+    require(all(isinstance(sync.get(k), str) and re.fullmatch(r"[0-9]{8}", sync[k])
+        for k in ("start", "end")), "FTSHARE_RUNTIME_KERNEL_SYNC_DATES")
+    try:
+        zone = timezone(timedelta(hours=8))
+        first = datetime.strptime(sync["start"], "%Y%m%d").replace(tzinfo=zone)
+        final = datetime.strptime(sync["end"], "%Y%m%d").replace(tzinfo=zone) + timedelta(days=1)
+    except (ValueError, OverflowError):
+        require(False, "FTSHARE_RUNTIME_KERNEL_SYNC_DATES")
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    since, until = ((first - epoch) // timedelta(milliseconds=1),
+                    (final - epoch) // timedelta(milliseconds=1) - 1)
+    targets = sync.get("targets")
+    require(isinstance(targets, list) and 0 < len(targets) <= MAX_SOURCE_REQUESTS
+        and type(sync.get("source_budget")) is int and sync["source_budget"] == len(targets),
+        "FTSHARE_RUNTIME_KERNEL_SYNC_BUDGET")
+    requests = {}
+    for target in targets:
+        require(isinstance(target, dict) and set(target) == {"symbol", "adjust_kind"},
+            "FTSHARE_RUNTIME_KERNEL_SYNC_TARGETS")
+        request = single_request(symbol=target["symbol"], since=since, until=until,
+            adjust_kind=target["adjust_kind"])
+        slot = target["adjust_kind"] + ":" + target["symbol"]
+        require(slot not in requests, "FTSHARE_RUNTIME_KERNEL_SYNC_TARGETS")
+        requests[slot] = request
+    return requests
 
 
 def settings(event, env, config):
@@ -77,6 +124,8 @@ def settings(event, env, config):
     operation = data.get("operation")
     require(operation in OPERATIONS and not data.get("repair_request"),
         "FTSHARE_RUNTIME_OPERATION")
+    require(operation != "ftshare-adopt-kernel" or config.get("kernel_sync") is None,
+        "FTSHARE_RUNTIME_KERNEL_ADOPTION_GENERATION_CLOSED")
     authorized = (data.get("access_and_custody_confirmed") is True
         or data.get("access_and_custody_confirmed") == "true")
     require(operation == "ftshare-status" or authorized, "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
@@ -116,13 +165,15 @@ def settings(event, env, config):
 def native_ready(api, selected, config):
     """Authenticate private main execution and the operation's distinct evidence.
 
-    Artifact contents are reviewed before their digest enters trusted main config;
-    sync of this finite generation still requires its original continuation artifact.
-    Kernel adoption has separate authority for four already acquired v1 responses.
-    Source-free status restores records independently of that artifact's lifetime.
+    Batch sync keeps its continuation-artifact gate. A configured single-route
+    successor restores its qualification from the retained Store before creating
+    a source client; it has no temporary Actions artifact dependency. Adoption
+    retains separate authority for its four already acquired v1 responses.
     """
     require(selected.get("operation") in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
     adopting = selected["operation"] == "ftshare-adopt-kernel"
+    single = config.get("kernel_sync") is not None
+    require(not adopting or not single, "FTSHARE_RUNTIME_KERNEL_ADOPTION_GENERATION_CLOSED")
     check_private(api, selected)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))
     require(type(run.get("id")) is int and run["id"] == selected["run_id"]
@@ -130,7 +181,8 @@ def native_ready(api, selected, config):
         and run.get("event") == "workflow_dispatch" and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
         and run.get("name") == (ADOPTION_TITLE if adopting else "decision-os-ashare-data")
-        and (not adopting or run.get("display_title") == ADOPTION_TITLE)
+        and (not (adopting or single)
+            or run.get("display_title") == (ADOPTION_TITLE if adopting else "decision-os-ashare-data"))
         and run.get("status") == "in_progress"
         and run.get("repository", {}).get("id") == 1420041744
         and run.get("head_repository", {}).get("id") == 1420041744, "FTSHARE_RUNTIME_NATIVE_RUN")
@@ -139,7 +191,7 @@ def native_ready(api, selected, config):
     rows = ci.get("workflow_runs")
     require(isinstance(rows, list) and 0 < len(rows) <= 5, "FTSHARE_RUNTIME_MAIN_CI")
     latest = rows[0]
-    if adopting:
+    if adopting or single:
         require(type(ci.get("total_count")) is int and ci["total_count"] == len(rows)
             and all(isinstance(row, dict) and type(row.get("id")) is int and row["id"] > 0 for row in rows),
             "FTSHARE_RUNTIME_MAIN_CI")
@@ -156,6 +208,8 @@ def native_ready(api, selected, config):
         return {"main_ci_run": latest["id"], "source_qualification": "not-required-for-status"}
     if adopting:
         return {"main_ci_run": latest["id"], "kernel_adoption": _kernel_native_proof(api, config)}
+    if single:
+        return {"main_ci_run": latest["id"], "source_qualification": "required-from-retained-kernel-base"}
     proof = config["qualification"]
     require(proof is not None, "FTSHARE_RUNTIME_QUALIFICATION_PENDING")
     study = api.request("GET", PREFIX + "/actions/runs/" + str(proof["run_id"]))
@@ -231,7 +285,7 @@ def _summary(collection):
     units = collection["units"]
     counts = {status: sum(unit["status"] == status for unit in units.values())
               for status in ("pending", "in-flight", "complete", "failed")}
-    return {"source_budget": collection["plan"]["source_budget"],
+    result = {"source_budget": collection["plan"]["source_budget"],
         "reserved_requests": collection["reserved_requests"], "slot_counts": counts,
         "scope_count": len(collection["plan"]["symbols"]),
         "eligible_count": len(collection["plan"]["eligible_symbols"]),
@@ -240,6 +294,52 @@ def _summary(collection):
         "source_hold_requires_external_review": collection["source_hold"] is not None,
         "next_run_can_resume": counts["pending"] > 0 and counts["in-flight"] == 0
             and collection["source_hold"] is None}
+    if collection["plan"]["schema"] == SINGLE_PLAN_SCHEMA:
+        result.update(source_route="kernel-v1-single", new_slot_counts=_work_slot_counts(collection),
+            inherited_slot_count=len(collection["plan"]["inherited_units"]),
+            prior_study_source_requests=collection["plan"]["adoption"]["cumulative_source_requests"],
+            prior_generation_reserved_requests=collection["plan"]["prior_generation_reserved_requests"])
+    return result
+
+
+def _work_slot_counts(collection):
+    plan = collection["plan"]
+    slots = plan["new_slots"] if plan["schema"] == SINGLE_PLAN_SCHEMA else collection["units"]
+    return {status: sum(collection["units"][slot]["status"] == status for slot in slots)
+        for status in ("pending", "in-flight", "complete", "failed")}
+
+
+def _check_sync_plan(collection, config, calendar_references):
+    """A retained generation cannot silently acquire a different configured scope."""
+    plan = collection["plan"]
+    require(all(plan[key] == config[key] for key in ("collection_id", "generation", "legacy_reference")),
+        "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
+    require(calendar_references is None or plan["calendar_references"] == calendar_references,
+        "FTSHARE_RUNTIME_RESUME_CALENDAR_CHANGED")
+    sync = config.get("kernel_sync")
+    if sync is None:
+        require(plan["schema"] == PLAN_SCHEMA, "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
+        return
+    require(plan["schema"] == SINGLE_PLAN_SCHEMA and all(plan[key] == sync[key]
+        for key in ("base_reference", "start", "end", "source_budget")),
+        "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
+    requests = _single_requests(sync)
+    require(len(plan["new_slots"]) == len(requests) and set(plan["new_slots"]) == set(requests)
+        and all(plan["requests"][slot] == request for slot, request in requests.items()),
+        "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
+    # The core planner/restore has already independently replayed the permanent
+    # original archive and four captures. Match that proven identity to main's
+    # admission configuration before the caller can even construct a client.
+    approved = config.get("kernel_adoption")
+    require(isinstance(approved, dict) and set(approved) == {"run_id", "artifact_id", "sha256", "code_sha"}
+        and all(plan["adoption"]["proof"][key] == value for key, value in approved.items()),
+        "FTSHARE_RUNTIME_KERNEL_QUALIFICATION_CHANGED")
+
+
+def _slot_order(collection, slot):
+    parameters = collection["plan"]["requests"][slot]["parameters"]
+    symbols = (parameters["symbol"],) if "symbol" in parameters else tuple(parameters["symbols"])
+    return symbols, parameters["adjust_kind"] != "none"
 
 
 def _quota(api):
@@ -365,7 +465,9 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
         and (operation == "ftshare-sync" or max_work_units == 1), "FTSHARE_RUNTIME_WORK_UNIT_BOUND")
     require(not writing or access_confirmed is True and custody_authorized is True,
         "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
+    single = config.get("kernel_sync") is not None
     if operation == "ftshare-adopt-kernel":
+        require(not single, "FTSHARE_RUNTIME_KERNEL_ADOPTION_GENERATION_CLOSED")
         require(calendar_references is None, "FTSHARE_RUNTIME_STATUS_CALENDAR_OVERRIDE")
         return _run_kernel_adoption(config=config, registry=registry, open_unit=open_unit,
             kernel_loader=kernel_loader, guard=guard, progress=progress, clock=clock,
@@ -422,15 +524,17 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                         break
                     if reference is not None:
                         collection = restore_ftshare_collection(reference, registry, reader)["collection"]
-                        require(collection["plan"]["legacy_reference"] == config["legacy_reference"],
-                            "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
-                        require(calendar_references is None
-                            or collection["plan"]["calendar_references"] == calendar_references,
-                            "FTSHARE_RUNTIME_RESUME_CALENDAR_CHANGED")
+                    elif single:
+                        sync = config["kernel_sync"]
+                        collection = plan_ftshare_single_collection(sync["base_reference"], registry, reader,
+                            collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
+                            start=sync["start"], end=sync["end"], targets=sync["targets"],
+                            source_budget=sync["source_budget"], calendar_references=calendar_references)
                     else:
                         collection = plan_ftshare_collection(config["legacy_reference"], registry, reader,
                             collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
                             calendar_references=calendar_references)
+                    _check_sync_plan(collection, config, calendar_references)
             summary = _summary(collection)
             if summary["source_hold"] is not None:
                 receipt.update(status="source-held", reason_code=summary["source_hold"]["reason_code"])
@@ -440,8 +544,9 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                 break
             pending = [slot for slot, state in collection["units"].items() if state["status"] == "pending"]
             if not pending:
-                receipt.update(status="already-complete" if not summary["slot_counts"]["failed"] else "exhausted",
-                    reason_code=None if not summary["slot_counts"]["failed"] else "FTSHARE_FAILED_SLOTS_REMAIN")
+                failed = _work_slot_counts(collection)["failed"]
+                receipt.update(status="already-complete" if not failed else "exhausted",
+                    reason_code=None if not failed else "FTSHARE_FAILED_SLOTS_REMAIN")
                 break
             receipt["capacity"] = capacity(fresh())
             require(receipt["capacity"]["admit_work_unit"], "FTSHARE_STORAGE_CAPACITY")
@@ -458,7 +563,7 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             if reference is None:
                 saved = retain(collection, store, fresh)
                 reference, collection = saved["reference"], saved["restored"]["collection"]
-            slot = sorted(pending, key=lambda s: (s.split(":")[1], not s.startswith("none:")))[0]
+            slot = min(pending, key=lambda candidate: _slot_order(collection, candidate))
             unit["slot"] = slot
             candidate = begin_ftshare_slot(collection, slot, at=clock())
             unit["status"] = "reserving"
@@ -472,11 +577,19 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             spec = collection["plan"]["requests"][slot]["parameters"]
             before, request_started, failure, captured = client.requests, monotonic(), None, None
             try:
-                client.candlesticks_batch(spec["symbols"], since=spec["since"], until=spec["until"],
-                    adjust_kind=spec["adjust_kind"])
+                if single:
+                    client.candlesticks(spec["symbol"], since=spec["since"], until=spec["until"],
+                        adjust_kind=spec["adjust_kind"])
+                else:
+                    client.candlesticks_batch(spec["symbols"], since=spec["since"], until=spec["until"],
+                        adjust_kind=spec["adjust_kind"])
                 require(isinstance(client.last_response_bytes, bytes), "FTSHARE_ORIGINAL_BODY_REQUIRED")
-                captured = capture_batch(client.last_response_bytes, symbols=spec["symbols"],
-                    since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
+                if single:
+                    captured = capture_single(client.last_response_bytes, symbol=spec["symbol"],
+                        since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
+                else:
+                    captured = capture_batch(client.last_response_bytes, symbols=spec["symbols"],
+                        since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
             except Exception as exc:
                 failure = _safe_error(exc)
             finally:
@@ -490,7 +603,8 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             source_hold, delay = _source_instruction(unit["transport"])
             raw_reference = None
             if failure is None:
-                raw = retain_ftshare_batch(captured, store, fresh_reader=fresh,
+                retain_capture = retain_ftshare_single if single else retain_ftshare_batch
+                raw = retain_capture(captured, store, fresh_reader=fresh,
                     custody_authorized=True, public_rights_confirmed=False)
                 raw_reference = raw["reference"]
             if source_hold is None:
@@ -511,12 +625,12 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             if source_hold is not None:
                 receipt.update(status="source-held", reason_code=source_hold)
                 break
-            remaining = _summary(collection)["slot_counts"]
+            remaining = _work_slot_counts(collection)
             receipt["status"] = "partial" if remaining["pending"] else "exhausted" if remaining["failed"] else "complete"
             if receipt["status"] in {"complete", "exhausted"}:
                 break
         except Exception as exc:
-            uncertain = unit["status"] in {"reserving", "in-flight", "settling"}
+            uncertain = isinstance(exc, UnknownWrite) or unit["status"] in {"reserving", "in-flight", "settling"}
             receipt.update(status="persistence-unconfirmed" if uncertain else "blocked",
                 reason_code=_safe_error(exc))
             unit["status"] = receipt["status"]

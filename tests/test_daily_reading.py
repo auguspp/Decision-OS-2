@@ -53,6 +53,9 @@ def fake_readers(monkeypatch, *, status="read", resolution_failure=False):
             result.pop("market")
         return result
     monkeypatch.setattr(cli, "daily_market_reference", resolve)
+    monkeypatch.setattr(cli, "reading_discovery", lambda *args, **kwargs: {
+        "status": "saved", "persistence": "saved-exact-version", "saved_as_of": AT,
+        "current_market_confirmed": True, "panel": None})
     monkeypatch.setattr(cli, "perform", read)
     monkeypatch.setattr(cli, "_open_readers", lambda api: readers)
     return readers, calls

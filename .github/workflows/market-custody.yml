@@ -4,10 +4,10 @@ on:
     inputs:
       operation:
         type: choice
-        options: [read, save]
+        options: [read, save, discovery-build, discovery-save, discovery-read]
         default: read
         required: true
-        description: 'Read an exact SourceRef or retain explicitly authorized market captures'
+        description: 'Exact market custody or source-free state discovery build/save/read'
       code_sha:
         type: string
         required: true
@@ -15,7 +15,7 @@ on:
       payload:
         type: string
         required: true
-        description: 'Read: root SourceRef JSON. Save: existing market reading JSON, <=60000 UTF-8 bytes'
+        description: 'Exact source/artifact reference, market reading, or discovery plan JSON or gzip-json-v1; <=60000 transport bytes, <=2 MiB decoded'
       public_rights_confirmed:
         type: boolean
         default: false
@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   read:
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'read'
+    if: github.repository == 'auguspp/Decision-OS-2' && github.event.repository.private == true && github.ref == 'refs/heads/main' && (inputs.operation == 'read' || inputs.operation == 'discovery-build' || inputs.operation == 'discovery-read')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -55,15 +55,21 @@ jobs:
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.market_custody_cli runtime --out "$RUNNER_TEMP/dos2-market-custody"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Recheck native private visibility before releasing exact inputs and results
+        id: release
         if: always()
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.market_custody_cli release
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.release.outcome == 'success'
         with:
           name: dos2-market-custody-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dos2-market-custody/
           if-no-files-found: error
           retention-days: 7
   save:
-    if: github.ref == 'refs/heads/main' && inputs.operation == 'save'
+    if: github.repository == 'auguspp/Decision-OS-2' && github.event.repository.private == true && github.ref == 'refs/heads/main' && (inputs.operation == 'save' || inputs.operation == 'discovery-save')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -80,8 +86,14 @@ jobs:
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.market_custody_cli runtime --out "$RUNNER_TEMP/dos2-market-custody"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Recheck native private visibility before releasing exact inputs and results
+        id: release
         if: always()
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.market_custody_cli release
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.release.outcome == 'success'
         with:
           name: dos2-market-custody-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dos2-market-custody/

@@ -22,6 +22,7 @@ from decision_kernel.domain.records import RecordError, SourceRef, digest, encod
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.interfaces.market_cli import MAX_INPUT_BYTES, _object, _constant
+from decision_kernel.interfaces.research_payload import decode_payload
 from decision_kernel.observations.market_daily import MarketInputError
 
 
@@ -48,12 +49,16 @@ def run_runtime(event, env, out, *, run=subprocess.run):
         raise RecordError("MARKET_CUSTODY_CODE_SHA_MISMATCH")
     operation = data.get("operation")
     rights = data.get("public_rights_confirmed") is True or data.get("public_rights_confirmed") == "true"
-    if operation not in ("save", "read") or operation == "save" and not rights:
+    discovery = operation in ("discovery-build", "discovery-save", "discovery-read")
+    writing = operation in ("save", "discovery-save")
+    if operation not in ("save", "read", "discovery-build", "discovery-save", "discovery-read") or writing and not rights:
         raise RecordError("MARKET_CUSTODY_RUNTIME_AUTHORIZATION")
     raw = data.get("payload")
     if not isinstance(raw, str) or not 0 < len(raw.encode()) <= 60000:
         raise RecordError("MARKET_CUSTODY_RUNTIME_PAYLOAD")
-    payload = json.loads(raw, object_pairs_hook=_object, parse_constant=_constant)
+    # Reuse the existing bounded, digest-checked transport. Full THS catalogues
+    # must survive the dispatch field without trimming their declared universe.
+    payload = decode_payload(raw)
     if not isinstance(payload, dict):
         raise RecordError("MARKET_CUSTODY_RUNTIME_PAYLOAD")
     offset, limit = str(data.get("offset", "0")), str(data.get("limit", "50"))
@@ -62,22 +67,30 @@ def run_runtime(event, env, out, *, run=subprocess.run):
     entity_id = data.get("entity_id", "")
     if not isinstance(entity_id, str) or len(entity_id) > 128:
         raise RecordError("ENTITY_REQUIRED")
-    if operation == "save" and (int(offset) != 0 or int(limit) != 50 or entity_id):
+    if (writing or discovery) and (int(offset) != 0 or int(limit) != 50 or entity_id):
         raise RecordError("MARKET_CUSTODY_SAVE_NOT_PAGE_SELECTION")
     root = Path(env["RUNNER_TEMP"]).resolve()
     if out.is_symlink() or not out.resolve().is_relative_to(root) or out.resolve() == root:
         raise RecordError("MARKET_CUSTODY_RUNTIME_OUTPUT")
-    if operation == "save":
+    if discovery:
+        from decision_kernel.application.market_discovery import plan_input
+        from decision_kernel.domain.research_artifacts import artifact_reference
+        if operation == "discovery-read":
+            artifact_reference(payload)
+        else:
+            payload = plan_input(payload)
+    elif operation == "save":
         payload = market_reading_projection(payload, RelayRegistry(Path("docs/sources/relay-registry.json")))
     else:
         SourceRef.from_dict(payload)
     binding = GitHubBinding.from_dict(_load(Path("config/store-binding.json")))
     # A boolean in source data never chooses the target; only this explicit operation does.
-    selected = replace(binding, write_enabled=operation == "save")
+    selected = replace(binding, write_enabled=writing)
     out.mkdir(parents=False, exist_ok=False)
     (out / "input.json").write_bytes(encoded(payload))
     (out / "binding.json").write_text(json.dumps(selected.__dict__), encoding="utf-8")
     summary = {"code_sha": sha, "operation": operation, "payload_sha256": digest(raw.encode()),
+               "input_sha256": digest(encoded(payload)),
                "status": "not-executed", "source_requests": 0}
     (out / "result.json").write_text(json.dumps(summary), encoding="utf-8")
     command = [sys.executable, "-m", "decision_kernel.interfaces.market_custody_cli", operation,
@@ -87,6 +100,13 @@ def run_runtime(event, env, out, *, run=subprocess.run):
         command += ["--entity-id", entity_id]
     if operation == "save":
         command += ["--public-rights-confirmed"]
+    if discovery:
+        command = [sys.executable, "-m", "decision_kernel.interfaces.market_discovery_cli",
+            operation.removeprefix("discovery-"), "--binding", str(out / "binding.json"),
+            "--registry", "docs/sources/relay-registry.json", "--input", str(out / "input.json")]
+        if writing:
+            command += ["--submission-id", "market-discovery-" + digest(encoded(payload))[:48],
+                        "--public-rights-confirmed"]
     child_env = {k: v for k, v in env.items() if k not in ("TUSHARE_PROXY_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
     summary["status"] = "in-progress-or-unknown"
     (out / "result.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -114,6 +134,16 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "runtime":
         return runtime_main(argv[1:])
+    if argv == ["release"]:
+        try:
+            binding = GitHubBinding.from_dict(_load(Path("config/store-binding.json")))
+            backend = GitHubStore(replace(binding, write_enabled=False), GitHubAPI.from_environment())
+            if backend.live_visibility() != "private":
+                raise RecordError("MARKET_CUSTODY_PRIVATE_RELEASE_REQUIRED")
+            return 0
+        except (RecordError, OSError, ValueError, TypeError, KeyError):
+            print('{"error":"MARKET_CUSTODY_PRIVATE_RELEASE_REQUIRED"}', file=sys.stderr)
+            return 2
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("save", "read"))
     where = parser.add_mutually_exclusive_group(required=True)

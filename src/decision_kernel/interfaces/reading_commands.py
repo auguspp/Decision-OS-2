@@ -33,6 +33,8 @@ def preflight(operation, payload, *, public=True):
 
     require(not plan.get("market") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
+    require(not plan.get("discovery") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
 
 
 def perform(store, payload, *, public=True, market_registry=None):

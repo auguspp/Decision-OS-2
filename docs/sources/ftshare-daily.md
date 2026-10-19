@@ -4,7 +4,7 @@
 
 用户在 2026-10-18 的 #10 接管委托中明确要求将日线数据源切换为 FTShare，并已在同仓 Secret 设置 `FTSHARE_API_KEY`。这项委托修改日线来源选择；不会把既有 Relay 记录、失败、重试额度或复权因子改名成 FTShare，也不改变同仓 `main` / `records` 保管路线。
 
-本责任组提供固定来源传输、严格日 K 资格检查、有限账户验证，以及同一 Store 上的生产集合与正常读取接线。`ftshare-check` / `ftshare-check-continue` 不写 records；生产采集另由 `ftshare-sync` 执行。配置的 `qualification: null` 明确表示来源尚未获准激活：真实协议、容量、重复读取和价格对照通过后，才能在审阅过的配置中填写确切资格引用。单次校验成功不代表持续可用率或完整市场覆盖。
+本责任组提供固定来源传输、严格日 K 资格检查、有限账户验证，以及同一 Store 上的生产集合与正常读取接线。`ftshare-check` / `ftshare-check-continue` / `ftshare-check-kernel` 不写 records；生产采集另由 `ftshare-sync` 执行。配置的 `qualification: null` 明确表示现有批量集合尚未激活；单股核验不填写批量资格。单次校验成功不代表持续可用率或完整市场覆盖。
 
 ## 可核对的上游合同
 
@@ -32,7 +32,7 @@
 | 5 | 同 50 股、同时间范围的 forward | 供应商前复权响应与缺失情况 |
 | 6 | 000001.SZ 同段 adjustment-factor 查询 | 仅保留实际语义证据，未签因素资格 |
 
-每次至多一个 HTTP 请求，没有隐含 retry；遇到错误停止后续来源请求，保留真实失败，native exit 2 不改写成成功。空响应不能满足本轮预定非空样本的验收。返回体受字节上限、JSON 重复键 / 非有限数以及凭据反射检查约束。错误仅保留稳定代码和白名单元数据，不打印正文、凭据或任意供应商错误文本。
+每次至多一个 HTTP 请求，没有隐含 retry；遇到错误停止后续来源请求，保留真实失败，native exit 2 不改写成成功。空响应不能满足本轮预定非空样本的验收。返回体受字节上限、JSON 重复键 / 非有限数以及凭据反射检查约束。HTTP 错误最多读取 4,097 字节，用其中至多 4,096 字节的完整 JSON 提取白名单 MIME、短数字或固定符号业务码、实际读取字节数、截断状态与有限分类；正文、message、个人标识和凭据不进入诊断回执。正文业务码不能覆盖实际 HTTP 状态，分类也不代签账户拒绝根因。
 
 原始 HTTP 正文逐个保留字节数和 SHA-256，另有请求、基准引用及计数回执；release 阶段在不含来源 Secret 的环境重新核验原生 private / main，再上传同一私有仓库的诊断 artifact。SourceInput 的原始正文与 normalized excerpt 明确分开，哈希只证明字节身份，不代替来源认证或保管授权。日配额 1000 仅是待核账户假设；没有上游计量证据时不得把 HTTP 次数等同计费单位或宣称每日余额。
 
@@ -52,9 +52,46 @@
 
 结果没有行情正文、Retry-After 或可核额度余额，不能形成价格一致性、历史缺失、实际批次容量或可用率结论。该运行不写 records，前驱仍为 `3fcaa33e745afa0084ff20136538a06ce8c38877`。补齐客户端标识没有消除拒绝；HTTP 403 的具体账户权限、密钥配置或访问策略原因仍未知，不能将 transport 的 `auth-or-entitlement` 分类当作上游诊断。
 
-因此生产配置保持 `qualification: null`。这次 one-shot 宿主已终止，不能用剩余四次数字重新派发它。继续真实验证需要先取得 FTShare 侧访问配置已修正的具体证据，再在 #10 内保留原累计记录、界定必要检查和有限续接；本次不增加来源调用，也不执行依赖 FTShare 获准的日历扩展。
+因此生产配置保持 `qualification: null`。这次 v2 one-shot 宿主已终止，不能重新派发。用户随后明确授权采用可行的旧 Kernel 方式；对应 v1 具名验证及原累计额度见下一节。它不要求先升级批量权限，不是自动 fallback，也不假定 Key 权限已经修复。原两次 v2 失败和相依日历未启用的事实保留。
 
 #10 仍需真实运行原始 artifact、跨源同日原价对照、全声明股票范围的缺失分母、严格 5 / 20 / 60 日窗口、独立 Store 读回和正常 CLI / room 消费。生产切换应使用独立 FTShare 身份，引用旧 Relay 集合为前驱，保留旧失败账，不复制一套 Store 或用有限样本签全市场完成。未来自然日的更新稳定性，只按实际观察积累。
+
+## 复用 Kernel v1 整段日线
+
+用户在 2026-10-19 明确要求「如果原来 KERNEL 的方式可以实现，那就用 KERNEL 的方式实现吧」，并确认 `close` 已验证。[#10 认领6257049505](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6257049505)记录该路线选择和有限执行范围，替代此前等待用户选择批量权限升级的下一步。
+
+参考旧 Kernel `cb3bbc87eeeeadb6bf24d7adc8cc214cd80ab9b8` 的 `ftshare_stock_history_comparison.py`、`ftshare_market_inputs.py`、`yinquan_ftshare_56.py`。历史 [37720503804/1](https://github.com/auguspp/decision-kernel/actions/runs/37720503804) 在代码 `f732e0ef6f1c63c30ad05ff3f1c27663a649ef12` 完成 14 股 × 4 段历史的 56 次单股请求，原运行离线核过 56 份正文。这证明旧单股整段入口实际成功过，不等于本仓当前 Key 已获准，也不代表 Kernel 正常全市场日线已经默认 FTShare。
+
+官方同一固定版本的 [stock-candlesticks](https://github.com/FTShare-Lab/FTShare-skill/blob/d2233464fc26b6d3c885f60543e316565361bd83/ftshare-market-data/sub-skills/stock-candlesticks/SKILL.md) 明确：`GET /api/v1/market/data/stock-candlesticks`，单个 `symbol`，`interval_unit=day`，`adjust_kind=none|forward`，起止毫秒参数，不传 `limit` 返回整个请求区间。`close` 是价格字段；本次沿用现有 Decimal、时间、OHLC 隔离及原价 / 前复权边界，不重新解释为 `latest`。
+
+`ftshare_single.py` 是该入口的窄适配，复用 `ftshare_daily` 的日线验证核心，接受官方裸数组和旧 Kernel 已观察的整数 `code=0|200`、`data` 数组外层。其 request、原始 body、hash、schema 和 SourceInput origin 都保存真实 v1 身份；用于共享行校验的内存结构不是供应商原件。`source_for_single_capture` / `restore_single` 使用既有 Store、完整同仓 SourceRef 和独立重建；normalized excerpt 与原始正文分开。当前仍限定 119 个自然日、SH/SZ、每次至多一个 HTTP，无自动分页、重试或接口切换。
+
+### 四次有界核验
+
+现有 `ashare-data.yml` 的手动 `ftshare-check-kernel` 使用固定 selection：
+
+```json
+{"study":"ftshare-daily-qualification-20261018","route":"kernel-v1","predecessor_run":39145109553}
+```
+
+仍要求当前 private 主仓、精确 main、成功 main CI、attempt 1、原生唯一同名运行、明确访问及私有保管授权，public rights 为 false。原 check 与 continuation 原生身份、两个 ZIP digest、原请求和实际失败必须独立恢复；不能由 caller 填一个「已用2次」数字。任何输出目录共享本 run 的一次性准入标记，换目录 / 新 run / rerun 不恢复额度。
+
+| 次序 | 请求 | 实际需要证明的差异 |
+|---|---|---|
+| 1 | 000001.SZ，2026-07-01..10-16，none | v1 实际访问、全部既有交易日、末日 `close` 对照原存储原价 |
+| 2 | 同一请求重复 | 整段归一化序列一致 |
+| 3 | 600000.SH，同段 none | 另一交易所的真实日期覆盖及末日原价 |
+| 4 | 000001.SZ，同段 forward | 同一供应商整段前复权及实际日期覆盖 |
+
+本次上限 4、原两次 v2 已耗用继续计入，累计上限为 **2 + 4 = 6 次 HTTP**。前置阶段从原 Store 正文按十进制 token 恢复对照 `close`、两所日历和引用；capture / release 重新读回，不能通过一起改 verification 和本地摘要修改基准。样本须没有坏行、具备至少 61 个收盘价且日期轴与原生交易日历完全一致。任一请求或检查失败即停止后项；有效响应后的 quota / Retry-After 也约束下一次访问。来源 Secret 只进入 capture，release 重新核 private / main 后才上传原始 bytes 与 capture。没有 records 写入、全市场激活或因子资格。
+
+### 请求量与覆盖
+
+单股「一次请求」取得一整段历史，并非每个交易日一次。`5224 × 2 = 10448` 是逐股分别拉 raw / forward 全段的一种完整回填估算，**不是旧 Kernel 每日固定调用量，也不是本次执行计划**。现有 210 槽批量集合的根容量和 Store 容量不支持仅将 batch size 改为 1；本轮不派发这个朴素计划。
+
+旧 Kernel 的 `daec/stocks` 按 `page` / `page_size` 抓当前全市场快照，按实际空尾终止，不能信带 filter 的 `total_items`；官方 `close` 字段可用于当期收盘截面。这个入口没有历史日期参数。另一个 `stock-history-list` 可不传 code、按指定日分页，但官方只承诺主板且明确累计复权因子不可用。两者均不能直接补出全沪深的 60 日前复权序列。后续全市场采用应利用真实可用能力及已保管历史，保留完整分母和 raw / forward 各自缺口；有限 v1 样本通过不能填写现有 v2 qualification 或签 #10 完成。
+
+维护责任仍为 #10 的 FTShare 日线入口。临时 Kernel 核验完成并有持久接续依据后，随旧 check / continuation 的真实依赖同步退出专属运行入口；已保管 v1 原件的只读恢复、共享 close 核心和正常业务所需能力继续保留。
 
 ## 同一 Store 的生产接线
 

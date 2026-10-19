@@ -1,4 +1,5 @@
 """The fixed FTShare transport's credential, wire and single-attempt boundary."""
+from base64 import b64encode
 from email.message import Message
 import hashlib
 from http.client import IncompleteRead
@@ -68,6 +69,18 @@ class Opener:
         return outcome
 
 
+class ErrorBody(BytesIO):
+    def __init__(self, raw, *, failure=None):
+        super().__init__(raw)
+        self.reads, self.failure = [], failure
+
+    def read(self, bound):
+        self.reads.append(bound)
+        if self.failure is not None:
+            raise self.failure
+        return super().read(bound)
+
+
 def setup(reply=None, **kwargs):
     opener = Opener(Reply() if reply is None else reply)
     return http.FTShareHTTP(credential=KEY, opener=opener, **kwargs), opener
@@ -103,6 +116,34 @@ def test_daily_request_uses_fixed_origin_repeated_symbols_and_header_only_creden
     assert sent["content-type"] == "application/json" and sent["accept"] == "application/json"
     assert KEY not in request.full_url and "authorization" not in sent
     assert client.requests == len(opener.calls) == 1
+
+
+@pytest.mark.parametrize("adjust_kind", ["none", "forward"])
+def test_single_stock_route_requests_one_complete_daily_range_without_limit(monkeypatch, adjust_kind):
+    monkeypatch.setenv("FTSHARE_BASE_URL", "https://untrusted.invalid/gateway")
+    client, opener = setup()
+    client.candlesticks("600000.SH", since=SINCE, until=UNTIL, adjust_kind=adjust_kind)
+    request, timeout = opener.calls[0]
+    url = urlsplit(request.full_url)
+    assert (url.scheme, url.netloc, url.path) == (
+        "https", "market.ft.tech", "/gateway/api/v1/market/data/stock-candlesticks")
+    assert parse_qs(url.query) == {"symbol": ["600000.SH"], "interval_unit": ["day"],
+        "adjust_kind": [adjust_kind], "since_ts_millis": [str(SINCE)], "until_ts_millis": [str(UNTIL)]}
+    sent = {name.lower(): value for name, value in request.header_items()}
+    assert sent["ftshare_api_key"] == KEY and sent["x-client-name"] == "ft-claw"
+    assert sent["accept-encoding"] == "identity" and sent["content-type"] == "application/json"
+    assert KEY not in request.full_url and request.method == "GET" and timeout == 90
+    assert client.requests == len(opener.calls) == 1
+
+
+@pytest.mark.parametrize("changes", [{"symbol": "all"}, {"symbol": SYMBOLS},
+    {"symbol": "600000.SH&limit=1"}, {"adjust_kind": "backward"}, {"since": SINCE + 1}])
+def test_invalid_single_stock_request_is_refused_before_source_access(changes):
+    client, opener = setup()
+    with pytest.raises(ValueError, match="FTSHARE"):
+        client.candlesticks(**{"symbol": "600000.SH", "since": SINCE, "until": UNTIL,
+            "adjust_kind": "none", **changes})
+    assert client.requests == 0 and opener.calls == []
 
 
 def test_default_opener_ignores_environment_proxy_and_rejects_redirects(monkeypatch):
@@ -234,10 +275,7 @@ def test_duplicate_or_reflected_retry_and_rate_headers_are_not_zero_wait_or_zero
 
 @pytest.mark.parametrize("status,classification", [(401, "auth-or-entitlement"),
     (403, "auth-or-entitlement"), (429, "rate-limit"), (503, "http-error")])
-def test_http_rejections_do_not_read_error_prose_or_retry(status, classification):
-    class ErrorBody(BytesIO):
-        def read(self, *args):
-            raise AssertionError("untrusted error body must not be read")
+def test_http_rejections_read_only_bounded_diagnostics_and_never_retry(status, classification):
     body = ErrorBody(KEY.encode())
     error = HTTPError("https://provider.invalid/" + KEY, status, KEY,
         headers(Retry_After="90", X_RateLimit_Remaining="0", X_Request_ID=KEY), body)
@@ -249,8 +287,116 @@ def test_http_rejections_do_not_read_error_prose_or_retry(status, classification
     assert client.last_error_meta["retry_after_seconds"] == 90
     assert client.last_error_meta["rate_limits"]["key_remaining"]["remaining"] == 0
     assert client.last_error_meta["x_request_id"] is None
+    assert body.reads == [http.MAX_ERROR_BODY + 1]
+    assert client.last_error_meta["error_diagnostics"]["observed_body_bytes"] == len(KEY)
     assert_no_source_retained(client)
     assert client.requests == len(opener.calls) == 1
+
+
+@pytest.mark.parametrize("code,expected,category", [
+    (403, 403, "access-denied"), ("401", 401, "authentication"),
+    ("PERMISSION_DENIED", "PERMISSION_DENIED", "access-denied"),
+    ("INVALID_API_KEY", "INVALID_API_KEY", "authentication"),
+    (10001, 10001, "unclassified"), (200, 200, "unclassified"),
+    ("ALICE_SMITH", None, "unclassified"), (13800138000, None, "unclassified"),
+    (True, None, "unclassified"), ("alice@example.invalid", None, "unclassified"),
+])
+def test_error_business_code_is_safe_metadata_and_cannot_change_http_status(code, expected, category):
+    prose = "Private account Alice Smith, alice@example.invalid, phone 13800138000"
+    raw = json.dumps({"code": code, "message": prose, "data": {"account": prose}}).encode()
+    body = ErrorBody(raw)
+    error = HTTPError("https://provider.invalid", 403, prose,
+        headers(Content_Type="application/json; charset=utf-8"), body)
+    client, opener = setup(error)
+    with pytest.raises(RecordError, match="^FTSHARE_HTTP_403$") as exc:
+        client.candlesticks("600000.SH", since=SINCE, until=UNTIL)
+    diagnostics = client.last_error_meta["error_diagnostics"]
+    assert diagnostics == {"content_type": "application/json", "observed_body_bytes": len(raw),
+        "truncated": False, "business_code": expected, "category": category}
+    retained = json.dumps(client.last_error_meta) + str(exc.value)
+    assert all(private not in retained for private in (prose, "Alice", "ALICE_SMITH", "alice@", "13800138000"))
+    assert body.reads == [http.MAX_ERROR_BODY + 1] and body.closed
+    assert client.last_error_meta["http_status"] == 403
+    assert client.last_error_meta["classification"] == "auth-or-entitlement"
+    assert_no_source_retained(client)
+    assert client.requests == len(opener.calls) == 1
+
+
+@pytest.mark.parametrize("encoding", ["literal", "unicode", "unicode-key", "percent", "double-percent", "html", "base64"])
+def test_error_credential_reflection_is_withheld_including_encoded_values_and_keys(encoding):
+    encoded_key = {"literal": KEY, "unicode": "".join(f"\\u{ord(c):04x}" for c in KEY),
+        "unicode-key": "".join(f"\\u{ord(c):04x}" for c in KEY),
+        "percent": "".join(f"%{ord(c):02X}" for c in KEY),
+        "double-percent": "".join(f"%25{ord(c):02X}" for c in KEY),
+        "html": "".join(f"&#{ord(c)};" for c in KEY),
+        "base64": b64encode(KEY.encode()).decode()}[encoding]
+    payload = {"code": 403, "message": {KEY: "private"} if encoding == "unicode-key" else KEY}
+    raw = json.dumps(payload).replace(KEY, encoded_key).encode()
+    body = ErrorBody(raw)
+    error = HTTPError("https://provider.invalid", 403, KEY, headers(Content_Type="application/json"), body)
+    client, opener = setup(error)
+    with pytest.raises(RecordError, match="^FTSHARE_HTTP_403$"):
+        get_daily(client)
+    diagnostics = client.last_error_meta["error_diagnostics"]
+    assert diagnostics["category"] == "secret-reflected" and diagnostics["business_code"] is None
+    assert encoded_key not in json.dumps(client.last_error_meta)
+    assert_no_source_retained(client)
+    assert body.closed and body.reads == [http.MAX_ERROR_BODY + 1]
+    assert client.requests == len(opener.calls) == 1
+
+
+@pytest.mark.parametrize("raw,mime,category,code", [
+    (b'{"code":403,"message":"private"}' + b" " * 10000, "application/json", "body-truncated", None),
+    (b'{"code":403}', "text/html", "unsupported-content-type", None),
+    (b"<html>private@example.invalid</html>", "application/json", "non-json", None),
+    (b"private@example.invalid", "text/plain", "non-json", None),
+    (b'{"code":403}', "text/plain", "access-denied", 403),
+    (b'{"code":403}', "text/json", "access-denied", 403),
+    (b'{"code":403,"code":401}', "application/json", "non-json", None),
+    (b'{"code":NaN}', "application/json", "non-json", None),
+    (b'\xff', "application/json", "non-json", None),
+    (b"", "application/json", "empty-body", None),
+])
+def test_untrusted_error_format_and_size_never_expose_prose_or_parse_a_partial_body(raw, mime, category, code):
+    body = ErrorBody(raw)
+    error = HTTPError("https://provider.invalid", 403, "private@example.invalid",
+        headers(Content_Type=mime, Content_Length=str(len(raw))), body)
+    client, opener = setup(error)
+    with pytest.raises(RecordError, match="^FTSHARE_HTTP_403$"):
+        get_daily(client)
+    diagnostics = client.last_error_meta["error_diagnostics"]
+    assert diagnostics["category"] == category and diagnostics["business_code"] == code
+    assert diagnostics["observed_body_bytes"] == min(len(raw), http.MAX_ERROR_BODY + 1)
+    assert diagnostics["truncated"] is (len(raw) > http.MAX_ERROR_BODY)
+    assert diagnostics["content_type"] == (mime if mime in http.ERROR_MIMES else None)
+    assert "private" not in json.dumps(client.last_error_meta)
+    assert body.closed and body.reads == [http.MAX_ERROR_BODY + 1]
+    assert_no_source_retained(client)
+    assert client.requests == len(opener.calls) == 1
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(KEY), IncompleteRead(KEY.encode(), 100)])
+def test_error_body_read_failure_preserves_the_original_http_rejection(failure):
+    body = ErrorBody(b"", failure=failure)
+    error = HTTPError("https://provider.invalid", 403, KEY, headers(Content_Type="application/json"), body)
+    client, opener = setup(error)
+    with pytest.raises(RecordError, match="^FTSHARE_HTTP_403$"):
+        get_daily(client)
+    assert client.last_error_meta["error_diagnostics"] == {"content_type": "application/json",
+        "observed_body_bytes": None, "truncated": None, "business_code": None, "category": "body-unavailable"}
+    assert client.last_error_meta["http_status"] == 403
+    assert body.closed and body.reads == [http.MAX_ERROR_BODY + 1]
+    assert_no_source_retained(client)
+    assert client.requests == len(opener.calls) == 1
+
+
+def test_encoded_credential_in_safe_looking_header_is_withheld():
+    reflected = b64encode(KEY.encode()).decode().rstrip("=")
+    client, _ = setup(Reply(response_headers=headers(X_Request_ID=reflected, X_Cache=reflected)))
+    get_daily(client)
+    assert client.last_response_meta["x_request_id"] is None
+    assert client.last_response_meta["x_cache"] is None
+    assert reflected not in json.dumps(client.last_response_meta)
 
 
 @pytest.mark.parametrize("failure,classification", [

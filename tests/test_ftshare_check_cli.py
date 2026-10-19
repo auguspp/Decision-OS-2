@@ -419,7 +419,7 @@ def test_workflow_keeps_finite_check_read_only_and_secret_only_at_capture():
     holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
                for step in candidate["steps"] if "FTSHARE_API_KEY" in json.dumps(step)]
     assert holders == [("ftshare-check", "capture"), ("ftshare-check-continue", "capture"),
-                       ("ftshare-sync", "runtime")]
+                       ("ftshare-check-kernel", "capture"), ("ftshare-sync", "runtime")]
     relay_holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
                      for step in candidate["steps"] if "TUSHARE_PROXY_API_KEY" in json.dumps(step)]
     assert relay_holders == [("sync", None), ("repair", None), ("ftshare-calendar", "runtime")]

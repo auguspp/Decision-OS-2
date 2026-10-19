@@ -37,7 +37,7 @@ def bundle(evidence):
                packages={"pytest": "9.1.1", "pytest-xdist": "3.8.0"})
     ident = dict(repo=evidence.REPO, code_sha="a" * 40, tree=env["tree"], event="pull_request", run_id="100", attempt="1")
     contract = "tests/contracts/test_example.py::test_contract"
-    selected = {"contracts": [contract], **{str(n): [f"tests/test_example.py::test_case_{n}"] for n in range(1, 5)}}
+    selected = {"contracts": [contract], **{g: [f"tests/test_example.py::test_case_{g}"] for g in evidence.GROUPS if g != "contracts"}}
     plan = dict(identity=ident, scope="full", merge_eligible=True, environment=env,
                 environment_policy="observed-per-job-image-v1", durations={}, contract_paths=[contract.split("::")[0]],
                 collection=[node for group in selected.values() for node in group])

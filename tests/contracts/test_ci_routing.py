@@ -87,7 +87,7 @@ def reuse_case(runtime, evidence, bundle, monkeypatch):
 def test_exact_ready_pr_full_is_reusable(runtime, reuse_case):
     plan, env, _ = reuse_case
     result = runtime.select_reuse(plan, env)
-    assert result["reuse"] and result["source"]["count"] == 5
+    assert result["reuse"] and result["source"]["count"] == len(runtime.E["GROUPS"])
 
 
 def test_policy_change_falls_back_to_real_full(runtime, reuse_case, monkeypatch):

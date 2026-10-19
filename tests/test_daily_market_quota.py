@@ -43,6 +43,7 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
         "run_id": 8001, "run_attempt": 1, "event": "workflow_dispatch"}
     counts, apis, fetches, progress, trace = {}, [], [], [], []
     immutable_responses, cache_hits = {}, Counter()
+    blob_sizes, size_queries, native_size_queries = {}, Counter(), Counter()
     immutable_path = re.compile(re.escape(cli.PREFIX) +
         r"/git/(?:(?:commits|blobs)/[a-f0-9]{40}|trees/[a-f0-9]{40}(?:\?recursive=1)?)")
 
@@ -73,6 +74,30 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
                 value = deepcopy(native_model.run)
             elif "/actions/workflows/ci.yml/runs?" in path:
                 value = deepcopy(native_model.ci)
+            elif cacheable and path.startswith(cli.PREFIX + "/git/trees/"):
+                # Keep the original server's native tree expansion. Blob size
+                # belongs to its exact object SHA, so later trees can reuse the
+                # first successful native size without another child process.
+                model.requests.append((request.method, path, deepcopy(payload)))
+                sha = path.rsplit("/", 1)[1].split("?", 1)[0]
+                rows = []
+                for raw in model.git._run("ls-tree", "-r", "-z", sha).stdout.split(b"\0"):
+                    if not raw:
+                        continue
+                    meta, name = raw.split(b"\t")
+                    mode, kind, blob = meta.decode().split()
+                    if kind == "blob" and re.fullmatch(r"[a-f0-9]{40}", blob):
+                        size_queries[blob] += 1
+                        if blob not in blob_sizes:
+                            blob_sizes[blob] = int(model.git._run("cat-file", "-s", blob).stdout)
+                            native_size_queries[blob] += 1
+                        size = blob_sizes[blob]
+                    else:
+                        size = int(model.git._run("cat-file", "-s", blob).stdout)
+                    rows.append(dict(path=name.decode(), mode=mode, type=kind, sha=blob, size=size))
+                value = dict(sha=sha, truncated=False, tree=rows)
+                if model.corrupt_response:
+                    value = model.corrupt_response(path, value)
             else:
                 value = model.request(request.method, path, payload)
             raw = encoded(value)
@@ -122,11 +147,26 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     assert all(any("/git/" + kind + "/" in path and count > 0 for path, count in cache_hits.items())
         for kind in ("commits", "trees", "blobs"))
     assert len(trace) == sum(api._requests for api in apis) == sum(sum(row.values()) for row in counts.values())
+    assert native_size_queries == Counter({sha: 1 for sha in blob_sizes})
+    assert set(size_queries) == set(blob_sizes) and sum(size_queries.values()) > len(blob_sizes)
+    # An independent native batch read verifies every reused size and object
+    # type once, without changing any client/server wire or quota accounting.
+    batch = model.git._run("cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+        data=("\n".join(sorted(blob_sizes)) + "\n").encode("ascii")).stdout
+    verified_sizes = {}
+    for row in batch.decode("ascii").splitlines():
+        sha, kind, size = row.split()
+        assert kind == "blob" and sha not in verified_sizes
+        verified_sizes[sha] = int(size)
+    assert verified_sizes == blob_sizes
     evidence = {"schema": "synthetic-daily-quota-windows-v1", "live_source_requests": 0,
         "live_store_writes": 0, "per_resource_hourly_limit": 1000,
         "windows": [{"window": key, **value} for key, value in sorted(counts.items())],
         "synthetic_immutable_response_cache": {"paths": len(immutable_responses),
-            "hits": sum(cache_hits.values()), "wire_requests": sum(immutable_requests.values())},
+            "hits": sum(cache_hits.values()), "wire_requests": sum(immutable_requests.values()),
+            "blob_size_queries": sum(size_queries.values()), "native_blob_size_queries": sum(native_size_queries.values()),
+            "blob_size_cache_hits": sum(size_queries.values()) - sum(native_size_queries.values()),
+            "independent_native_sizes_verified": len(verified_sizes)},
         "max_unit_requests": max(api._requests for api in apis), "progress": progress,
         "core_remaining_before_reading": 1000 - counts[int(clock.at // 3600)]["core"],
         "result": first}
@@ -156,4 +196,3 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     assert again["receipt"]["source_requests"] == 0 and model.git.head() == before
     assert len(host.calendar_clients) == len(host.price_clients) == 1
     assert len(trace) == sum(api._requests for api in apis) == sum(sum(row.values()) for row in counts.values())
-

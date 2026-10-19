@@ -33,6 +33,15 @@ def industry_rights(plan, inputs):
                 "BRIEF_INDUSTRY_PUBLICATION_NOT_CONFIRMED")
 
 
+def watch_rights(document, inputs):
+    """A retained evidence judgment does not grant permission to export it."""
+    from decision_kernel.application.watch_evidence import export_required
+    if export_required(document.get("research") or {}):
+        require(inputs.get("public_sources_custody_confirmed") == "true"
+                and inputs.get("public_feedback_custody_confirmed") == "true",
+                "BRIEF_WATCH_PUBLICATION_NOT_CONFIRMED")
+
+
 def run_desk(output, inputs):
     # The original host checks repository/workflow/main/attempt/code before routing.
     from decision_kernel.interfaces.news_rolling_cli import REPOSITORY, _SourceReads, _file
@@ -83,6 +92,7 @@ def run_desk(output, inputs):
             saved_ref = plan["reference"]
             research_rights(doc["plan"], inputs)
             industry_rights(doc["plan"], inputs)
+        watch_rights(doc, inputs)
         store.backend.head()  # Revalidate mutable access before releasing source-derived results.
         (output / "edition.json").write_bytes(encoded(doc))
         (output / "news-brief.md").write_text(doc["brief_markdown"], encoding="utf-8")

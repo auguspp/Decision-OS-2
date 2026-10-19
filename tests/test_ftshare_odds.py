@@ -130,7 +130,7 @@ def replacement(case, *, price="8", failed=False, acquired_at=None,
             "quote_date": "2026-10-19", "collection_ref": retained["reference"]}
 
 
-def watch(case, kind="conditional"):
+def watch(case, kind="conditional", version=1):
     basis = case["spec_ref"] if kind == "conditional" else case["assessment_ref"]
     w = watch_payload(basis, kind)
     w["watch_id"] = "ft-" + kind
@@ -138,6 +138,11 @@ def watch(case, kind="conditional"):
     w["condition"]["threshold"] = "9"
     if kind == "conditional":
         w["data_policy"] = {"price_kind": "retained-ftshare-raw-close", "market_policy": deepcopy(case["policy"])}
+    if version == 2:
+        from test_watch_conditions import interval
+        condition = w.pop("condition")
+        w.update(schema="odds-watch-v2", combination="all", conditions=[
+            {**condition, "condition_id": "lower-price"}, interval("declared-range", "7", "9", True, True)])
     service = OddsWatch(case["store"], REGISTRY)
     ref = service.freeze(authorized("watch", w), submission_id="watch-" + kind)["reference"]
     return service, ref
@@ -185,14 +190,17 @@ def test_price_replacement_preserves_spec_probability_and_original_replay(case):
 
 
 @pytest.mark.parametrize("kind", ["conditional", "probability"])
-def test_existing_watch_consumes_both_prices_and_replays_saved_checks(case, kind):
-    service, ref = watch(case, kind)
-    first_input = watch_request(case["store"], ref, at=EVALUATED, price=case["market"])
+@pytest.mark.parametrize("version", [1, 2])
+def test_existing_watch_consumes_both_prices_and_replays_saved_checks(case, kind, version):
+    from test_watch_conditions import v2_input
+    service, ref = watch(case, kind, version)
+    first_input = watch_request(case["store"], ref, at=EVALUATED,
+                                price=v2_input(case["market"]) if version == 2 else case["market"])
     first = service.save(authorized("check", first_input), submission_id="watch-first")
     assert first["status"] == "not-met"
     next_market = replacement(case)
     second_input = watch_request(case["store"], ref, at="2026-10-19T13:01:00+00:00",
-                                price=next_market, previous=first["reference"])
+                                price=v2_input(next_market) if version == 2 else next_market, previous=first["reference"])
     second = service.save(authorized("check", second_input), submission_id="watch-second")
     assert second["status"] == "first-trigger"
     read = OddsWatch(case["fresh"](), REGISTRY).read_check(second["reference"])
@@ -200,6 +208,14 @@ def test_existing_watch_consumes_both_prices_and_replays_saved_checks(case, kind
     calculation = read["result"]["observation"]["calculation"]
     assert calculation["price"]["kind"] == "retained-ftshare-raw-close" and calculation["price"]["price"] == "8"
     assert calculation["spec_ref"] == case["spec_ref"]
+    if version == 2:
+        from decision_kernel.application.research_agenda import ResearchAgenda
+        assert [c["status"] for c in read["result"]["condition_results"]] == ["first-trigger"] * 2
+        agenda = ResearchAgenda(case["fresh"]()).build({"references": [asdict(case["research_ref"])],
+            "as_of": "2026-10-19T13:02:00+00:00", "watch_evidence": [{
+                "reference": asdict(case["research_ref"]), "question_id": None, "kind": "check",
+                "check_ref": second["reference"]}]})
+        assert agenda["cards"][0]["watch_evidence"][0]["result"] == read["result"]
     assert not any(read["result"]["effects"][key] for key in
                    ("notification_sent", "research_started", "scheduler_created"))
 

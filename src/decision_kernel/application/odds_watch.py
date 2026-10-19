@@ -103,18 +103,20 @@ class OddsWatch:
                 spec_ref = basis["reference"]
             spec = ConditionalOdds(reader).read_spec(spec_ref)
             ref = BlobRef(**spec["spec"]["research_ref"])
-            condition = watch["condition"]
-            if condition["metric"] in WORLD_METRICS:
-                require(condition["world_id"] in {w["id"] for w in spec["spec"]["worlds"]}, "WATCH_WORLD_NOT_IN_SPEC")
-                expected = "value_to_price_distance" if spec["spec"]["value_kind"] == "current-fair-value" else "undiscounted_holding_period_return"
-                require(condition["metric"] == expected, "WATCH_CURRENT_VALUE_IS_NOT_FUTURE_RETURN")
+            conditions = watch["conditions"] if watch["schema"] == "odds-watch-v2" else [watch["condition"]]
+            for condition in conditions:
+                if condition["metric"] in WORLD_METRICS:
+                    require(condition["world_id"] in {w["id"] for w in spec["spec"]["worlds"]}, "WATCH_WORLD_NOT_IN_SPEC")
+                    expected = "value_to_price_distance" if spec["spec"]["value_kind"] == "current-fair-value" else "undiscounted_holding_period_return"
+                    require(condition["metric"] == expected, "WATCH_CURRENT_VALUE_IS_NOT_FUTURE_RETURN")
         research = reader.read_revision(ref)
         require(timestamp(research["record"]["stored_at"]) <= timestamp(watch["activation"]["as_of"]),
                 "WATCH_ACTIVATION_PRECEDES_RESEARCH")
         if assessment:
             require(timestamp(assessment["assessment"]["as_of"]) <= timestamp(watch["activation"]["as_of"]),
                     "WATCH_ACTIVATION_PRECEDES_ASSESSMENT")
-        return {"schema": "frozen-odds-watch-v1", "watch": watch, "watch_sha256": digest(encoded(watch)),
+        return {"schema": "frozen-odds-watch-v2" if watch["schema"] == "odds-watch-v2" else "frozen-odds-watch-v1",
+            "watch": watch, "watch_sha256": digest(encoded(watch)),
             "research_ref": asdict(ref), "case_id": research["record"]["input"]["case_id"],
             "research_body_sha256": research["record"]["body"]["sha256"],
             "research_unresolved": research["record"]["input"]["unresolved"],
@@ -164,6 +166,9 @@ class OddsWatch:
                     "value": None, "reason": code}
 
     def _observe_supported(self, frozen, request, previous, reader, *, known_dates_first=False):
+        if frozen["watch"]["schema"] == "odds-watch-v2":
+            from decision_kernel.application.watch_conditions import observe
+            return observe(self, frozen, request, previous, reader)
         watch = frozen["watch"]
         gated = gate(watch, request, previous)
         out = {"status": gated, "condition_met": None, "research_at_snapshot": None,

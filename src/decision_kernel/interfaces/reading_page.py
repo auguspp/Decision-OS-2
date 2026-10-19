@@ -68,7 +68,7 @@ const agenda=$('agenda-content');
 if(D.agenda.status==='readable'){
  const a=D.agenda.view;agenda.append(el('p',D.agenda.reference?'按指定已存议程接续；只读投影，没有保存新版本。':'未提供已存议程；仅显示原研究底稿的后续工作，不推断用户选择。'));
  for(const c of a.cards){const box=el('div',undefined,'question');box.append(el('h3',`${c.case_id||c.reference.path} / ${c.revision_id||''}`),el('p',label(c.status)));
-  for(const q of c.agenda||[]){box.append(el('p',`${q.text} — ${label(q.attention_status)}`),details('原后续工作、选择与复核条件（声明，不是执行证明）',q));}agenda.append(box);}
+  for(const q of c.agenda||[]){box.append(el('p',`${q.text} — ${label(q.attention_status)}`),details('原后续工作、选择与复核条件（声明，不是执行证明）',q));}watchConditions(box,c);agenda.append(box);}
  if(!a.cards.length)agenda.append(el('p','本页无可投影的研究；不等于没有待办。'));
  agenda.append(details('仍保留但不在本页的版本选择及读取限制',{unselected_attention:a.unselected_attention,status:a.status,history_verification:a.history_verification}));
 }else agenda.append(el('p',`议程${label(D.agenda.status)}：${D.agenda.error}。选择状态未知，不当成零待办。`));
@@ -95,9 +95,10 @@ from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS
 
 from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
 from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_CSS, JS as DISCOVERY_JS
+from decision_kernel.interfaces.reading_watch_page import JS as WATCH_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
-JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS + OVERVIEW_JS + DISCOVERY_JS
+JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS + OVERVIEW_JS + DISCOVERY_JS + WATCH_JS
 
 
 def render_page(model):

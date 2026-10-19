@@ -144,6 +144,9 @@ class WatchActivity:
                     if last:
                         # A pause is an unobserved interval, not a false or an erased trigger.
                         state["last_result"]["gap_since_decisive"] = True
+                        if last["schema"] == "odds-watch-check-v2":
+                            for condition in state["last_result"]["condition_results"]:
+                                condition["gap_since_decisive"] = True
                 elif action == "retire": state["state"] = "retired"
         else:
             require(before is not None and state["state"] == "active", "WATCH_ACTIVITY_NOT_ACTIVE")
@@ -217,18 +220,21 @@ class WatchActivity:
         if self.store.backend.head() != head: raise Conflict("WATCH_ACTIVITY_SNAPSHOT_CHANGED")
         return {"event": event, "write": "not-requested", "snapshot": head}
 
-    def read(self, reference):
+    def read(self, reference, *, include_current_use=True):
         reader = _Sources(self.store.backend)
         self.store.backend.head()
         frozen, state, history = self._replay(reference, reader)
         event = ConditionalOdds(reader)._open(reference, ACTIVITY_RECORD)
         head = self.store.backend.head()
-        selected = self._current(frozen["watch_sha256"], head, reader)
-        return {"reference": asdict(artifact_reference(reference)), "event": event, "recalculation": "matches",
-                "summary": state["summary"], "current_activity": {"snapshot": head, "reference": selected,
-                    "same_event": selected == asdict(artifact_reference(reference))},
+        result = {"reference": asdict(artifact_reference(reference)), "event": event, "recalculation": "matches",
+                "summary": state["summary"],
                 "history": list(reversed(history)), "effects": {"mode": "record-only", "scheduler_created": False,
                     "notification_sent": False, "investment_authority": "none"}}
+        if include_current_use:
+            selected = self._current(frozen["watch_sha256"], head, reader)
+            result["current_activity"] = {"snapshot": head, "reference": selected,
+                                         "same_event": selected == asdict(artifact_reference(reference))}
+        return result
 
     def catalogue(self, payload):
         shape(payload, {"snapshot", "after", "limit", "at"})

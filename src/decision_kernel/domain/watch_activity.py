@@ -54,4 +54,27 @@ def summarize(before, result):
         if key: summary[key] += 1
         summary["last_check_at"] = result["request"]["checked_at"]
         summary["last_check_status"] = result["status"]
+        if result["schema"] == "odds-watch-check-v2":
+            # Group truth and each declared condition have distinct histories.
+            # Seeded standalone checks carry control state, never these counts.
+            previous = {row["condition_id"]: row for row in summary.get("condition_summaries", [])}
+            rows = []
+            for condition in result["condition_results"]:
+                identity = condition["condition_id"]
+                row = previous.get(identity, {"condition_id": identity, "checks": 0, "performed": 0,
+                    "first_triggers": 0, "continued_triggers": 0, "not_met": 0, "cannot_determine": 0,
+                    "review_required": 0, "ended": 0, "not_due": 0, "last_check_at": None,
+                    "last_check_status": None})
+                row["checks"] += 1
+                row["performed"] += int(condition["check_performed"])
+                counter = {"first-trigger": "first_triggers", "continued-trigger": "continued_triggers",
+                    "not-met": "not_met", "cannot-determine": "cannot_determine", "review-required": "review_required",
+                    "ended": "ended", "not-due": "not_due"}.get(condition["status"])
+                if counter:
+                    row[counter] += 1
+                row["last_check_at"] = result["request"]["checked_at"]
+                row["last_check_status"] = condition["status"]
+                rows.append(row)
+            summary["condition_summaries"] = rows
+            summary["condition_coverage"] = "each-declared-condition; managed-checks-only; seed-counts-excluded"
     return summary

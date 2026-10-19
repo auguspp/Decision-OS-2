@@ -128,3 +128,5 @@ def exercise_installed_watch(command, outside, executable, env):
 
     from test_watch_activity_runtime import exercise_installed_activity
     exercise_installed_activity(call, frozen["reference"], saved["reference"])
+    from test_watch_conditions_integration import exercise_installed_conditions
+    exercise_installed_conditions(call, research)

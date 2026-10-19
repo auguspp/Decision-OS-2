@@ -15,15 +15,23 @@ def preflight(operation, payload):
         return
     if operation == "agenda":
         require(isinstance(payload, dict) and "plan" in payload and set(payload) <= {
-            "plan", "public_feedback_custody_confirmed"}, "AGENDA_PUBLIC_PAYLOAD_INVALID")
+            "plan", "public_feedback_custody_confirmed", "public_sources_custody_confirmed"}, "AGENDA_PUBLIC_PAYLOAD_INVALID")
         plan = plan_input(payload["plan"])
         consent = payload.get("public_feedback_custody_confirmed", False)
         require(type(consent) is bool, "AGENDA_PUBLIC_CONSENT_INVALID")
+        require(type(payload.get("public_sources_custody_confirmed", False)) is bool,
+                "AGENDA_PUBLIC_CONSENT_INVALID")
         require(not plan["changes"] or consent, "AGENDA_PUBLIC_FEEDBACK_NOT_CONFIRMED")
+        if plan.get("watch_evidence"):
+            require(consent and payload.get("public_sources_custody_confirmed") is True,
+                    "AGENDA_WATCH_PUBLICATION_NOT_CONFIRMED")
         require(clock(plan["as_of"]) <= datetime.now(timezone.utc), "AGENDA_PUBLIC_FUTURE_CLOCK")
     else:
         require(isinstance(payload, dict) and "reference" in payload
-                and set(payload) <= {"reference", "as_of"}, "AGENDA_READ_PAYLOAD_INVALID")
+                and set(payload) <= {"reference", "as_of", "public_feedback_custody_confirmed",
+                                    "public_sources_custody_confirmed"}, "AGENDA_READ_PAYLOAD_INVALID")
+        for key in ("public_feedback_custody_confirmed", "public_sources_custody_confirmed"):
+            require(type(payload.get(key, False)) is bool, "AGENDA_PUBLIC_CONSENT_INVALID")
         artifact_reference(payload["reference"])
         if "as_of" in payload:
             require(clock(payload["as_of"]) <= datetime.now(timezone.utc), "AGENDA_PUBLIC_FUTURE_CLOCK")
@@ -32,9 +40,16 @@ def preflight(operation, payload):
 def perform(store, operation, payload):
     agenda = ResearchAgenda(store)
     if operation == "agenda":
-        return agenda.build(payload["plan"])
-    require(operation == "read-agenda", "AGENDA_OPERATION_INVALID")
-    return agenda.open(payload["reference"], as_of=payload.get("as_of"))
+        result = agenda.build(payload["plan"])
+    else:
+        require(operation == "read-agenda", "AGENDA_OPERATION_INVALID")
+        result = agenda.open(payload["reference"], as_of=payload.get("as_of"))
+    from decision_kernel.application.watch_evidence import export_required
+    if export_required(result):
+        require(payload.get("public_feedback_custody_confirmed") is True
+                and payload.get("public_sources_custody_confirmed") is True,
+                "AGENDA_WATCH_PUBLICATION_NOT_CONFIRMED")
+    return result
 
 
 def configure(actions):

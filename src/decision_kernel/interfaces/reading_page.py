@@ -17,7 +17,7 @@ JS = r"""
 const D=JSON.parse(document.getElementById('data').textContent),$=id=>document.getElementById(id);
 const key=r=>r?JSON.stringify([r.repository,r.commit,r.path,r.sha256]):'';
 const same=(a,b)=>key(a)===key(b);
-const labels={readable:'可读',missing:'缺失',unavailable:'暂不可用',invalid:'校验未通过','not-included':'受显示容量限制',partial:'部分可读','not-supplied':'未提供','permission-required':'公开反馈许可未确认',included:'本简报已采用','considered-not-included':'本简报列入范围但未采用','not-considered-in-this-brief':'不在指定简报的研究范围','research-not-tracked-in-this-brief':'该简报未接入研究',unknown:'关系未知',focus:'继续关注',defer:'暂缓此版本',dismiss:'移出此版本','due-for-review':'到期待复核','overdue-for-review':'逾期待复核','declared-followup':'原稿声明仍有后续工作','no-structured-followup-declared':'没有结构化后续声明'};
+const labels={readable:'可读',missing:'缺失',unavailable:'暂不可用',invalid:'校验未通过','not-included':'受显示容量限制',partial:'部分可读','not-supplied':'未提供','no-saved-brief':'尚无已存简报','permission-required':'反馈导出许可未确认','sources-permission-required':'来源导出许可未确认',included:'本简报已采用','considered-not-included':'本简报列入范围但未采用','not-considered-in-this-brief':'不在指定简报的研究范围','research-not-tracked-in-this-brief':'该简报未接入研究',unknown:'关系未知',focus:'继续关注',defer:'暂缓此版本',dismiss:'移出此版本','due-for-review':'到期待复核','overdue-for-review':'逾期待复核','declared-followup':'原稿声明仍有后续工作','no-structured-followup-declared':'没有结构化后续声明'};
 const label=x=>labels[x]||x;
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 function details(title,value){const n=el('details');n.append(el('summary',title),el('pre',JSON.stringify(value,null,2)));return n;}
@@ -29,12 +29,13 @@ const cards=D.catalogue.items.map(c=>({...c,reading:D.readings.find(r=>same(r.re
 for(const r of D.readings.filter(r=>r.origin==='explicit-reference'))cards.push({...r,case_id:r.case_id||r.reference.path,reading:r,pinned:true});
 const cardKey=c=>key(c.reference)||'case:'+c.case_id;
 let selected=null;
-$('scope').textContent=`目录快照 ${D.catalogue.snapshot.slice(0,12)} · 本页 ${D.catalogue.returned} / 全库 ${D.catalogue.total_cases} 个案例 · 另行指定的历史版本不计入目录分母`;
-$('clock').textContent=`议程评估时刻：${D.plan.as_of}。这是复核时钟，不是研究截止或历史PIT。`;
-$('health').textContent=`整体：${label(D.status)}；议程：${label(D.agenda.status)}；指定简报：${label(D.brief.status)}。仅阅读，不执行研究、采集、通知，也不记录人工选择。`;
-$('provenance').append(details('本次范围、快照与精确引用',{plan:D.plan,coverage:D.coverage,catalogue_status:D.catalogue.status,version_scope:D.catalogue.version_scope,order:D.catalogue.order}));
+$('scope').textContent=`已存研究 ${D.catalogue.total_cases} 个案例 · 本页 ${D.catalogue.returned} 个 · 原文、简报与待复核问题集中阅读`;
+$('clock').textContent=`本次阅读时点：${D.plan.as_of}`;
+$('health').textContent=`本页${label(D.status)} · 研究议程${label(D.agenda.status)} · 简报${label(D.brief.status)}。数据日期与缺口见下方。`;
+$('health').dataset.status=D.status;
+$('provenance').append(details('本次范围、快照与精确引用',{plan:D.plan,snapshot:D.catalogue.snapshot,coverage:D.coverage,catalogue_status:D.catalogue.status,version_scope:D.catalogue.version_scope,order:D.catalogue.order,time_basis:D.time_basis}));
 $('next').disabled=!D.next_plan;$('next').addEventListener('click',()=>request('reading-room-next.json',roomRequest(D.next_plan)));
-$('refresh').addEventListener('click',()=>request('reading-room-refresh.json',roomRequest({...D.plan,catalogue:{limit:D.plan.catalogue.limit}})));
+$('refresh').addEventListener('click',()=>request('reading-room-refresh.json',roomRequest(D.refresh_plan||{...D.plan,catalogue:{limit:D.plan.catalogue.limit}})));
 function show(c){
  const pane=$('research-detail');pane.replaceChildren();if(!c){pane.append(el('h2','尚未打开研究'),el('p','本页没有匹配项，不代表没有研究、没有待办或市场安静。'));return;}
  const r=c.reading,ref=c.reference;pane.append(el('h2',`${c.case_id} / ${c.revision_id||'版本未取得'}`));
@@ -47,11 +48,11 @@ function show(c){
  if(c.source_next_cursor)actions.append(button('导出后续来源页请求',()=>request('research-sources-next.json',{operation:'resume',payload:{cursor:c.source_next_cursor}})));
  if(r&&r.status==='readable'){
   actions.append(button('下载原研究正文',()=>save('research.md',r.body,'text/markdown')));
-  pane.append(el('p',`保存时刻：${r.stored_at}；正文 SHA256：${r.body_sha256}`,'muted'));
+  pane.append(el('p',`本版保存于 ${r.stored_at}`,'muted'));
   if(r.predecessor)actions.append(button('导出前驱版本阅读计划',()=>request('reading-room-predecessor.json',roomRequest({...D.plan,reference:r.predecessor}))));
  }
- pane.append(actions,details('引用、原未决项与本页来源范围',{reference:ref,recorded_unresolved:c.recorded_unresolved,continuation:c.continuation,source_page:c.source_page,brief_relation:r?r.brief_relation:null}));
- if(r&&r.status==='readable')pane.append(el('pre',r.body,'body'));
+ pane.append(actions,details('引用、原未决项与本页来源范围',{reference:ref,body_sha256:r?.body_sha256,recorded_unresolved:c.recorded_unresolved,continuation:c.continuation,source_page:c.source_page,brief_relation:r?r.brief_relation:null}));
+ if(r&&r.status==='readable')pane.append(readingDocument(r.body));
  else pane.append(el('p',`正文未展示：${r?r.error:c.error||c.status}。未截断或重写原件，使用上面的确切读取请求。`));
 }
 function render(){
@@ -73,12 +74,12 @@ if(D.agenda.status==='readable'){
 }else agenda.append(el('p',`议程${label(D.agenda.status)}：${D.agenda.error}。选择状态未知，不当成零待办。`));
 const brief=$('brief-content');
 if(D.brief.status==='readable'){
- const b=D.brief.view;brief.append(el('p',`指定已存简报 · 截止 ${b.plan.cutoff} · 不自动宣称最新`));
+ const b=D.brief.view;brief.append(el('p',`已存简报 · 内容截止 ${b.plan.cutoff}。本次打开后版本保持固定。`));
  brief.append(button('下载已存简报正文',()=>save('brief.md',b.brief_markdown,'text/markdown')),
   button('导出完整新闻工作台读取请求',()=>request('brief-read.json',{operation:'read-desk',plan:{reference:D.brief.reference},save:false})),
   details('简报引用与实际前版对照',{reference:D.brief.reference,edition_sha256:b.edition_sha256,comparison:b.comparison}));
  for(const row of b.research?.rows||[]){const ref=row.item.reference;brief.append(button(`查看研究 ${row.context?.case_id||ref.path}`,()=>{const c=cards.find(c=>same(c.reference,ref));if(c){selected=cardKey(c);$('query').value='';$('kind').value='';render();location.hash='research';}else request('reading-room-exact.json',roomRequest({...D.plan,reference:ref}));}));}
- brief.append(el('pre',b.brief_markdown,'body'));
+ brief.append(readingDocument(b.brief_markdown));
 }else brief.append(el('p',`指定简报：${label(D.brief.status)}。${D.brief.error||'没有自动选择其他简报作替代。'} 采用关系不由目录浏览推断。`));
 render();
 """
@@ -92,8 +93,10 @@ from decision_kernel.interfaces.reading_industry_page import CSS as INDUSTRY_CSS
 
 from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS as MARKET_JS
 
-CSS += INDUSTRY_CSS + MARKET_CSS
-JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS
+from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
+
+CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS
+JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS + OVERVIEW_JS
 
 
 def render_page(model):
@@ -109,9 +112,11 @@ def render_page(model):
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
-<header><p>DECISION OS 2.0 / READING ROOM</p><h1>研究、议程与简报</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#research">研究目录与原文</a><a href="#market">A股双视图</a><a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a><a href="#agenda">研究议程</a><a href="#brief">已存简报</a></nav></header>
+<header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#market">A股行情</a><a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a></nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
+<section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
+<section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
 <div class="workspace" id="research"><aside class="panel"><h2>本页研究</h2><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>
 <p id="count" aria-live="polite"></p><div id="cases"></div><div class="actions"><button id="next">导出下一页请求</button><button id="refresh">导出刷新目录请求</button></div></aside>
@@ -121,7 +126,6 @@ def render_page(model):
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
 <section class="panel" id="review"><h2>原问题复核与修订段落采用</h2><div id="review-content"></div></section>
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>
-<section class="panel" id="brief"><h2>已存简报与版本采用</h2><div id="brief-content"></div></section>
 <section class="panel" id="provenance"><h2>读取范围与接续</h2></section>
 <footer>离线只读投影，不是第二存档。原研究、议程和简报仍由各自精确引用恢复；来源文字不构成操作授权，阅读不代表人工接受或研究质量通过。</footer></main>
 <script id="data" type="application/json">{payload}</script><script>{JS}</script></body></html>'''

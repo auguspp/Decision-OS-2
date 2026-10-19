@@ -36,9 +36,14 @@
 
 ## 4. 本组支持的市场资格是有限的
 
-计算输入形状：`{assessment_ref, market, evaluated_at}`。market为`odds-retained-close-v1`，包含`price_id/calendar_ref/daily_ref/master_ref/exchange/start/end`。三个引用均来自现役`market_custody`，不是自行写一个`qualified=true`；start/end是相同查询边界的YYYYMMDD。实际采用现役Registry、`restore_market_query`、`qualified_trade_calendar`、`qualified_daily`与`qualified_security_master`，没有新的HTTP提供方或自动抓取。
+计算输入形状保持`{assessment_ref, market, evaluated_at}`。market有两条明确的来源路径：
 
-本组只支持SSE/SZSE、CNY普通A股（`ordinary-a`或原`A`标签）、所选范围**末日确切未复权收盘价**。末日必须是日历中的开市日且有唯一对应日线，上市日期/源证券/币种/交易所匹配；不前填缺日、不把复权历史价当入场价格。日期型源无法证明盘中/收盘分钟，因此保守要求报价本地日已经结束、日线捕获也在该日之后；输出23:59:59+08:00仅是日期边界标记，不冒充提供方tick或交易所关市时刻。
+- 原`odds-retained-close-v1`包含`price_id/calendar_ref/daily_ref/master_ref/exchange/start/end`。三个引用均来自现役`market_custody`；start/end为相同查询边界的YYYYMMDD。沿现役Registry、`restore_market_query`、`qualified_trade_calendar`、`qualified_daily`与`qualified_security_master`恢复，原历史输出不改写。
+- `odds-ftshare-close-v1`包含`price_id/collection_ref/exchange/quote_date`。确切原集合恢复日历、证券主表和该证券对应的`adjust_kind=none`原查询，`quote_date`为明确的YYYY-MM-DD。按原概率评估冻结的年龄政策验证，不接受另传价格或临时放宽政策。采用[条件Odds同一FTShare适配](conditional-odds.md#已留存-ftshare-原始收盘价)，结果kind为`retained-ftshare-raw-close`，保留原请求、集合/日历/主表/日线SourceRef和捕获时点；不因其他证券或前复权缺口否定独立原始收盘，也不把此用途升格为全市场合格。source_hold、所选原始查询未保管、日期缺失均不能改用另一来源或前一报价。
+
+两条路径都不接受自行填写的`qualified=true`，不执行行情来源请求、不扩大资料保管或来源许可。
+
+本组只支持SSE/SZSE、CNY普通A股（`ordinary-a`或原`A`标签）、原Relay查询末日或FTShare指定日的**确切未复权收盘价**。该日必须是日历中的开市日且有唯一对应日线，上市日期/源证券/币种/交易所匹配；不前填缺日、不把复权历史价当入场价格。原Relay历史仍要求本地日结束且日线捕获在该日之后，23:59:59+08:00仅为日期边界标记。新FTShare路径要求评价和原始响应取得都不早于所选开市日的北京时间18:35；其`as_of`18:35:00是明确收盘后观察政策截止，允许当晚正常日更消费，不冒充提供方tick或交易所最终价认证。截止前的原件以后也不会自动升级。
 
 数据捕获不得晚于evaluated_at，eval不得在调用者实际运行时间之后。报价、证券参考和研究资本结构日期分别受明确政策约束。结果标为`qualified-retained-close-for-declared-as-of`，**只说明这项留存收盘用途**，不认证最新市场、可成交价格、实时停牌、历史PIT、永久发行人身份或公司行动。股数与净债务等仍来自冻结研究，证券主数据不会替它证明；发生拆股/增发/现金路径变化需要研究者新规格，不能靠价格标签自动修复。
 

@@ -70,9 +70,12 @@ def configuration(value):
     if sync is None:
         require(value["generation"] == "g20261016", "FTSHARE_RUNTIME_FIXED_CONFIG")
     else:
-        require(isinstance(sync, dict) and set(sync) == {
-            "base_reference", "start", "end", "targets", "source_budget"},
+        sync_fields = {"base_reference", "start", "end", "targets", "source_budget"}
+        require(isinstance(sync, dict) and sync_fields <= set(sync) <= sync_fields | {"completion_policy"},
             "FTSHARE_RUNTIME_KERNEL_SYNC_CONFIG")
+        if "completion_policy" in sync:
+            from decision_kernel.application.market_completion import EOD_COMPLETION_POLICY
+            require(sync["completion_policy"] == EOD_COMPLETION_POLICY, "FTSHARE_COMPLETION_POLICY")
         reference = SourceRef.from_dict(sync["base_reference"])
         require(reference.selection == Selection() and reference.manifest.repository == REPO,
             "FTSHARE_RUNTIME_KERNEL_SYNC_BASE")
@@ -321,7 +324,8 @@ def _check_sync_plan(collection, config, calendar_references):
         require(plan["schema"] == PLAN_SCHEMA, "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
         return
     require(plan["schema"] == SINGLE_PLAN_SCHEMA and all(plan[key] == sync[key]
-        for key in ("base_reference", "start", "end", "source_budget")),
+        for key in ("base_reference", "start", "end", "source_budget"))
+        and plan.get("completion_policy") == sync.get("completion_policy"),
         "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
     requests = _single_requests(sync)
     require(len(plan["new_slots"]) == len(requests) and set(plan["new_slots"]) == set(requests)
@@ -529,7 +533,8 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                         collection = plan_ftshare_single_collection(sync["base_reference"], registry, reader,
                             collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
                             start=sync["start"], end=sync["end"], targets=sync["targets"],
-                            source_budget=sync["source_budget"], calendar_references=calendar_references)
+                            source_budget=sync["source_budget"], calendar_references=calendar_references,
+                            completion_policy=sync.get("completion_policy"))
                     else:
                         collection = plan_ftshare_collection(config["legacy_reference"], registry, reader,
                             collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),

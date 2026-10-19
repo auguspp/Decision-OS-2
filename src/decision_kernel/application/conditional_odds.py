@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import base64
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 
 from decision_kernel.application.numerical_audit import _extract
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.domain.conditional_odds import (
-    calculate, day, number, shape, timestamp, validate_price, validate_spec,
+    RETAINED_VERSION, calculate, calculate_retained, day, number, shape, timestamp,
+    validate_close_policy, validate_price, validate_spec,
 )
 from decision_kernel.domain.records import (
     BlobRef, RecordError, SourceRef, checked_text, digest, encoded, require,
@@ -49,10 +51,21 @@ def publication(payload, key):
     return payload[key]
 
 
+def validate_calculation(payload):
+    if isinstance(payload, dict) and "market" in payload:
+        shape(payload, {"spec_ref", "market", "market_policy", "evaluated_at"})
+        validate_close_policy(payload["market_policy"])
+        timestamp(payload["evaluated_at"])
+    else:
+        shape(payload, {"spec_ref", "price"})
+
+
 class ConditionalOdds:
-    def __init__(self, store):
+    def __init__(self, store, registry=None, *, clock=None):
         self.store = store
         self.artifacts = ResearchArtifacts(store)
+        self.registry = registry
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def _frozen(self, payload):
         spec = validate_spec(payload)
@@ -130,12 +143,32 @@ class ConditionalOdds:
                 "original_verified": False, "market_qualification": "not-established"}
 
     def compute(self, payload):
-        shape(payload, {"spec_ref", "price"})
+        validate_calculation(payload)
         spec_ref = artifact_reference(payload["spec_ref"])
         frozen = self.read_spec(spec_ref)
-        price = validate_price(payload["price"], frozen["spec"])
-        price_check = self._price_evidence(price)
-        result = calculate(frozen["spec"], price)
+        if "market" in payload:
+            from pathlib import Path
+            from decision_kernel.application.odds_market import FTSHARE_CLOSE_SCHEMA, qualify_close
+            from decision_kernel.application.relay_registry import RelayRegistry
+            require(isinstance(payload["market"], dict)
+                and payload["market"].get("schema") == FTSHARE_CLOSE_SCHEMA, "ODDS_MARKET_ADAPTER_UNSUPPORTED")
+            evaluated = timestamp(payload["evaluated_at"])
+            policy = validate_close_policy(payload["market_policy"])
+            require(evaluated <= self.clock(), "ODDS_EVALUATION_IN_FUTURE")
+            require(timestamp(policy["as_of"]) <= evaluated, "ODDS_POLICY_AFTER_EVALUATION")
+            registry = self.registry or RelayRegistry(Path("docs/sources/relay-registry.json"))
+            market = qualify_close(payload["market"], frozen["spec"], policy,
+                                   payload["evaluated_at"], registry, self.store)
+            result = calculate_retained(frozen["spec"], market["price"])
+            price_check = {"status": market["status"], "source_references": market["source_references"],
+                "market_qualification": market["status"], "share_count_qualification":
+                "frozen-research-assumption-not-source-certified", "economic_assessment": "not-performed"}
+            result.update(market=market, market_policy=policy, market_qualification=market["status"],
+                          calculation_input=payload)
+        else:
+            price = validate_price(payload["price"], frozen["spec"])
+            price_check = self._price_evidence(price)
+            result = calculate(frozen["spec"], price)
         result.update(spec_ref=asdict(spec_ref), spec_sha256=frozen["spec_sha256"],
                       research_ref=frozen["spec"]["research_ref"],
                       research_body_sha256=frozen["research_body_sha256"],
@@ -144,7 +177,7 @@ class ConditionalOdds:
         if frozen["research_unresolved"]:
             result["limitations"].append("FROZEN_RESEARCH_HAS_UNRESOLVED_LIMITATIONS")
         result["limitations"].append("PRICE_CONTEXT_DOES_NOT_ESTABLISH_HISTORICAL_PIT")
-        return result
+        return json.loads(encoded(result)) if "market" in payload else result
 
     def save(self, payload, *, submission_id):
         calculation = publication(payload, "calculation")
@@ -156,7 +189,11 @@ class ConditionalOdds:
     def read(self, reference):
         result = self._open(reference, RESULT_RECORD)
         require(isinstance(result, dict) and {"spec_ref", "price"} <= set(result), "ODDS_RESULT_INVALID")
-        rebuilt = self.compute({"spec_ref": result["spec_ref"], "price": result["price"]})
+        if result.get("schema") == RETAINED_VERSION:
+            require("calculation_input" in result, "ODDS_RESULT_INVALID")
+            rebuilt = self.compute(result["calculation_input"])
+        else:
+            rebuilt = self.compute({"spec_ref": result["spec_ref"], "price": result["price"]})
         require(encoded(rebuilt) == encoded(result), "ODDS_RECALCULATION_MISMATCH")
         # Mutable current information is not part of the result/hash or a rewrite.
         hint = {"status": "unknown", "current_research": None,
@@ -172,10 +209,10 @@ class ConditionalOdds:
                 "recalculation": "matches", "current_use": hint}
 
 
-def verify_fresh(receipt, operation, reader_factory):
+def verify_fresh(receipt, operation, reader_factory, registry=None):
     """Preserve a real save receipt even if the separate readback is unavailable."""
     try:
-        reader = ConditionalOdds(reader_factory())
+        reader = ConditionalOdds(reader_factory(), registry)
         if operation in ("freeze-valuation", "reconcile-valuation"):
             frozen = reader.read_spec(receipt["reference"])
             require(frozen["spec_sha256"] == receipt["spec_sha256"], "ODDS_FRESH_READBACK_MISMATCH")

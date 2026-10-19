@@ -9,8 +9,8 @@
 | basis.kind | 确切reference | 支持条件 | 是否需要价格 |
 |---|---|---|---|
 | research | 原ResearchRevision的BlobRef | 指定records快照中的研究current是否与绑定版本不同 | 不需要，也不调用Registry或行情 |
-| conditional | 原freeze-valuation的spec_ref | 价格、某个世界的估值距离或名义累计回报 | 显式声明参考价或原Relay观察；沿原资格区别 |
-| probability | 原freeze-odds-assessment的assessment_ref | 价格、世界名义回报、加权累计回报或正收益情景概率 | 原市场保管的日历/日线/证券主数据，执行原概率资格与政策 |
+| conditional | 原freeze-valuation的spec_ref | 价格、某个世界的估值距离或名义累计回报 | 显式声明参考价、原Relay观察或按冻结政策核验的FTShare原始收盘；沿各自资格区别 |
+| probability | 原freeze-odds-assessment的assessment_ref | 价格、世界名义回报、加权累计回报或正收益情景概率 | 原Relay日线保管或FTShare确切集合，执行原概率资格与政策 |
 
 研究变化只证明版本不同，不证明经营恶化。价格用途在研究已更新或调用者登记了新前提问题时转为`review-required`，不自动换研究、规格、概率、股数、政策或目标日；旧检查仍按原快照恢复。当前公允价值只能选`value_to_price_distance`，不能选未来回报。仅知道需重新审阅时不必等取得新价格。
 
@@ -23,7 +23,7 @@
 - `watch_id`；`basis:{kind,reference}`；`condition:{metric,world_id,comparison,threshold,basis_note}`。
 - `activation:{enabled,as_of,basis_note}`：显式布尔、带时区的登记时刻和真实启用依据。不能早于原研究实际保管时间；概率Watch不能早于概率评估。来源文本不授予权限，字段不是经认证的Human签署。
 - `window:{starts_at,ends_at,minimum_interval_seconds,end_after_trigger}`：带时区的有限窗口，起点包含、终点不包含；两次实际尝试的最小秒间隔（0表示每次显式调用可检查），是否首次触发后结束。**间隔字段不会创建调度。**
-- `data_policy`：conditional必须声明`price_kind/max_price_age_days/max_capital_age_days`；其余为null。概率用途采用原assessment完整政策，不从Watch另设较宽政策。资料年龄上限是显式研究选择，不是系统认可的投资偏好。
+- `data_policy`：旧conditional声明`price_kind/max_price_age_days/max_capital_age_days`。FTShare conditional声明`{price_kind:"retained-ftshare-raw-close",market_policy:<条件Odds完整收盘政策>}`，政策不得晚于启用时刻；不能在每次检查输入里放宽它。其余basis为null。概率用途采用原assessment完整政策，不从Watch另设较宽政策。资料年龄上限是显式研究选择，不是系统认可的投资偏好。
 - `effect:"record-only"`、非空`limitations`。不接受发通知、下单、开启研究等效果。
 
 指标为`research_version`、`price`、`value_to_price_distance`、`undiscounted_holding_period_return`、`expected_holding_period_return`、`positive_return_scenario_probability`。研究版本用`comparison:"changed"`且world_id/threshold为null；其他为`lte`或`gte`和有限十进制**字符串**阈值。世界指标必须选原world_id，其余world_id为null。收益小数0.2表示20%，不是0.2%；正收益概率不是经验胜率。
@@ -43,11 +43,13 @@
 }
 ```
 
-示例中的占位符不能执行，实际ref须是原四字段引用。`previous_check`是同一Watch上次已保存的检查引用，不接受直接填写“上次已触发”。`input`为研究版本检查的null、条件检查的原`odds-price-v1`，或概率检查的原`odds-retained-close-v1`。不接受任意取数URL或代码，不隐式请求上游。
+示例中的占位符不能执行，实际ref须是原四字段引用。`previous_check`是同一Watch上次已保存的检查引用，不接受直接填写“上次已触发”。`input`为研究版本检查的null、旧条件检查的`odds-price-v1`，或概率检查的原`odds-retained-close-v1`。FTShare条件与概率检查均直接给`odds-ftshare-close-v1`的`price_id/collection_ref/exchange/quote_date`，沿原Odds消费者恢复来源；`checked_at`就是该次Odds的评价时点。FTShare Watch不接受声明价或Relay观察来满足其资格要求。不接受任意取数URL或代码，不隐式请求上游。
+
+FTShare的hold、所选原始查询未保管、日期不在集合范围或不是开市日、评价/取得早于该日18:35观察截止、资料年龄超出政策时为`cannot-determine`；资本前提过期则为`review-required`。截止后的原始响应可在当晚使用，截止前取得的原件以后仍不能冒充收盘后观察。原件或引用损坏直接报错，不降级为条件false。其他证券和前复权缺口不直接阻断该只已留存raw close；结果也不宣称全市场可靠或最新可交易价格。已保存检查继续使用原集合和原政策，不自动跟随新根或新价。
 
 `records_snapshot`和`checked_at`是本次明确选择的切面；新检查应读取当前真实records head，不把调用者选择的旧切面称实时最新。程序校验并读取快照及所指研究，但不声称实现历史PIT。若原研究仍为current，也不证明经营假设没有变化。交互检查/历史读取另外返回`current_use`，只提示读取时实际current，**不改写原检查结果**。
 
-沪深证券的目标日、现金分配日和资本日期按UTC+08:00比较，同一时刻不同表示不能延迟分配或到期。其他条件规格暂用调用者checked_at的明确本地日期，不猜交易所时区。资料年龄用真实时间差。达到原未来目标日结束；分配日已到但旧报价仍在分配前，也须复核现金路径，不能反复计算已过去的分红。
+沪深证券的目标日、现金分配日和资本日期按UTC+08:00比较，同一时刻不同表示不能延迟分配或到期。其他条件规格暂用调用者checked_at的明确本地日期，不猜交易所时区。旧声明/观察价的资料年龄用真实时间差；FTShare沿Odds的报价本地日历年龄、证券主表取得时差和固定资本日期政策。达到原未来目标日结束；分配日已到但旧报价仍在分配前，也须复核现金路径，不能反复计算已过去的分红。
 
 | 状态 | 含义 |
 |---|---|

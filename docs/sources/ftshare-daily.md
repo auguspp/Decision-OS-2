@@ -108,6 +108,14 @@
 
 ## 同一 Store 的生产接线
 
+### 显式收盘后观察合同
+
+第一批常态更新的接续范围和运行验收由 [#147](https://github.com/auguspp/Decision-OS-2/issues/147) 及原来源责任 #10 维护。single plan 与可信 `kernel_sync` 可以显式声明 `completion_policy: "ashare-eod-1835-v1"`：北京时间 18:35 是本系统采用当日已收盘观察的保守截止点，**不是 FTShare 逐笔时间、供应商准点承诺或交易所行情认证**。只有该字段明确存在的新计划，才允许 `created_at` / 正常读取使用当日日期；原始 capture 的最大实际价格日期也必须在真实 `acquired_at` 时已经达到该截止点。提前取得的原件不能因为以后读取而被升级为合格当日收盘。
+
+没有该字段的全部既存 plan 与旧手动配置继续原来的“前一北京时间自然日”规则；原 `market_collection_inputs._reading_clock` 不改。新 reader 按保存的可选字段重建原计划；不回填旧字段、不改旧原件或旧 view 的时间语义。未知 policy、显式 null、续取时改 policy 均拒绝。`application/market_completion.py` 提供共用的政策名称、时区、截止点和完成日期函数，FTShare 计划、正常阅读及价格消费者复用；日期是否真实开市仍来自完整原生交易日历。
+
+工程兼容与常态运行分别验收；下面固定 study / 旧 generation 的描述保持其原范围，不能据此重新派发已结束的来源核验。
+
 可信配置为 [config/ftshare-daily.json](../../config/ftshare-daily.json)，固定集合 `ftshare-cn-eod`，当前更新世代为 `g20261016-v1`。其 `kernel_sync.base_reference` 精确指向原采用世代 `g20261016` 的 FTShare 根，原 Source10 仍为不可变的 Relay 上下文前驱。当前区间为 2026-07-01 至 2026-10-16，目标仅 `600000.SH / forward`，新增预算为 1；其余三个既存价格 owner 直接继承。本配置不自动延长日期、扩大股票池或新增定时任务。
 
 | 手动 operation | 输入与来源访问 | 结果 |

@@ -1,0 +1,65 @@
+name: decision-os-announcement-discovery
+on:
+  schedule:
+    - cron: '20 10 * * *'
+  workflow_dispatch:
+    inputs:
+      code_sha:
+        description: Exact inspected main SHA
+        type: string
+        required: true
+      capture_confirmed:
+        description: Authorize bounded public directory metadata capture into private records
+        type: boolean
+        required: true
+        default: false
+      day:
+        description: Optional replay end date YYYY-MM-DD within previous seven days; never a ticker
+        type: string
+        default: ''
+permissions: {}
+concurrency:
+  group: decision-os-announcement-discovery
+  cancel-in-progress: false
+jobs:
+  discovery:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Require native private repository and independent exact main CI before collection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 > "$RUNNER_TEMP/discovery-ci.json"
+          python - <<'PY'
+          import json, os
+          with open(os.environ['RUNNER_TEMP']+'/discovery-ci.json') as stream:
+              runs = json.load(stream)['workflow_runs']
+          assert any(r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push' and r['path']=='.github/workflows/ci.yml' and r['run_attempt']==1 and r['status']=='completed' and r['conclusion']=='success' for r in runs)
+          PY
+      - name: Read unseeded announcement metadata and preserve exact source through existing custody
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.announcement_discovery_cli --out "$RUNNER_TEMP/dos2-announcements"
+      - name: Retain input, source coverage and original confirmed or unknown write receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-announcements-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-announcements/
+          if-no-files-found: warn
+          retention-days: 30

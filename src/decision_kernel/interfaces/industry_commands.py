@@ -3,10 +3,11 @@ from decision_kernel.application.industry_operations import industry_source_scop
 from decision_kernel.application.industry_reading import read_industry
 from decision_kernel.application.vehicle_flows import read_vehicle_flows
 from decision_kernel.application.livestock_weekly import read_livestock_weekly
+from decision_kernel.application.industry_uses import read_industry_uses
 from decision_kernel.domain.records import Selection, SourceRef, identifier, require
 
 OPERATION = "industry-read"
-VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly")
+VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses")
 
 
 def checked_payload(payload):
@@ -36,6 +37,8 @@ def preflight(operation, payload):
 def perform(store, payload):
     """Return the original consumer result unchanged, after every scope exit check."""
     reference, view, query = checked_payload(payload)
+    if view == "industry-uses":
+        return read_industry_uses(reference, store, **query)
     if view == "livestock-weekly":
         return read_livestock_weekly(reference, store, **query)
     if view == "vehicle-flows":

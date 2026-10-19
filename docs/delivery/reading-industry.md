@@ -1,6 +1,6 @@
 # 同一阅读室中的产业观察与公司角色
 
-责任：#13；来源/产业算法仍由 #11 维护。此面板只组合现役 `read_industry`、`read_industry_operations`、`read_vehicle_flows` 和原 `industry_source_scope`。不建第二产业资料库、指数、公司映射或简报写入通路；没有原始来源采集。
+责任：#13；批次二具名用途接续 #126。来源/产业算法仍沿 #11 的现役合同。此面板组合现役 `read_industry`、`read_industry_operations`、`read_vehicle_flows`、`read_livestock_weekly` 和原 `industry_source_scope`；具名用途选择器只投影这些既有证据。不建第二产业资料库、指数、公司映射或简报写入通路；没有原始来源采集。
 
 ## 输入与权利
 
@@ -15,7 +15,7 @@
 }
 ```
 
-`view` 必须显式为 `industry`、`operating-cycle` 或 `vehicle-flows`。根必须是完整包的 SourceRef，不能传网页、别名、PMI原指标页或单行代替包；引用保持确切 commit/manifest/selection。可选一个主体或公司查询，不可两者非空；经营周期不支持公司查询。沿原读取器校验内容与用途，不补抓外部 URL、不自动匹配研究中的公司名。
+`view` 必须显式为 `industry`、`operating-cycle`、`vehicle-flows`、`livestock-weekly` 或 `industry-uses`。根必须是完整包的 SourceRef，不能传网页、别名、PMI原指标页或单行代替包；引用保持确切 commit/manifest/selection。可选一个主体或公司查询，不可两者非空；经营周期不支持公司查询。沿原读取器校验内容与用途，不补抓外部 URL、不自动匹配研究中的公司名。
 
 公开宿主 payload 顶层须另有 `public_sources_custody_confirmed: true`。它不能由研究、附件/复核材料或反馈许可代替。所有适用许可与计划在创建公共输入产物、目录和 Store I/O 前检查；布尔字段只是调用者的权利声明，不是身份认证。未提供产业计划时旧模型、入口与权限行为不变。原本地 CLI `research-room --input <plan> --out <新HTML>` 继续使用既有绑定；本地读取不赋予公开权。
 
@@ -25,9 +25,40 @@
 
 页面直接展示实际返回的数值、单位、期间和发布阶段，原比较结果及拒绝原因可展开；规格/地区/来源日期和精确 SourceRef 随观察保留。汽车产批零出口不相减成库存；经营周期累计、余额、可比同比及公布天数不互换。派生值仅显示原读取器已计算的结果与操作数引用，不新增算式或把未知填零。
 
+畜禽 `livestock-weekly` 直接保留原读取器的采集日价格、发布者上期/上年价格、公布环比/同比和舍入核对。采集日不是全周均价；实际间隔8天不会变成七天环比。全国与主产省份、元/公斤与元/只分别显示；正文和精确来源读取请求一起保留公布比较与不可比原因。
+
 主体/公司控件只在**本次已返回结果**中筛选，不联网络、不改模型或整包分母；已有服务端查询也明确保留。公司角色显示报告期、适用期、历史状态、原证据与传导反证，业务份额/弹性/传导率/时滞/净受益的 null 显示未知。历史采购不变成当前合同，宏观总量不自动分给个股。零匹配不等于没有观察或没有业务关系。根/分支故障与范围缺项不随筛选隐藏。
 
 可下载完整读取结果 JSON（不是来源原文件字节），导出原 `industry-read` 查询或逐项 `read-source` 请求；不预填公开许可或过期代码 SHA。导出不是执行。产业包与研究/议程/简报同页出现也不证明研究采用、Brief采用或人工接受。
+
+## 六项具名用途
+
+`industry-uses` 的根仍由原 `SourceInput(kind="content")` 保管，正文为 `industry-uses-v1`。它有明确 `prepared_at`、`as_of` 和范围说明；`inputs` 逐项提供完整原阅读包 SourceRef、`input_id` 及现役 `industry`、`operating-cycle` 或 `vehicle-flows` 视图。`uses` 固定声明六个 family，不能以只交付可读五项而隐藏第六项的阻塞。
+
+原 `industry-read` 宿主显式接入同名视图，来源公开许可仍在任何 Store I/O 或产物创建前校验。本地 `python -m decision_kernel.interfaces.industry_cli --path <既有合成Store> --ref <确切引用JSON> --industry-uses`，或原 `--binding` 私有读取绑定，调用同一 reader；`--industry-uses` 与其他产业模式互斥。原 `--company-id` / `--subject-id` 仍互斥。包含来源阻塞的 partial 保留完整JSON并按原命令返回非零，不把五项可读升级为整组全部可读。
+
+| family | 本批具名用途 | 保留的边界 |
+|---|---|---|
+| chemicals | 98%硫酸旬价与折100%硫酸月产量 | 规格、期间及总体分别显示，不相乘为收入 |
+| livestock-feed | 生猪、玉米、豆粕与牧原H1/9月经营角色 | 销售与采购、原报告期、反向成本及未知传导同时保留 |
+| freight | 美国湾区至日本散装粮食月均运费 | 原航线、货类、美元/公吨及周期；未知税和合同项不补值 |
+| memory | DDR5 16Gb颗粒现货，4800与5600速度档分别 | 明确目标规格；来源资格受阻时没有可用价格，不以其他代际或产品补位 |
+| energy-cycle | EIA商业原油、汽油、馏分油期末库存 | 剔除SPR重复、余额和流量分开，缺原因证据不推导公司受益 |
+| new-energy | 新能源乘用车月度产批零出口 | 月度/累计、初扫/月报、总体与出口CKD口径保留，不相减为库存 |
+
+USDA航线月均费率按公布运输基准报价保留，`market=not-applicable`，不据该表推定已核现货成交。`tax_basis=unknown` 继续保留原比较拒绝和空算术结果，数值可读与完整可比是不同状态。
+
+每项包含 `use_id`、`title`、`question`、`scope_note`、`disposition`、`selections`、`evidence`、`missing` 和 `reopen_when`。`selected-evidence` 用途须有明确原系列选择及缺项，不能在声明中提交数值或角色；`source-blocked` 用途不允许系列选择，须有保管资格证据和恢复条件。声明只是取证用途，不代替实际读取状态。
+
+普通证据必须是确切行选择，`quote` 必须包含在实际返回原文中。已冻结的 `source-qualification-inventory-part-v1` 采用单行JSON时，允许完整原 SourceRef 加一个 `record_id`，仅选择原 `records` 中恰好一条相同 `source_id` 的记录；引文必须来自该记录。它不接受任意JSON路径、不重新保管旧目录，不把其他供应商的数值或权利归入存储用途。原资格记录与其完整引用仍随结果保留，`original_verified` 仍为 false。
+
+读取器在同一原 source scope 内先恢复每个原包完整范围，再调用原视图并按 `series_id` 投影。结果保留每个输入的确切引用、原 `scope`、`retained_scope`、关系失败、未分类项和用途限制。每个选择都有独立结果；缺失系列或来源保留为不可用，其余无关用途可以可读。原包存在失败时其相关用途仍为 partial，不能用选择好分支掩盖原失败。
+
+主体或公司查询仅改变返回系列/角色；六项用途、缺项、资格阻塞、选择结果、整包统计和 `view_version` 均不变。公司查询只沿同一个原输入中证据合格的角色，不因同名商品在另一个包存在而移植公司关系。牧原H1和9月角色各保留报告期与适用期，业务份额、弹性、传导率、时滞、净受益的 null 不填零；历史原料成本区间不转为当前单种原料权重。
+
+声明上限8个原包、32个系列选择、每用途4条资格证据。恰好六项用途是本批交付范围；32个选择槽和去重后选择数不是市场覆盖率。读取总量16MiB、单条资格投影32KiB、结果2MiB，所有原预算仍在；不创建新API会话或重置512请求限额。完整结果先检查容量，再进行查询，因此查询不能掩盖超限。预算或可变访问失败即使被子读取器暂时记成不可用，也必须阻止组合结果导出；所有 scope 退出检查先于返回。
+
+页面固定六张用途卡，直接展示原数值、周期、比较/拒绝理由、来源引用、公司角色、尚缺证据及恢复条件。筛选没有匹配时卡片仍在。此组合自身不新增 Brief 选择身份，采用关系显示未知/不适用；需采用具体原系列时仍走原 Brief 投影与精确选择，不把整张用途卡签成已采用。
 
 ## 与指定已存 Brief 的逐系列关系
 
@@ -45,6 +76,6 @@
 
 产业结果限 2MiB；超限整项 not-included，并保留原精确读取请求，不截断数据。原完整模型6MiB、HTML/宿主结果8MiB、60KiB输入及512请求等总限额不增改、不重置。新闻来源使用统计仍只代表原新闻部分；`source_requests=0` 表示未采集来源网站，不代表0次资料库读取。
 
-维护 `application/reading_industry.py`、`interfaces/reading_industry_page.py` 与同一阅读室接线；专属测试覆盖三读取器结果等价、筛选范围、局部故障、权限、预算和原宿主，原唯一安装消费者增加独立重开。浏览器及真实资料实际消费另验，不以合成数据或 CI 签经济质量。
+维护 `application/reading_industry.py`、窄选择器 `application/industry_uses.py`、`interfaces/reading_industry_page.py` 与同一阅读室接线；专属测试覆盖原读取器结果等价、具名资格选择、六项阻塞保留、筛选范围、局部故障、权限、预算和原宿主，原唯一安装消费者增加畜禽及六项用途的独立重开。浏览器及真实资料实际消费另验，不以合成数据或 CI 签经济质量。
 
 退役时普通PR退出可选计划、来源确认接线、页面区块与专属消费者；保留原产业读取器、历史 SourceRef、研究/议程/Brief和共享保护。实际当期暴露、新资料、Brief采用、长期独立备份及正常生产运行继续由各自责任验收。

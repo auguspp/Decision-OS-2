@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 
 from decision_kernel.interfaces import odds_commands, agenda_commands, reading_commands, industry_commands
+from decision_kernel.application import hosted_handoff
 from decision_kernel.interfaces.research_use_commands import audit_source_use
 
 from decision_kernel.application.numerical_audit import NumericalAudit
@@ -31,9 +32,9 @@ from decision_kernel.interfaces.research_payload import (
     MAX_PAYLOAD_BYTES, decode_payload, json_object as _object,
 )
 
-WRITE_OPERATIONS = {"put-source", "checkpoint", "deliver", "put-artifact"} | set(odds_commands.WRITE_COMMANDS)
-RECONCILE_OPERATIONS = {"reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"} | set(odds_commands.RECONCILE_COMMANDS)
-READ_OPERATIONS = {industry_commands.OPERATION, "reading-room", "audit-source-use", "prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS) | set(agenda_commands.COMMANDS)
+WRITE_OPERATIONS = {"save-hosted-handoff", "put-source", "checkpoint", "deliver", "put-artifact"} | set(odds_commands.WRITE_COMMANDS)
+RECONCILE_OPERATIONS = {"reconcile-hosted-handoff", "reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"} | set(odds_commands.RECONCILE_COMMANDS)
+READ_OPERATIONS = {"read-hosted-handoff", "latest-hosted-handoff", industry_commands.OPERATION, "reading-room", "audit-source-use", "prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS) | set(agenda_commands.COMMANDS)
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -71,6 +72,8 @@ def parse_inputs(inputs: dict) -> dict:
 
 def _perform(store: VersionedStore, command: dict, *, room_public=True) -> dict:
     operation, payload = command["operation"], command["payload"]
+    if operation in hosted_handoff.OPERATIONS:
+        return hosted_handoff.perform(store, operation, payload, command["submission_id"])
     if operation == industry_commands.OPERATION:
         return industry_commands.perform(store, payload)
     if operation == reading_commands.OPERATION:
@@ -189,6 +192,9 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     agenda_commands.preflight(command["operation"], command["payload"])
     odds_commands.preflight(command["operation"], command["payload"])
     backend, room_public = None, True
+    if command["operation"] in hosted_handoff.OPERATIONS:
+        backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
+        require(backend.live_visibility() == "private", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
     if private_room_allowed:
         # A public-origin marker/opt-in is not evidence of today's visibility.
         # Keep this checked adapter for the entire read, including its one-way
@@ -237,6 +243,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS:
             result = odds_commands.verify_fresh(result, operation, lambda: VersionedStore(GitHubStore(binding, api)))
+        if operation in hosted_handoff.OPERATIONS:
+            require(backend.live_visibility() == "private", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
         report.update(result=result, status="completed")
         if operation == industry_commands.OPERATION and result["status"] == "partial":
             report["status"] = "industry-reading-partial"  # Keep good branches, but exit nonzero.

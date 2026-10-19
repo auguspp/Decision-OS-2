@@ -596,7 +596,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert flow["concurrency"]["cancel-in-progress"] == "false"
     inputs = flow["on"]["workflow_dispatch"]["inputs"]
     assert inputs["operation"]["options"] == ["status", "sync", "repair", "ftshare-check",
-        "ftshare-check-continue", "ftshare-check-kernel", "ftshare-calendar", "ftshare-sync", "ftshare-status"]
+        "ftshare-check-continue", "ftshare-check-kernel", "ftshare-adopt-kernel", "ftshare-calendar", "ftshare-sync", "ftshare-status"]
     assert inputs["operation"]["default"] == "ftshare-status"
     assert inputs["selection"]["required"] == "true"
     assert json.loads(inputs["selection"]["default"]) == {
@@ -609,6 +609,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
         "${{ inputs.operation == 'ftshare-check' && 'FTShare daily check 20261018' || "
         "inputs.operation == 'ftshare-check-continue' && 'FTShare daily check continuation 20261018' || "
         "inputs.operation == 'ftshare-check-kernel' && 'FTShare Kernel v1 daily check 20261019' || "
+        "inputs.operation == 'ftshare-adopt-kernel' && 'FTShare Kernel v1 adoption 20261019' || "
         "inputs.operation == 'ftshare-calendar' && 'FTShare calendar continuity 20261018' || "
         "'decision-os-ashare-data' }}")
     assert {name: job["permissions"] for name, job in flow["jobs"].items()} == {
@@ -618,6 +619,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
         "ftshare-check": {"contents": "read", "actions": "read"},
         "ftshare-check-continue": {"contents": "read", "actions": "read"},
         "ftshare-check-kernel": {"contents": "read", "actions": "read"},
+        "ftshare-adopt-kernel": {"contents": "write", "actions": "read"},
         "ftshare-calendar": {"contents": "write", "actions": "read"},
         "ftshare-sync": {"contents": "write", "actions": "read"},
         "ftshare-status": {"contents": "read", "actions": "read"}}
@@ -632,7 +634,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert rejected["if"].count("!= true") == 8
     assert rejected["if"].count("inputs.public_rights_confirmed != false") == 2
     for operation in ("sync", "repair", "ftshare-check", "ftshare-check-continue", "ftshare-check-kernel",
-                      "ftshare-calendar", "ftshare-sync", "ftshare-status"):
+                      "ftshare-adopt-kernel", "ftshare-calendar", "ftshare-sync", "ftshare-status"):
         assert "inputs.operation == '" + operation + "'" in rejected["if"]
     assert "github.event.repository.private" in rejected["if"]
     assert len(rejected["steps"]) == 1 and "exit 1" in rejected["steps"][0]["run"]
@@ -674,6 +676,7 @@ def test_ftshare_workflow_default_cannot_open_an_implicit_legacy_plan(tmp_path, 
 @pytest.mark.parametrize("operation,source_env,module,directory,minutes", [
     ("ftshare-calendar", "TUSHARE_PROXY_API_KEY", "ftshare_calendar_cli", "dos2-ftshare-calendar", "30"),
     ("ftshare-sync", "FTSHARE_API_KEY", "ftshare_collection_cli", "dos2-ftshare-collection", "360"),
+    ("ftshare-adopt-kernel", None, "ftshare_collection_cli", "dos2-ftshare-collection", "30"),
     ("ftshare-status", None, "ftshare_collection_cli", "dos2-ftshare-collection", "30"),
 ])
 def test_workflow_ftshare_production_scopes_credentials_and_live_private_release(
@@ -685,7 +688,7 @@ def test_workflow_ftshare_production_scopes_credentials_and_live_private_release
     job = flow["jobs"][operation]
     expected_gate = ("github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && "
                      "inputs.operation == '" + operation + "' && ")
-    if source_env:
+    if operation != "ftshare-status":
         expected_gate += "inputs.access_and_custody_confirmed == true && "
     expected_gate += "github.event.repository.private == true && inputs.public_rights_confirmed == false"
     assert job["if"] == expected_gate

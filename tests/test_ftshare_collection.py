@@ -1,10 +1,12 @@
 """Real Store source chains with synthetic providers; no live traffic or rights claims."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 import json
 import os
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -24,9 +26,10 @@ from test_market_relay_inputs import REGISTRY, ROOT_DIR
 from test_market_session_coverage import capture as relay_capture
 
 STAMP = "2026-10-18T12:00:00+00:00"
+KERNEL_STAMP = "2026-10-19T12:02:00+00:00"
 
 
-def _setup(*, count=2, quarantine=False, storage=None):
+def _setup(*, count=2, quarantine=False, storage=None, quarantine_last=False):
     backend, store, fresh = memory() if storage is None else storage
     original = plan_collection(collection_id="cn-eod", generation="g20261016",
         start="20260701", end="20261016", calendar_end="20261016", registry=REGISTRY)
@@ -38,6 +41,8 @@ def _setup(*, count=2, quarantine=False, storage=None):
                 row["is_open"] = 0
         if quarantine:
             opener.rows["stock_basic", venue][0]["name"] = ""
+        if quarantine_last:
+            opener.rows["stock_basic", venue][-1]["name"] = ""
     prior = run(original, store, fresh, opener, max_queries=5)
     source = restore_market_collection(prior["reference"], REGISTRY, fresh())["collection"]
     assert len(source["units"]) == 220
@@ -98,6 +103,96 @@ def _new_calendars(store, fresh, *, through="20261017", changed_history=False):
         refs[venue] = json.loads(encoded(retain_market_query(result, REGISTRY, store, fresh_reader=fresh,
                                                             custody_authorized=True)["reference"]))
     return refs
+
+
+def kernel_archive(documents, captures):
+    """Synthetic original ZIP, with the same thirteen members as the native study."""
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, value in documents.items():
+            archive.writestr(name, encoded(value))
+        for role, capture in captures.items():
+            archive.writestr(role + ".raw.json", capture["body_utf8"].encode())
+            archive.writestr(role + ".capture.json", encoded(capture))
+    return buffer.getvalue()
+
+
+def kernel_adoption_fixture(*, storage=None):
+    """Real legacy custody and a synthetic source-free four-response adoption input."""
+    from decision_kernel.application.ftshare_adoption import PRIOR_IDENTITY, kernel_check_plan
+    from decision_kernel.application.ftshare_collection import _legacy_context
+    from decision_kernel.application.ftshare_single import capture_single
+    from decision_kernel.application.market_custody import restore_market_query
+    from decision_kernel.domain.records import digest
+
+    backend, store, fresh, legacy, old, _ = _setup(count=3, quarantine_last=True, storage=storage)
+    context = _legacy_context(legacy, REGISTRY, fresh())
+    codes = sorted([code for code in context["eligible_symbols"] if code.endswith(".SH")][:50]
+        + [code for code in context["eligible_symbols"] if code.endswith(".SZ")][:50])
+    baseline = {"reference": legacy, "master_references": context["master_references"],
+        "scope_count": len(context["scope_symbols"]), "symbols": codes,
+        "daily_reference": context["baseline_daily_reference"], "daily": context["baseline_daily"]}
+    original = restore_market_query(context["baseline_daily_reference"], REGISTRY, fresh())
+    verification = {"close": {code: context["baseline_daily_quotes"]["entries"][code]["value"]
+        for code in ("000001.SZ", "600000.SH")}, "sessions": context["sessions"],
+        "daily_reference": context["baseline_daily_reference"], "page_references": original["page_references"],
+        "calendar_references": context["calendar_references"], "scope_count": len(context["scope_symbols"])}
+    predecessor = {"identity": deepcopy(PRIOR_IDENTITY), "documents": {"baseline.json": baseline}}
+    identity = {"repository": "auguspp/Decision-OS-2", "study": "ftshare-daily-qualification-20261018",
+        "route": "kernel-v1", "route_budget": 4, "source_budget": 6,
+        "run_id": "67890", "attempt": 1, "code_sha": "c" * 40}
+    request = {**identity, "plan": kernel_check_plan(), "predecessor": deepcopy(PRIOR_IDENTITY),
+        "predecessor_sha256": digest(encoded(predecessor)), "baseline_sha256": digest(encoded(baseline)),
+        "verification_sha256": digest(encoded(verification))}
+    captures, rows = {}, []
+    for index, spec in enumerate(kernel_check_plan(), 1):
+        venue = "SSE" if spec["symbol"].endswith(".SH") else "SZSE"
+        value = "8" if spec["adjust_kind"] == "forward" else "10"
+        bars = [{"open": value, "high": value, "low": value, "close": value, "volume": 100,
+            "turnover": "1000", "ts_millis_open": _millis(day, "09:30:00.000"),
+            "ts_millis": _millis(day, "15:00:00.000")} for day in context["sessions"][venue]]
+        capture = capture_single(encoded({"code": 0, "data": bars}),
+            **{key: val for key, val in spec.items() if key != "id"},
+            acquired_at=f"2026-10-19T12:00:0{index}+00:00")
+        captures[spec["id"]] = capture
+        row = {"id": spec["id"], "status": "qualified-response", "source_requests": 1,
+            "raw_file": spec["id"] + ".raw.json", "raw_bytes": capture["wire_bytes"],
+            "raw_sha256": capture["wire_sha256"], "request": capture["request"],
+            "request_sha256": capture["request_sha256"], "counts": capture["normalized"]["counts"],
+            "requested_at": f"2026-10-19T12:00:0{index}+00:00",
+            "transport": {"http_status": 200, "wire_bytes": capture["wire_bytes"],
+                          "wire_sha256": capture["wire_sha256"]}}
+        if spec["adjust_kind"] == "none":
+            row["close_matches_baseline"] = True
+        if spec["id"] == "raw-sz-repeat":
+            row["repeat_equal"] = True
+        rows.append(row)
+    report = {**identity, "schema": "ftshare-kernel-daily-check-v1", "status": "validated",
+        "raw_release": "private-artifact-only", "predecessor": deepcopy(PRIOR_IDENTITY),
+        "source_requests": 4, "reserved_requests": 4, "prior_source_requests": 2,
+        "cumulative_source_requests": 6, "remaining_source_requests": 0,
+        "required_candle_checks": 4, "qualified_candle_checks": 4, "records_written": False,
+        "active_source_changed": False, "full_market_coverage_certified": False,
+        "long_term_uptime_certified": False, "factor_qualification_granted": False,
+        "account_daily_limit_verified": False, "results": rows,
+        "started_at": "2026-10-19T12:00:00+00:00", "completed_at": "2026-10-19T12:01:00+00:00"}
+    documents = {"baseline.json": baseline, "verification.json": verification,
+        "predecessor.json": predecessor, "request.json": request, "result.json": report}
+    archive = kernel_archive(documents, captures)
+    proof = {"run_id": 67890, "run_attempt": 1, "code_sha": "c" * 40, "artifact_id": 98765,
+             "sha256": digest(archive), "size_in_bytes": len(archive)}
+    return {"backend": backend, "store": store, "fresh": fresh, "legacy_reference": legacy,
+        "old": old, "context": context, "archive": archive, "proof": proof,
+        "documents": documents, "captures": captures, "created_at": KERNEL_STAMP,
+        "collection_id": "ftshare-cn-eod", "generation": "g20261016"}
+
+
+def adopt_kernel(fixture, **options):
+    from decision_kernel.application.ftshare_collection import adopt_ftshare_kernel
+    arguments = {key: fixture[key] for key in ("archive", "proof", "legacy_reference", "store",
+                 "collection_id", "generation", "created_at")}
+    arguments.update(registry=REGISTRY, fresh_reader=fixture["fresh"], custody_authorized=True)
+    return adopt_ftshare_kernel(**{**arguments, **options})
 
 
 def test_plan_reuses_exact_220_slot_legacy_without_reopening_its_allowance():
@@ -468,3 +563,151 @@ print(json.dumps({'status': room['status'], 'schema': restored['view']['schema']
         check=True, capture_output=True, text=True, env=env, timeout=60)
     assert json.loads(process.stdout) == {"status": "readable", "schema": "ashare-collection-view-v2",
         "provider": "FTSHARE", "source_requests": 0, "raw": [4, 4, 4], "qfq": [4, 4, 4]}
+
+
+def test_kernel_adoption_preserves_four_originals_and_archive_with_zero_new_allowance():
+    import base64
+    from decision_kernel.application.ftshare_adoption import restore_kernel_evidence
+    from decision_kernel.application.ftshare_single import restore_single
+    f = kernel_adoption_fixture()
+    adopted = adopt_kernel(f)
+    state, references = adopted["collection"], adopted["capture_references"]
+    assert state["revision"] == state["reserved_requests"] == state["plan"]["source_budget"] == 0
+    assert set(state["units"]) == {"raw-sz-history", "raw-sh-history", "forward-sz-history"}
+    assert all(unit["status"] == "complete" and unit["request_count"] == 0 for unit in state["units"].values())
+    assert len(references) == len({encoded(ref) for ref in references.values()}) == 4
+    assert adopted["historical_source_requests"] == 4 and adopted["cumulative_source_requests"] == 6
+    for role, reference in references.items():
+        restored = restore_single(reference, f["fresh"](), request=f["captures"][role]["request"])
+        assert restored == f["captures"][role]
+    first = SourceRef.from_dict(references["raw-sz-history"])
+    repeat = SourceRef.from_dict(references["raw-sz-repeat"])
+    a, b = (f["fresh"]().read_source(ref) for ref in (first, repeat))
+    assert a["data"] == b["data"] and a["manifest"]["input"]["source_id"] == b["manifest"]["input"]["source_id"]
+    assert a["manifest"]["input"]["acquired_at"] != b["manifest"]["input"]["acquired_at"]
+    saved = f["fresh"]().read_source(SourceRef.from_dict(adopted["evidence_reference"]))
+    assert base64.b64decode(json.loads(saved["data"])["archive_base64"]) == f["archive"]
+    evidence = restore_kernel_evidence(adopted["evidence_reference"], f["fresh"]())
+    assert evidence["archive"] == f["archive"] and evidence["proof"] == f["proof"]
+    assert restore_market_collection(f["legacy_reference"], REGISTRY, f["fresh"]())["collection"] == f["old"]
+
+
+def test_kernel_adoption_reentry_keeps_original_root_clock_and_source_versions():
+    f = kernel_adoption_fixture()
+    first = adopt_kernel(f)
+    before = f["backend"].head()
+    replay = adopt_kernel(f, created_at="2026-10-20T12:00:00+00:00")
+    assert replay == first and f["backend"].head() == before
+    with pytest.raises(RecordError, match="FTSHARE_ADOPTION_NO_SOURCE_BUDGET"):
+        begin_ftshare_slot(first["collection"], "raw-sz-history", at=KERNEL_STAMP)
+    assert f["backend"].head() == before
+
+
+@pytest.mark.parametrize("mutation", ["allowance", "reservation", "extra-owner", "repeat-owner", "old-count"])
+def test_kernel_adoption_cannot_turn_evidence_into_new_requests_or_more_coverage(mutation):
+    f = kernel_adoption_fixture()
+    adopted = adopt_kernel(f)
+    broken = deepcopy(adopted["collection"])
+    if mutation == "allowance":
+        broken["plan"]["source_budget"] = 4
+    elif mutation == "reservation":
+        broken["units"]["raw-sz-history"]["request_count"] = 1
+    elif mutation == "extra-owner":
+        broken["plan"]["requests"]["raw-sz-repeat"] = broken["plan"]["requests"]["raw-sz-history"]
+    elif mutation == "repeat-owner":
+        broken["units"]["raw-sz-history"]["reference"] = broken["plan"]["adoption"]["capture_references"]["raw-sz-repeat"]
+    else:
+        broken["plan"]["adoption"]["historical_source_requests"] = 0
+    before = f["backend"].head()
+    with pytest.raises(RecordError):
+        _retain(broken, f["store"], f["fresh"])
+    assert f["backend"].head() == before
+
+
+@pytest.mark.parametrize("part", ["raw", "capture", "result", "baseline"])
+def test_kernel_archive_or_legacy_mismatch_rejects_before_any_write(part):
+    from decision_kernel.application.ftshare_adoption import read_kernel_archive
+    from decision_kernel.domain.records import digest
+    f = kernel_adoption_fixture()
+    captures, documents = deepcopy(f["captures"]), deepcopy(f["documents"])
+    if part == "raw":
+        captures["raw-sz-history"]["body_utf8"] += " "
+    elif part == "capture":
+        captures["raw-sh-history"]["request"]["url"] = "https://market.ft.tech/gateway/api/v2/market/data/stock-candlesticks/batch"
+    elif part == "result":
+        documents["result.json"]["source_requests"] = 0
+    else:
+        documents["baseline.json"]["scope_count"] -= 1
+        documents["predecessor.json"]["documents"]["baseline.json"] = documents["baseline.json"]
+        documents["request.json"]["baseline_sha256"] = digest(encoded(documents["baseline.json"]))
+        documents["request.json"]["predecessor_sha256"] = digest(encoded(documents["predecessor.json"]))
+    archive = kernel_archive(documents, captures)
+    proof = {**f["proof"], "sha256": digest(archive), "size_in_bytes": len(archive)}
+    if part == "baseline":
+        read_kernel_archive(archive, proof)  # Internally coherent is insufficient: original Store must agree.
+    before = f["backend"].head()
+    with pytest.raises(RecordError):
+        adopt_kernel(f, archive=archive, proof=proof)
+    assert f["backend"].head() == before
+
+
+@pytest.mark.parametrize("phase", ["evidence", "root"])
+def test_kernel_unknown_write_reconciles_existing_source_intent_without_new_http(monkeypatch, phase):
+    f = kernel_adoption_fixture()
+    original = f["store"].put_source
+    prefix = "ftshare-kernel-evidence-" if phase == "evidence" else "ftshare-collection-"
+    def lost(submission_id, source):
+        value = original(submission_id, source)
+        if source.source_id.startswith(prefix):
+            raise UnknownWrite("SYNTHETIC_ADOPTION_RESPONSE_LOST")
+        return value
+    monkeypatch.setattr(f["store"], "put_source", lost)
+    with pytest.raises(UnknownWrite, match="SYNTHETIC_ADOPTION_RESPONSE_LOST"):
+        adopt_kernel(f)
+    before = f["backend"].head()
+    monkeypatch.setattr(f["store"], "put_source", original)
+    restored = adopt_kernel(f, created_at="2026-10-20T12:00:00+00:00")
+    assert restored["source_requests"] == restored["reserved_requests"] == 0
+    assert len(restored["capture_references"]) == 4
+    if phase == "root":
+        assert f["backend"].head() == before
+        assert restored["collection"]["plan"]["created_at"] == KERNEL_STAMP
+    paths = f["backend"].paths(f["backend"].head(), "source-views/")
+    assert sum(path.endswith("/manifest.json") and path.startswith("source-views/ftshare-") for path in paths) == 6
+
+
+def test_kernel_adoption_refuses_existing_batch_generation_without_writing():
+    f = kernel_adoption_fixture()
+    batch = plan_ftshare_collection(f["legacy_reference"], REGISTRY, f["fresh"](),
+        collection_id=f["collection_id"], generation=f["generation"], created_at=STAMP)
+    _retain(batch, f["store"], f["fresh"])
+    before = f["backend"].head()
+    with pytest.raises(RecordError, match="FTSHARE_ADOPTION_EXISTING_COLLECTION_CHANGED"):
+        adopt_kernel(f)
+    assert f["backend"].head() == before
+
+
+def test_kernel_native_git_new_process_normal_cli_and_room_need_no_source_credentials(tmp_path):
+    from decision_kernel.application.reading_market import open_market
+    from decision_kernel.application.versioned_store import VersionedStore
+    from decision_kernel.infrastructure.git_store import GitStore
+    root = tmp_path / "kernel-adoption.git"
+    backend = GitStore.init_synthetic(root)
+    storage = (backend, VersionedStore(backend), lambda: VersionedStore(GitStore(root)))
+    f = kernel_adoption_fixture(storage=storage)
+    adopted = adopt_kernel(f)
+    request_path = tmp_path / "exact-reference.json"
+    request_path.write_bytes(encoded(adopted["reference"]))
+    env = {"PATH": os.defpath, "LANG": "C.UTF-8", "PYTHONPATH": str(ROOT_DIR / "src")}
+    process = subprocess.run([sys.executable, "-m", "decision_kernel.interfaces.market_custody_cli", "read",
+        "--path", str(root), "--registry", str(ROOT_DIR / "docs/sources/relay-registry.json"),
+        "--input", str(request_path)], capture_output=True, text=True, env=env, check=True, timeout=60)
+    reading = json.loads(process.stdout)
+    assert reading["source_requests"] == 0 and reading["serving"] == "current-partial"
+    assert reading["view"]["scope_count"] == 5
+    assert [row["observed_count"] for row in reading["view"]["raw"]["horizon_counts"]] == [2, 2, 2]
+    assert [row["observed_count"] for row in reading["view"]["qfq"]["horizon_counts"]] == [1, 1, 1]
+    room = open_market(f["fresh"](), adopted["reading_request"], registry=REGISTRY, read_as_of=KERNEL_STAMP)
+    assert room["status"] == "readable" and room["partial"] is True
+    assert room["view"]["view"]["freshness"]["status"] == "unknown"
+    assert len(room["view"]["view"]["source_lineage"]["adoption"]["capture_references"]) == 4

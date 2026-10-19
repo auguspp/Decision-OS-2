@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import date
 import hashlib
 
+from decision_kernel.application.ftshare_adoption import ADOPTION_PLAN_SCHEMA
 from decision_kernel.application.market_collection_inputs import (
     _empty_endpoint_observation, _empty_observation, _reading_clock,
 )
@@ -54,7 +55,7 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                          entity_id=None, read_as_of=None):
     """Private composition over the custody owner's independently checked inputs.
 
-    ``load_batch`` restores the original request, raw body and qualified capture;
+    ``load_batch`` restores the original native request, body and qualified capture;
     it is supplied by trusted Python code, never by a reading JSON document.
     Only compact close series are retained after each bounded batch is visited.
     """
@@ -64,6 +65,8 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     if entity_id is not None:
         _symbol(entity_id)
     plan, units = collection["plan"], collection["units"]
+    adopted = plan.get("schema") == ADOPTION_PLAN_SCHEMA
+    lineage_key = "single_queries" if adopted else "batches"
     start, end = _range(plan["start"], plan["end"])
     codes = sorted(context["scope_symbols"])
     require(codes == sorted(set(codes)) and len(codes) <= 10000, "FTSHARE_READING_SCOPE")
@@ -82,7 +85,9 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     bad = {kind: {} for kind in KINDS.values()}
     owners = {kind: {} for kind in KINDS.values()}
     sources, lineage = {}, {"provider": "FTSHARE", "calendars": deepcopy(context["calendar_references"]),
-        "masters": deepcopy(context["master_references"]), "batches": {}}
+        "masters": deepcopy(context["master_references"]), lineage_key: {}}
+    if adopted:
+        lineage["adoption"] = deepcopy(plan["adoption"])
     for role in ("calendar", "master"):
         for venue, reference in context[role + "_references"].items():
             sources[role + ":" + venue] = {"status": "restored", "reference": deepcopy(reference),
@@ -90,7 +95,8 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     for slot, request in sorted(plan["requests"].items()):
         params = request["parameters"]
         kind = KINDS[params["adjust_kind"]]
-        for code in params["symbols"]:
+        requested_codes = [params["symbol"]] if adopted else params["symbols"]
+        for code in requested_codes:
             require(code in references and code not in owners[kind], "FTSHARE_READING_DUPLICATE_SERIES")
             owners[kind][code] = slot
         unit = units[slot]
@@ -109,9 +115,9 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
         normalized = capture["normalized"]
         require(normalized["provider"] == "FTSHARE"
             and normalized["adjust_kind"] == params["adjust_kind"]
-            and set(normalized["series"]) == set(params["symbols"]), "FTSHARE_READING_CAPTURE_CHANGED")
+            and set(normalized["series"]) == set(requested_codes), "FTSHARE_READING_CAPTURE_CHANGED")
         sources[slot].update(status="restored", reason_code=None)
-        lineage["batches"][slot] = {"provider": "FTSHARE", "request": deepcopy(request),
+        lineage[lineage_key][slot] = {"provider": "FTSHARE", "request": deepcopy(request),
             "request_sha256": capture["request_sha256"], "wire_sha256": capture["wire_sha256"],
             "acquired_at": capture["acquired_at"], "reference": deepcopy(unit["reference"]),
             "adjustment": normalized["adjustment"]}
@@ -122,7 +128,7 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     versions = {"calendar": digest(encoded(lineage["calendars"])),
         "universe": digest(encoded({v: m["version"] for v, m in context["masters"].items()}))}
     for adjustment, kind in KINDS.items():
-        slots = {slot: {"source": sources[slot], "lineage": lineage["batches"].get(slot),
+        slots = {slot: {"source": sources[slot], "lineage": lineage[lineage_key].get(slot),
             "request": request} for slot, request in plan["requests"].items()
             if request["parameters"]["adjust_kind"] == adjustment}
         versions[kind] = digest(encoded({"provider": "FTSHARE", "schema": VIEW_SCHEMA,
@@ -180,11 +186,13 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                 security_reference=deepcopy(reference), qualification=qualification,
                 history_quote_explanation={"status": "not-assessed", "evidence_status": "not-supplied",
                     "all_day_halt_certified": False, "raw_qfq_reclassified": False},
-                lineage_representation="original-ftshare-whole-range-batch-query",
+                lineage_representation="original-ftshare-whole-range-single-query" if adopted
+                    else "original-ftshare-whole-range-batch-query",
                 source_query_slot=slot)
             endpoint.update(security_reference=deepcopy(reference), availability=availability,
                 qualification=qualification, source_query_slot=slot,
-                lineage_representation="original-ftshare-whole-range-batch-query")
+                lineage_representation="original-ftshare-whole-range-single-query" if adopted
+                    else "original-ftshare-whole-range-batch-query")
             for purpose, observed, surface in (("daily", daily, surfaces[kind]),
                                                ("endpoints", endpoint, endpoints[kind])):
                 seen = [window["status"] == "observed" for window in observed["horizons"]]
@@ -208,7 +216,9 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                 if surface["incomplete_count"] else "observed")
             surface["requested_end"] = end
     clock, through = _reading_clock(read_as_of, end)
-    complete = all(source["status"] == "restored" for source in sources.values())
+    scope_requested = (not adopted or all(set(owners[kind]) == set(context["eligible_symbols"])
+                                         for kind in KINDS.values()))
+    complete = scope_requested and all(source["status"] == "restored" for source in sources.values())
     calendar_through = date(int(plan["calendar_end"][:4]), int(plan["calendar_end"][4:6]),
                             int(plan["calendar_end"][6:])).isoformat()
     for venue in VENUES:
@@ -249,21 +259,31 @@ def read_ftshare_collection_version(reference, registry, store, *, offset=0, lim
     from decision_kernel.application.ftshare_collection import (
         restore_ftshare_batch, restore_ftshare_collection,
     )
+    from decision_kernel.application.ftshare_single import restore_single
     with market_read_scope(store) as reader:
         restored = restore_ftshare_collection(reference, registry, reader)
         collection, context = restored["collection"], restored["context"]
+        adopted = collection["plan"]["schema"] == ADOPTION_PLAN_SCHEMA
+        loader = restore_single if adopted else restore_ftshare_batch
         view, sources = _read_ftshare_inputs(collection, context,
-            lambda ref, *, request: restore_ftshare_batch(ref, reader, request=request),
+            lambda ref, *, request: loader(ref, reader, request=request),
             offset=offset, limit=limit, entity_id=entity_id, read_as_of=read_as_of)
         unavailable = sum(source["status"] != "restored" for source in sources.values())
-        complete = all(unit["status"] == "complete" for unit in collection["units"].values())
+        scope_requested = (not adopted or all({request["parameters"]["symbol"]
+            for request in collection["plan"]["requests"].values()
+            if request["parameters"]["adjust_kind"] == adjustment} == set(context["eligible_symbols"])
+            for adjustment in KINDS))
+        complete = scope_requested and all(unit["status"] == "complete" for unit in collection["units"].values())
         status = "complete" if complete else "partial"
         return {"status": "partial-restoration" if unavailable else "restored",
             "reference": deepcopy(restored["reference"]), "selected_reference": deepcopy(restored["reference"]),
             "serving": "current-complete" if complete else "current-partial",
             "latest_attempt": {"status": status, "basis": "retained-query-states",
                 "reserved_requests": collection["reserved_requests"], "updated_at": collection["updated_at"],
-                "source_hold": deepcopy(collection.get("source_hold"))},
+                "source_hold": deepcopy(collection.get("source_hold")),
+                **({"adoption": "four-original-captures-three-price-series", "source_requests": 0,
+                    "historical_source_requests": 4, "cumulative_source_requests": 6}
+                   if adopted else {})},
             "latest_requested_end": collection["plan"]["end"], "selected_requested_end": collection["plan"]["end"],
             "query_count": len(sources), "unavailable_queries": unavailable, "sources": sources,
             "view": view, "reading_error": None, "source_requests": 0,

@@ -1,14 +1,14 @@
 name: decision-os-ashare-data
-run-name: ${{ inputs.operation == 'ftshare-check' && 'FTShare daily check 20261018' || inputs.operation == 'ftshare-check-continue' && 'FTShare daily check continuation 20261018' || inputs.operation == 'ftshare-check-kernel' && 'FTShare Kernel v1 daily check 20261019' || inputs.operation == 'ftshare-calendar' && 'FTShare calendar continuity 20261018' || 'decision-os-ashare-data' }}
+run-name: ${{ inputs.operation == 'ftshare-check' && 'FTShare daily check 20261018' || inputs.operation == 'ftshare-check-continue' && 'FTShare daily check continuation 20261018' || inputs.operation == 'ftshare-check-kernel' && 'FTShare Kernel v1 daily check 20261019' || inputs.operation == 'ftshare-adopt-kernel' && 'FTShare Kernel v1 adoption 20261019' || inputs.operation == 'ftshare-calendar' && 'FTShare calendar continuity 20261018' || 'decision-os-ashare-data' }}
 on:
   workflow_dispatch:
     inputs:
       operation:
         type: choice
-        options: [status, sync, repair, ftshare-check, ftshare-check-continue, ftshare-check-kernel, ftshare-calendar, ftshare-sync, ftshare-status]
+        options: [status, sync, repair, ftshare-check, ftshare-check-continue, ftshare-check-kernel, ftshare-adopt-kernel, ftshare-calendar, ftshare-sync, ftshare-status]
         default: ftshare-status
         required: true
-        description: 'Read records, retain bounded FTShare daily batches, qualify the source, or advance the explicit legacy Relay plan'
+        description: 'Read records, adopt verified Kernel v1 originals without new market requests, retain bounded FTShare daily batches, or advance the explicit legacy Relay plan'
       code_sha:
         type: string
         required: true
@@ -21,7 +21,7 @@ on:
       work_units:
         type: string
         default: '1'
-        description: '1..32 finite sync/repair units; status requires 1; retained page retry budgets survive every unit'
+        description: '1..32 finite sync/repair units; status and Kernel adoption require 1; retained page retry budgets survive every unit'
       repair_request:
         type: string
         default: ''
@@ -71,7 +71,7 @@ jobs:
       ((inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true ||
       (github.event.repository.private != true && inputs.public_rights_confirmed != true))) ||
       (inputs.operation == 'repair' && (inputs.access_and_custody_confirmed != true || github.event.repository.private != true)) ||
-      ((inputs.operation == 'ftshare-check' || inputs.operation == 'ftshare-check-continue' || inputs.operation == 'ftshare-check-kernel' || inputs.operation == 'ftshare-calendar' || inputs.operation == 'ftshare-sync') &&
+      ((inputs.operation == 'ftshare-check' || inputs.operation == 'ftshare-check-continue' || inputs.operation == 'ftshare-check-kernel' || inputs.operation == 'ftshare-adopt-kernel' || inputs.operation == 'ftshare-calendar' || inputs.operation == 'ftshare-sync') &&
       (inputs.access_and_custody_confirmed != true || github.event.repository.private != true || inputs.public_rights_confirmed != false)) ||
       (inputs.operation == 'ftshare-status' && (github.event.repository.private != true || inputs.public_rights_confirmed != false)))
     runs-on: ubuntu-latest
@@ -319,6 +319,46 @@ jobs:
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
           FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
+        run: python -m decision_kernel.interfaces.ftshare_collection_cli runtime --out "$RUNNER_TEMP/dos2-ftshare-collection"
+      - name: Recheck private custody before releasing exact reading references
+        if: always()
+        id: release
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import os
+          from decision_kernel.infrastructure.github_store import GitHubAPI
+          from decision_kernel.interfaces.ftshare_check_cli import check_private
+          check_private(GitHubAPI(os.environ["DECISION_OS_STORE_TOKEN"]), {"code_sha": os.environ["GITHUB_SHA"]})
+          PY
+      - name: Preserve the private result and exact reading control
+        if: always() && steps.release.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-ftshare-collection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-ftshare-collection/
+          if-no-files-found: error
+          retention-days: 30
+  ftshare-adopt-kernel:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-adopt-kernel' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Adopt verified Kernel v1 originals with zero new market requests
+        id: runtime
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.ftshare_collection_cli runtime --out "$RUNNER_TEMP/dos2-ftshare-collection"
       - name: Recheck private custody before releasing exact reading references
         if: always()

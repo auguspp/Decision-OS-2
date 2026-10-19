@@ -9,9 +9,16 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+import json
 import re
 
+from decision_kernel.application.ftshare_adoption import (
+    ADOPTION_PLAN_SCHEMA, PRICE_ROLES, ROLES, kernel_price_requests,
+    read_kernel_archive, restore_kernel_evidence, source_for_kernel_evidence, validate_adoption_proof,
+)
 from decision_kernel.application.ftshare_daily import batch_request, capture_batch, source_for_capture
+from decision_kernel.application.ftshare_single import restore_single, source_for_single_capture
 from decision_kernel.application.market_collection import effective_unit, unit_request, _qualified
 from decision_kernel.application.market_collection_custody import restore_market_collection
 from decision_kernel.application.market_custody import (
@@ -21,7 +28,7 @@ from decision_kernel.application.market_custody import (
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import (
-    Selection, SourceInput, SourceRef, digest, encoded, identifier, require,
+    Selection, SourceInput, SourceRef, UnknownWrite, digest, encoded, identifier, require,
 )
 
 SCHEMA = "ftshare-collection-custody-v1"
@@ -216,6 +223,9 @@ def plan_ftshare_collection(legacy_reference, registry, store, *, collection_id,
 
 def validate_ftshare_collection(collection):
     """Pure shape and finite budget checks; retained reference proof is separate."""
+    if isinstance(collection, dict) and isinstance(collection.get("plan"), dict) \
+            and collection["plan"].get("schema") == ADOPTION_PLAN_SCHEMA:
+        return _validate_adoption_collection(collection)
     require(isinstance(collection, dict) and set(collection) == {
         "schema", "plan", "revision", "units", "reserved_requests", "source_hold", "updated_at"}
         and collection["schema"] == STATE_SCHEMA, "FTSHARE_COLLECTION_STATE")
@@ -285,6 +295,7 @@ def validate_ftshare_collection(collection):
 def begin_ftshare_slot(collection, slot, *, at):
     """Reserve exactly one request; the host retains this state BEFORE source I/O."""
     result = validate_ftshare_collection(collection)
+    require(result["plan"]["schema"] == PLAN_SCHEMA, "FTSHARE_ADOPTION_NO_SOURCE_BUDGET")
     require(result["source_hold"] is None, "FTSHARE_COLLECTION_SOURCE_HOLD")
     require(slot in result["units"] and result["units"][slot]["status"] == "pending",
             "FTSHARE_COLLECTION_SLOT_ALREADY_CONSUMED")
@@ -304,6 +315,7 @@ def finish_ftshare_slot(collection, slot, *, at, reference=None, reason_code=Non
     The hold prevents every later reservation; no automatic clearing path exists.
     """
     result = validate_ftshare_collection(collection)
+    require(result["plan"]["schema"] == PLAN_SCHEMA, "FTSHARE_ADOPTION_NO_SOURCE_BUDGET")
     require(result["source_hold"] is None, "FTSHARE_COLLECTION_SOURCE_HOLD")
     require(source_hold is None or isinstance(source_hold, str) and source_hold in SOURCE_HOLD_REASONS,
             "FTSHARE_COLLECTION_SOURCE_HOLD_INVALID")
@@ -321,6 +333,7 @@ def finish_ftshare_slot(collection, slot, *, at, reference=None, reason_code=Non
 
 
 def _transition(previous, current):
+    require(previous["plan"]["schema"] != ADOPTION_PLAN_SCHEMA, "FTSHARE_ADOPTION_IMMUTABLE")
     require(previous["source_hold"] is None, "FTSHARE_COLLECTION_SOURCE_HOLD")
     require(previous["plan"] == current["plan"], "FTSHARE_COLLECTION_PLAN_CHANGED")
     require(_clock(current["updated_at"]) >= _clock(previous["updated_at"]), "FTSHARE_COLLECTION_CLOCK")
@@ -351,10 +364,19 @@ def _source(content):
     plan = content["collection"]["plan"]
     body = encoded(content)
     require(len(body) <= MAX_ROOT_BYTES, "FTSHARE_COLLECTION_ROOT_BOUND")
+    adopted = plan["schema"] == ADOPTION_PLAN_SCHEMA
     return SourceInput(source_id=_source_id(plan["collection_id"], plan["generation"],
                                            content["collection"]["revision"]),
-        kind="content", title="FTShare finite daily collection", origin=ORIGIN,
-        text=body.decode(), custody="provided", limitations=LIMITATIONS)
+        kind="content", title="FTShare retained Kernel v1 daily adoption" if adopted else "FTShare finite daily collection",
+        origin=ORIGIN, text=body.decode(), custody="provided", limitations=(
+            "GENERATED_FTSHARE_ADOPTION_CONTROL_NOT_ORIGINAL_PROVIDER_RESPONSE",
+            "FOUR_ORIGINAL_CAPTURES_THREE_PRICE_SERIES_FULL_LEGACY_SCOPE_RETAINED",
+            "ZERO_NEW_SOURCE_REQUESTS_NO_BATCH_QUALIFICATION_OR_FUTURE_ALLOWANCE",
+            "EXACT_ORIGINAL_STUDY_ARCHIVE_RESTORED_WITHOUT_ACTIONS_ACCESS",
+            "EXACT_LEGACY_REFERENCE_PRESERVES_OLD_SLOTS_AND_SPENT_SOURCE_ALLOWANCE",
+            "RAW_AND_PROVIDER_FORWARD_WHOLE_REQUESTS_NOT_RELAY_OR_POINT_IN_TIME_FACTORS",
+            "SOURCE_RETENTION_REQUIRES_CALLER_AUTHORITY_NOT_PUBLIC_REDISTRIBUTION",
+        ) if adopted else LIMITATIONS)
 
 
 def _manifest(reference, registry, store):
@@ -499,8 +521,13 @@ def restore_ftshare_collection(reference, registry, store):
         plan = collection["plan"]
         context = _legacy_context(plan["legacy_reference"], registry, reader,
                                   calendar_references=plan["calendar_references"])
-        expected = _plan(context, collection_id=plan["collection_id"], generation=plan["generation"],
-                         created_at=plan["created_at"])
+        if plan["schema"] == ADOPTION_PLAN_SCHEMA:
+            _restore_adoption_inputs(plan, context, registry, reader)
+            expected = _adoption_plan(context, plan["adoption"], collection_id=plan["collection_id"],
+                generation=plan["generation"], created_at=plan["created_at"])
+        else:
+            expected = _plan(context, collection_id=plan["collection_id"], generation=plan["generation"],
+                             created_at=plan["created_at"])
         require(plan == expected, "FTSHARE_COLLECTION_RESTORED_CONTEXT_CHANGED")
         # Prove this exact version is on the original single finite chain. A
         # newer tip does not substitute its data for the requested old version.
@@ -547,8 +574,14 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
                     and checked["updated_at"] == plan["created_at"], "FTSHARE_COLLECTION_INITIAL_STATE")
             context = _legacy_context(plan["legacy_reference"], registry, grouped,
                                       calendar_references=plan["calendar_references"])
-            require(plan == _plan(context, collection_id=plan["collection_id"], generation=plan["generation"],
-                                  created_at=plan["created_at"]), "FTSHARE_COLLECTION_RESTORED_CONTEXT_CHANGED")
+            if plan["schema"] == ADOPTION_PLAN_SCHEMA:
+                _restore_adoption_inputs(plan, context, registry, grouped)
+                expected = _adoption_plan(context, plan["adoption"], collection_id=plan["collection_id"],
+                    generation=plan["generation"], created_at=plan["created_at"])
+            else:
+                expected = _plan(context, collection_id=plan["collection_id"], generation=plan["generation"],
+                                 created_at=plan["created_at"])
+            require(plan == expected, "FTSHARE_COLLECTION_RESTORED_CONTEXT_CHANGED")
             parent = _ref(plan["legacy_reference"], store.backend.repository)
         else:
             require(predecessor is not None and _ref(predecessor, store.backend.repository) == previous_ref,
@@ -579,3 +612,171 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
     return {"status": "stored-and-independently-restored-ftshare-collection",
         "reference": _ref(reference, store.backend.repository), "source_id": source.source_id,
         "restored": restored}
+
+
+def _adoption_plan(context, adoption, *, collection_id, generation, created_at):
+    plan = _plan(context, collection_id=collection_id, generation=generation, created_at=created_at)
+    plan.update(schema=ADOPTION_PLAN_SCHEMA, batch_size=None, source_budget=0,
+                requests=kernel_price_requests(), adoption=deepcopy(adoption))
+    return plan
+
+
+def _validate_adoption_collection(collection):
+    """An immutable retained-input genesis never reserves a new source request."""
+    require(set(collection) == {"schema", "plan", "revision", "units", "reserved_requests", "source_hold",
+        "updated_at"} and collection["schema"] == STATE_SCHEMA, "FTSHARE_ADOPTION_STATE")
+    plan = collection["plan"]
+    require(set(plan) == {"schema", "collection_id", "generation", "created_at", "legacy_reference", "legacy",
+        "start", "end", "calendar_end", "since", "until", "master_references", "calendar_references",
+        "legacy_calendar_references", "baseline_daily_reference", "sessions", "symbols", "eligible_symbols",
+        "quarantined_symbols", "batch_size", "source_budget", "requests", "adoption"}, "FTSHARE_ADOPTION_PLAN")
+    identifier(plan["collection_id"]); identifier(plan["generation"])
+    require(plan["collection_id"].startswith("ftshare-") and plan["start"] == "20260701"
+        and plan["end"] == "20261016" and (plan["since"], plan["until"]) == _date_bounds(plan["start"], plan["end"])
+        and plan["batch_size"] is None and type(plan["source_budget"]) is int and plan["source_budget"] == 0
+        and plan["requests"] == kernel_price_requests(), "FTSHARE_ADOPTION_REQUESTS")
+    for field in ("symbols", "eligible_symbols", "quarantined_symbols"):
+        values = plan[field]
+        require(isinstance(values, list) and len(values) <= 10000 and values == sorted(set(values))
+            and all(isinstance(value, str) and re.fullmatch(r"[0-9]{6}\.(SH|SZ)", value) for value in values),
+            "FTSHARE_ADOPTION_SCOPE")
+    require(not set(plan["eligible_symbols"]) & set(plan["quarantined_symbols"])
+        and set(plan["symbols"]) == set(plan["eligible_symbols"]) | set(plan["quarantined_symbols"])
+        and {"000001.SZ", "600000.SH"} <= set(plan["eligible_symbols"]), "FTSHARE_ADOPTION_SCOPE")
+    evidence = plan["adoption"]
+    require(isinstance(evidence, dict) and set(evidence) == {"proof", "evidence_reference", "capture_references",
+        "historical_source_requests", "prior_source_requests", "cumulative_source_requests"}, "FTSHARE_ADOPTION_EVIDENCE")
+    validate_adoption_proof(evidence["proof"])
+    require(encoded({key: evidence[key] for key in ("historical_source_requests", "prior_source_requests",
+        "cumulative_source_requests")}) == encoded({"historical_source_requests": 4,
+        "prior_source_requests": 2, "cumulative_source_requests": 6}), "FTSHARE_ADOPTION_HISTORICAL_SPENDING")
+    SourceRef.from_dict(evidence["evidence_reference"])
+    references = evidence["capture_references"]
+    require(isinstance(references, dict) and set(references) == set(ROLES)
+        and len({encoded(reference) for reference in references.values()}) == 4, "FTSHARE_ADOPTION_CAPTURE_REFERENCES")
+    for reference in references.values():
+        SourceRef.from_dict(reference)
+    expected_units = {role: {"status": "complete", "request_count": 0, "reference": references[role],
+                            "reason_code": None} for role in PRICE_ROLES}
+    require(encoded(collection["units"]) == encoded(expected_units)
+        and type(collection["revision"]) is int and collection["revision"] == 0
+        and type(collection["reserved_requests"]) is int and collection["reserved_requests"] == 0
+        and collection["source_hold"] is None, "FTSHARE_ADOPTION_ZERO_REQUEST_GENESIS")
+    _clock(plan["created_at"])
+    require(collection["updated_at"] == plan["created_at"]
+        and len(encoded(collection)) <= MAX_ROOT_BYTES - 16384, "FTSHARE_ADOPTION_STATE_BOUND")
+    return deepcopy(collection)
+
+
+def _verify_adoption_context(checked, context, registry, store):
+    """Recreate the study's calendar and decimal baseline from original Store inputs."""
+    selected = context["eligible_symbols"]
+    require({"000001.SZ", "600000.SH"} <= set(selected), "FTSHARE_ADOPTION_REQUIRED_SECURITIES")
+    codes = sorted([code for code in selected if code.endswith(".SH")][:50]
+        + [code for code in selected if code.endswith(".SZ")][:50])
+    baseline = {"reference": context["reference"], "master_references": context["master_references"],
+        "scope_count": len(context["scope_symbols"]), "symbols": codes,
+        "daily_reference": context["baseline_daily_reference"], "daily": context["baseline_daily"]}
+    require(encoded(checked["documents"]["baseline.json"]) == encoded(baseline),
+            "FTSHARE_ADOPTION_BASELINE_CHANGED")
+    original = restore_market_query(context["baseline_daily_reference"], registry, store)
+    prices = {}
+    for ref in original["page_references"]:
+        _, stored = _read_source(store, ref)
+        page = json.loads(stored["data"], parse_float=str)["page"]["table"]
+        for values in page["items"]:
+            row = dict(zip(page["fields"], values, strict=True))
+            code = row["ts_code"]
+            if code in {"000001.SZ", "600000.SH"}:
+                require(code not in prices and row["trade_date"] == "20261016",
+                        "FTSHARE_ADOPTION_BASELINE_PRICE_IDENTITY")
+                value = Decimal(str(row["close"]))
+                require(value.is_finite() and value > 0, "FTSHARE_ADOPTION_BASELINE_PRICE")
+                prices[code] = str(value)
+    require(set(prices) == {"000001.SZ", "600000.SH"}, "FTSHARE_ADOPTION_BASELINE_PRICES_REQUIRED")
+    verification = {"close": prices, "sessions": context["sessions"],
+        "daily_reference": context["baseline_daily_reference"], "page_references": original["page_references"],
+        "calendar_references": context["calendar_references"], "scope_count": len(context["scope_symbols"])}
+    require(encoded(checked["documents"]["verification.json"]) == encoded(verification),
+            "FTSHARE_ADOPTION_VERIFICATION_CHANGED")
+
+
+def _restore_adoption_inputs(plan, context, registry, store):
+    evidence = plan["adoption"]
+    checked = restore_kernel_evidence(evidence["evidence_reference"], store)
+    require(checked["proof"] == evidence["proof"], "FTSHARE_ADOPTION_PROOF_CHANGED")
+    _verify_adoption_context(checked, context, registry, store)
+    for role in ROLES:
+        original = checked["captures"][role]
+        restored = restore_single(evidence["capture_references"][role], store, request=original["request"])
+        require(encoded(restored) == encoded(original), "FTSHARE_ADOPTION_CAPTURE_CHANGED")
+    return checked
+
+
+def adopt_ftshare_kernel(archive, proof, legacy_reference, registry, store, *, collection_id,
+                        generation, created_at, fresh_reader, custody_authorized=False,
+                        public_rights_confirmed=False):
+    """Adopt four existing originals and three price owners; issue no source HTTP.
+
+    The existing Store submission journal owns write reconciliation. Re-entry
+    returns the original genesis (including its original creation clock), or
+    completes the same deterministic inputs if no root was published yet.
+    """
+    visibility = authorize_market_custody(store, custody_authorized=custody_authorized,
+                                         public_rights_confirmed=public_rights_confirmed)
+    require(visibility in ("private", "synthetic"), "FTSHARE_COLLECTION_PRIVATE_CUSTODY_REQUIRED")
+    require(isinstance(registry, RelayRegistry), "FTSHARE_COLLECTION_REGISTRY_REQUIRED")
+    identifier(collection_id); identifier(generation); _clock(created_at)
+    checked = read_kernel_archive(archive, proof)
+    require(collection_id.startswith("ftshare-")
+        and _clock(created_at) >= _clock(checked["documents"]["result.json"]["completed_at"]),
+        "FTSHARE_ADOPTION_CREATION_CONTEXT")
+
+    def result(reference, collection):
+        evidence = collection["plan"]["adoption"]
+        return {"status": "stored-and-independently-restored-ftshare-adoption", "reference": deepcopy(reference),
+            "collection": deepcopy(collection), "evidence_reference": deepcopy(evidence["evidence_reference"]),
+            "capture_references": deepcopy(evidence["capture_references"]), "source_requests": 0,
+            "source_budget": 0, "reserved_requests": 0, "historical_source_requests": 4,
+            "cumulative_source_requests": 6,
+            "reading_request": {"reference": deepcopy(reference), "offset": 0, "limit": 50}}
+
+    with market_read_scope(fresh_market_reader(store, fresh_reader)) as reader:
+        reference = latest_ftshare_reference(reader, registry, collection_id=collection_id, generation=generation)
+        if reference is not None:
+            restored = restore_ftshare_collection(reference, registry, reader)
+            existing = restored["collection"]
+            require(existing["plan"]["schema"] == ADOPTION_PLAN_SCHEMA
+                and existing["plan"]["legacy_reference"] == _ref(legacy_reference, store.backend.repository)
+                and existing["plan"]["adoption"]["proof"] == checked["proof"],
+                "FTSHARE_ADOPTION_EXISTING_COLLECTION_CHANGED")
+            return result(reference, existing)
+        context = _legacy_context(legacy_reference, registry, reader)
+        _verify_adoption_context(checked, context, registry, reader)
+    try:
+        evidence_ref = _put(store, source_for_kernel_evidence(archive, proof))
+        restored_evidence = restore_kernel_evidence(evidence_ref, fresh_market_reader(store, fresh_reader))
+        require(restored_evidence["archive"] == archive, "FTSHARE_ADOPTION_ARCHIVE_READBACK_CHANGED")
+        references = {}
+        for role in ROLES:
+            capture = checked["captures"][role]
+            reference = _put(store, source_for_single_capture(capture))
+            restored = restore_single(reference, fresh_market_reader(store, fresh_reader), request=capture["request"])
+            require(encoded(restored) == encoded(capture), "FTSHARE_ADOPTION_CAPTURE_READBACK_CHANGED")
+            references[role] = _ref(reference, store.backend.repository)
+        adoption = {"proof": checked["proof"], "evidence_reference": _ref(evidence_ref, store.backend.repository),
+            "capture_references": references, "historical_source_requests": 4,
+            "prior_source_requests": 2, "cumulative_source_requests": 6}
+        plan = _adoption_plan(context, adoption, collection_id=collection_id, generation=generation, created_at=created_at)
+        collection = {"schema": STATE_SCHEMA, "plan": plan, "revision": 0,
+            "units": {role: {"status": "complete", "request_count": 0, "reference": references[role],
+                             "reason_code": None} for role in PRICE_ROLES},
+            "reserved_requests": 0, "source_hold": None, "updated_at": created_at}
+        saved = retain_ftshare_collection(collection, registry, store, fresh_reader=fresh_reader,
+            custody_authorized=True, public_rights_confirmed=False)
+        restored = restore_ftshare_collection(saved["reference"], registry, fresh_market_reader(store, fresh_reader))
+        return result(saved["reference"], restored["collection"])
+    except UnknownWrite:
+        raise
+    except Exception as exc:
+        raise UnknownWrite("FTSHARE_ADOPTION_PERSISTENCE_UNCONFIRMED") from exc

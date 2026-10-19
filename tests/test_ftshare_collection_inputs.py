@@ -253,3 +253,76 @@ def test_normal_room_dispatch_uses_ftshare_verifier_and_preserves_partial_and_re
         result = open_market(store, {"reference": ref, "limit": 1}, registry=object(), read_as_of=CLOCK)
     assert observed and result["view"]["view"]["schema"] == VIEW_SCHEMA
     assert result["partial"] is True and result["reference"] == ref
+
+
+def single_inputs(*, full_scope=False):
+    from decision_kernel.application.ftshare_adoption import ADOPTION_PLAN_SCHEMA, kernel_price_requests
+    from decision_kernel.application.ftshare_single import capture_single
+    collection, context, batches = inputs()
+    plan = collection["plan"]
+    plan.update(schema=ADOPTION_PLAN_SCHEMA, requests=kernel_price_requests(),
+                adoption={"evidence_reference": reference("ftshare-kernel-evidence")})
+    captures, collection["units"] = {}, {}
+    for role, request in plan["requests"].items():
+        parameters = request["parameters"]
+        original = json.loads(batches[parameters["adjust_kind"] + ":000"]["body_utf8"])
+        rows = next(rows for code, rows in original["data"] if code == parameters["symbol"])
+        captures[role] = capture_single(encoded({"code": 0, "data": rows}),
+            **{key: parameters[key] for key in ("symbol", "since", "until", "adjust_kind")},
+            acquired_at="2026-10-19T12:00:00+00:00")
+        collection["units"][role] = {"status": "complete", "request_count": 0,
+            "reference": reference("ftshare-single-" + role), "reason_code": None}
+    if full_scope:
+        master = context["masters"]["SSE"]
+        for number in range(600002, 605225):
+            code = str(number) + ".SH"
+            master["securities"][code] = {**master["securities"]["600000.SH"],
+                "ts_code": code, "symbol": str(number)}
+        master["securities"]["605224.SH"] = None
+        master["scope_count"] = len(master["securities"])
+        master["version"] = digest(encoded(master["securities"]))
+        securities = {code: value for master in context["masters"].values()
+                      for code, value in master["securities"].items()}
+        context.update(scope_symbols=sorted(securities),
+            eligible_symbols=sorted(code for code, value in securities.items() if value is not None),
+            quarantined_symbols=sorted(code for code, value in securities.items() if value is None))
+    return collection, context, captures
+
+
+def read_single(bundle, **kwargs):
+    collection, context, captures = bundle
+    def load(_ref, *, request):
+        return next(capture for capture in captures.values() if capture["request"] == request)
+    return _read_ftshare_inputs(collection, context, load, read_as_of=CLOCK, **kwargs)[0]
+
+
+def test_kernel_single_routes_keep_independent_counterpart_gap_and_native_lineage():
+    view = read_single(single_inputs())
+    assert view["raw"]["observed_count"] == 2 and view["qfq"]["observed_count"] == 1
+    assert entry(view, kind="raw", code="600000.SH")["status"] == "observed"
+    sh_forward = entry(view, code="600000.SH")
+    assert sh_forward["input_status"] == "not-supplied"
+    assert all(window["status"] != "observed" for window in sh_forward["horizons"])
+    assert view["freshness"]["status"] == "unknown"
+    assert len(view["source_lineage"]["single_queries"]) == 3 and "batches" not in view["source_lineage"]
+    assert all(row["request"]["url"].endswith("/api/v1/market/data/stock-candlesticks")
+        and "symbol" in row["request"]["parameters"] and "symbols" not in row["request"]["parameters"]
+        for row in view["source_lineage"]["single_queries"].values())
+    assert entry(view)["lineage_representation"] == "original-ftshare-whole-range-single-query"
+
+
+def test_kernel_full_5226_denominator_and_missing_windows_survive_page_and_entity_selection():
+    bundle = single_inputs(full_scope=True)
+    view = read_single(bundle, limit=1)
+    selected = read_single(bundle, entity_id="600000.SH")
+    assert len(bundle[1]["quarantined_symbols"]) == 2 and len(bundle[1]["eligible_symbols"]) == 5224
+    assert view["scope_count"] == selected["scope_count"] == 5226
+    for kind, observed, missing in (("raw", 2, 5224), ("qfq", 1, 5225)):
+        assert [row["observed_count"] for row in view[kind]["horizon_counts"]] == [observed] * 3
+        assert [row["missing_count"] for row in view[kind]["horizon_counts"]] == [missing] * 3
+        assert view[kind]["horizon_counts"] == selected[kind]["horizon_counts"]
+        assert len(view[kind]["entries"]) == len(selected[kind]["entries"]) == 1
+    assert view["view_version"] == selected["view_version"]
+    assert view["freshness"]["status"] == "unknown" and view["source_requests"] == 0
+    assert {venue["current_session_lag"] for venue in view["by_exchange"].values()} == {None}
+    assert len(encoded(view)) < 2 * 1024 * 1024

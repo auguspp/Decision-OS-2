@@ -21,6 +21,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef, digest, encoded
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.interfaces.market_cli import MAX_INPUT_BYTES, _object, _constant
 from decision_kernel.interfaces.research_payload import decode_payload
 from decision_kernel.observations.market_daily import MarketInputError
@@ -41,7 +42,8 @@ def run_runtime(event, env, out, *, run=subprocess.run):
             or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch"):
         raise RecordError("MARKET_CUSTODY_MANUAL_MAIN_ONLY")
     data = event.get("inputs") if isinstance(event, dict) else None
-    allowed = {"operation", "code_sha", "payload", "public_rights_confirmed", "offset", "limit", "entity_id"}
+    allowed = {"operation", "code_sha", "payload", "custody_authorized", "public_rights_confirmed",
+               "offset", "limit", "entity_id"}
     if not isinstance(data, dict) or not set(data) <= allowed:
         raise RecordError("MARKET_CUSTODY_RUNTIME_INPUT")
     sha = data.get("code_sha")
@@ -49,9 +51,10 @@ def run_runtime(event, env, out, *, run=subprocess.run):
         raise RecordError("MARKET_CUSTODY_CODE_SHA_MISMATCH")
     operation = data.get("operation")
     rights = data.get("public_rights_confirmed") is True or data.get("public_rights_confirmed") == "true"
+    custody = data.get("custody_authorized") is True or data.get("custody_authorized") == "true"
     discovery = operation in ("discovery-build", "discovery-save", "discovery-read")
     writing = operation in ("save", "discovery-save")
-    if operation not in ("save", "read", "discovery-build", "discovery-save", "discovery-read") or writing and not rights:
+    if operation not in ("save", "read", "discovery-build", "discovery-save", "discovery-read") or writing and not (custody or rights):
         raise RecordError("MARKET_CUSTODY_RUNTIME_AUTHORIZATION")
     raw = data.get("payload")
     if not isinstance(raw, str) or not 0 < len(raw.encode()) <= 60000:
@@ -91,6 +94,7 @@ def run_runtime(event, env, out, *, run=subprocess.run):
     (out / "binding.json").write_text(json.dumps(selected.__dict__), encoding="utf-8")
     summary = {"code_sha": sha, "operation": operation, "payload_sha256": digest(raw.encode()),
                "input_sha256": digest(encoded(payload)),
+               "custody_authorized": custody, "public_rights_confirmed": rights,
                "status": "not-executed", "source_requests": 0}
     (out / "result.json").write_text(json.dumps(summary), encoding="utf-8")
     command = [sys.executable, "-m", "decision_kernel.interfaces.market_custody_cli", operation,
@@ -98,16 +102,19 @@ def run_runtime(event, env, out, *, run=subprocess.run):
         "--input", str(out / "input.json"), "--offset", offset, "--limit", limit]
     if entity_id:
         command += ["--entity-id", entity_id]
-    if operation == "save":
-        command += ["--public-rights-confirmed"]
     if discovery:
         command = [sys.executable, "-m", "decision_kernel.interfaces.market_discovery_cli",
             operation.removeprefix("discovery-"), "--binding", str(out / "binding.json"),
             "--registry", "docs/sources/relay-registry.json", "--input", str(out / "input.json")]
         if writing:
-            command += ["--submission-id", "market-discovery-" + digest(encoded(payload))[:48],
-                        "--public-rights-confirmed"]
-    child_env = {k: v for k, v in env.items() if k not in ("TUSHARE_PROXY_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
+            command += ["--submission-id", "market-discovery-" + digest(encoded(payload))[:48]]
+    if writing:
+        if custody:
+            command += ["--custody-authorized"]
+        if rights:
+            command += ["--public-rights-confirmed"]
+    child_env = {k: v for k, v in env.items()
+                 if k not in ("TUSHARE_PROXY_API_KEY", "FTSHARE_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
     summary["status"] = "in-progress-or-unknown"
     (out / "result.json").write_text(json.dumps(summary), encoding="utf-8")
     completed = run(command, env=child_env, capture_output=True, text=True, check=False, timeout=600)
@@ -152,6 +159,8 @@ def main(argv=None):
     parser.add_argument("--registry", required=True, type=Path)
     parser.add_argument("--input", required=True, type=Path, help="Reading payload for save, exact root SourceRef for read")
     parser.add_argument("--public-rights-confirmed", action="store_true")
+    parser.add_argument("--custody-authorized", action="store_true",
+                        help="Explicit private custody authorization; does not grant public redistribution")
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--entity-id")
@@ -159,7 +168,7 @@ def main(argv=None):
     try:
         if args.operation == "save" and (args.offset != 0 or args.limit != 50 or args.entity_id is not None):
             raise RecordError("MARKET_CUSTODY_SAVE_NOT_PAGE_SELECTION")
-        if args.operation == "save" and not args.public_rights_confirmed:
+        if args.operation == "save" and not (args.custody_authorized or args.public_rights_confirmed):
             raise RecordError("MARKET_CUSTODY_PUBLIC_RIGHTS_REQUIRED")
         payload, registry = _load(args.input), RelayRegistry(args.registry)
         if args.operation == "read":
@@ -170,14 +179,18 @@ def main(argv=None):
                 raise RecordError("REMOTE_READ_ONLY")
             api = GitHubAPI.from_environment()
             def build(read_only=True):
-                return VersionedStore(GitHubStore(replace(binding, write_enabled=False) if read_only else binding,
-                                                 api))
+                # Source-only readers independently pin/fetch the original Git
+                # branch and share this operation's existing API and limits.
+                backend = (GitMarketReader(replace(binding, write_enabled=False), api) if read_only
+                           else GitHubStore(binding, api))
+                return VersionedStore(backend)
         else:
             def build(read_only=True):
                 return VersionedStore(GitStore(args.path))
         if args.operation == "save":
             result = retain_market_reading(payload, registry, build(False), fresh_reader=build,
-                                            public_rights_confirmed=True)
+                                            custody_authorized=args.custody_authorized,
+                                            public_rights_confirmed=args.public_rights_confirmed)
         else:
             result = read_market_reference(payload, registry, build(), offset=args.offset,
                                            limit=args.limit, entity_id=args.entity_id)

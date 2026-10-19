@@ -24,7 +24,7 @@ from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.research_sources import CAPTURE, source_inputs
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import (
-    MAX_BYTES, RecordError, Selection, SourceInput, SourceRef, digest, encoded, require,
+    MAX_BYTES, RecordError, Selection, SourceInput, SourceRef, StoreUnavailable, digest, encoded, require,
 )
 
 from decision_kernel.application.shibor_inputs import SHIBOR_FIELDS, SHIBOR_READING_SCHEMA, SHIBOR_REQUIRED
@@ -339,14 +339,16 @@ def retain_market_query(result, registry, store, *, fresh_reader, custody_author
             "page_count": len(restored["page_references"]), "restored": restored}
 
 
-def retain_market_reading(payload, registry, store, *, fresh_reader, public_rights_confirmed=False):
+def retain_market_reading(payload, registry, store, *, fresh_reader, custody_authorized=False,
+                          public_rights_confirmed=False):
     """Preflight all supplied captures before saving; publish root only after pages.
 
     Any failed/unknown write stops immediately. Reinvoke the identical payload to
     reconcile with the existing journal. Earlier saved sources are not deleted.
     """
-    require(public_rights_confirmed is True, "MARKET_CUSTODY_PUBLIC_RIGHTS_REQUIRED")
-    require(isinstance(store, VersionedStore) and callable(fresh_reader), "MARKET_CUSTODY_STORE_REQUIRED")
+    authorize_market_custody(store, custody_authorized=custody_authorized,
+                            public_rights_confirmed=public_rights_confirmed)
+    require(callable(fresh_reader), "MARKET_CUSTODY_STORE_REQUIRED")
     require(len(encoded(payload)) <= MAX_BYTES, "MARKET_CUSTODY_INPUT_BOUND")
     original = read_market_payload(payload, registry)
     if payload["schema"] == "relay-three-market-reading-v1":
@@ -359,21 +361,23 @@ def retain_market_reading(payload, registry, store, *, fresh_reader, public_righ
         require(len(prepared) <= MAX_QUERIES, "MARKET_CUSTODY_QUERY_BOUND")
         return {"query": key}
     recipe = _map_results(payload, prepare)
-    reader = fresh_reader()
-    require(isinstance(reader, VersionedStore) and reader is not store and reader.backend is not store.backend
-            and reader.backend.repository == store.backend.repository, "MARKET_CUSTODY_FRESH_READER_REQUIRED")
+    reader = fresh_market_reader(store, fresh_reader)
     queries, page_cache = {}, {}
     for key, (header, sources) in prepared.items():
         restored = _retain_prepared_query(header, sources, registry, store, reader, page_cache)
         queries[key] = restored["reference"]
     content = {"schema": READING_SCHEMA, "reading": recipe, "queries": queries}
     reference = _put(store, _manifest_source(READING_SCHEMA, content))
-    final_reader = fresh_reader()
-    require(isinstance(final_reader, VersionedStore) and final_reader is not store and final_reader is not reader
-            and final_reader.backend is not store.backend and final_reader.backend is not reader.backend
-            and final_reader.backend.repository == store.backend.repository, "MARKET_CUSTODY_FRESH_READER_REQUIRED")
+    final_reader = fresh_market_reader(store, fresh_reader)
+    require(final_reader is not reader and final_reader.backend is not reader.backend,
+            "MARKET_CUSTODY_FRESH_READER_REQUIRED")
     restored = read_stored_market(reference, registry, final_reader)
     require(restored["status"] == "restored" and encoded(restored["view"]) == encoded(original), "MARKET_CUSTODY_READING_CHANGED")
+    # A fresh reader can first observe the legacy public mode. The original
+    # writer retains this operation's private-upgrade observation and must
+    # confirm its native visibility again before any saved result is released.
+    authorize_market_custody(store, custody_authorized=custody_authorized,
+                            public_rights_confirmed=public_rights_confirmed)
     return {"status": "stored-and-independently-restored", "reference": asdict(reference),
             "query_count": len(queries), "page_count": len(page_cache), "restored": restored}
 
@@ -385,6 +389,15 @@ def restore_market_reading_inputs(reference, registry, store):
     This is the same bounded query restoration used by the ordinary reader;
     it adds no source request, write, alternate normalization or authorization.
     """
+    # The root and every original query belong to one independently checked
+    # reading operation. Native source readers pin one bounded Git snapshot and
+    # recheck live visibility/reachability before releasing any restored input.
+    # Nested query scopes reuse that snapshot and the same operation API budget.
+    with market_read_scope(store) as reader:
+        return _restore_market_reading_inputs(reference, registry, reader)
+
+
+def _restore_market_reading_inputs(reference, registry, store):
     ref, content = _read_manifest(store, reference, READING_SCHEMA)
     require(set(content) == {"schema", "reading", "queries"} and isinstance(content["queries"], dict)
             and len(content["queries"]) <= MAX_QUERIES, "MARKET_CUSTODY_READING_MANIFEST")
@@ -409,6 +422,10 @@ def restore_market_reading_inputs(reference, registry, store):
                 restored_bytes += len(encoded(out["result"]))
                 require(restored_bytes <= 2 * MAX_BYTES, "MARKET_CUSTODY_READING_BOUND")
                 cache[key] = (out["result"], None)
+            except StoreUnavailable:
+                # Access, rate and transport failures stop the whole operation;
+                # they are not a missing query followed by further API calls.
+                raise
             except (RecordError, MarketInputError) as exc:
                 code = str(exc)
                 cache[key] = ({}, code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", code) else "MARKET_CUSTODY_READ_FAILED")

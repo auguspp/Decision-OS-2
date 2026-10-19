@@ -3,7 +3,9 @@ from pathlib import Path
 
 from decision_kernel.interfaces import watch_commands
 
-from decision_kernel.application.conditional_odds import ConditionalOdds, publication, verify_fresh as verify_conditional
+from decision_kernel.application.conditional_odds import (
+    ConditionalOdds, publication, validate_calculation, verify_fresh as verify_conditional,
+)
 from decision_kernel.domain.conditional_odds import shape, validate_spec
 
 PROBABILITY_WRITES = ("freeze-odds-assessment", "save-probability-odds")
@@ -11,6 +13,7 @@ PROBABILITY_RECONCILES = ("reconcile-odds-assessment", "reconcile-probability-od
 PROBABILITY_READS = ("read-odds-assessment", "calculate-probability-odds", "read-probability-odds")
 PROBABILITY_COMMANDS = PROBABILITY_WRITES + PROBABILITY_RECONCILES + PROBABILITY_READS
 REGISTRY_COMMANDS = ("calculate-probability-odds", "save-probability-odds", "reconcile-probability-odds", "read-probability-odds")
+CONDITIONAL_REGISTRIES = ("calculate-odds", "save-odds", "reconcile-odds", "read-odds")
 REFERENCE_COMMANDS = ("read-valuation", "read-odds", "read-odds-assessment", "read-probability-odds") + watch_commands.REFERENCES
 WRITE_COMMANDS = ("freeze-valuation", "save-odds") + PROBABILITY_WRITES + watch_commands.WRITES
 RECONCILE_COMMANDS = ("reconcile-valuation", "reconcile-odds") + PROBABILITY_RECONCILES + watch_commands.RECONCILES
@@ -22,7 +25,7 @@ def configure(actions):
     for name in COMMANDS:
         action = actions.add_parser(name, help="frozen research Odds with explicit method and source limitations")
         action.add_argument("--ref" if name in REFERENCE_COMMANDS else "--input", type=Path, required=True)
-        if name in REGISTRY_COMMANDS + watch_commands.REGISTRIES:
+        if name in REGISTRY_COMMANDS + CONDITIONAL_REGISTRIES + watch_commands.REGISTRIES:
             action.add_argument("--registry", type=Path, required=name in REGISTRY_COMMANDS, help="matching retained Relay registry, not a feed")
         if name in WRITE_COMMANDS:
             action.add_argument("--submission-id", required=True)
@@ -39,7 +42,7 @@ def preflight(operation, payload):
     elif operation in ("freeze-valuation", "reconcile-valuation"):
         validate_spec(publication(payload, "spec"))
     elif operation in ("save-odds", "reconcile-odds"):
-        shape(publication(payload, "calculation"), {"spec_ref", "price"})
+        validate_calculation(publication(payload, "calculation"))
 
 
 def perform(store, operation, payload, submission_id="", registry=None):
@@ -57,7 +60,7 @@ def perform(store, operation, payload, submission_id="", registry=None):
             return service.compute(payload)
         shape(payload, {"reference"})
         return service.read_assessment(payload["reference"]) if operation == "read-odds-assessment" else service.read(payload["reference"])
-    service = ConditionalOdds(store)
+    service = ConditionalOdds(store, _registry(operation, registry))
     if operation in ("freeze-valuation", "reconcile-valuation"):
         return service.freeze(payload, submission_id=submission_id)
     if operation in ("save-odds", "reconcile-odds"):
@@ -78,9 +81,9 @@ def execute(args, store, load, reader_factory):
 
 
 def _registry(operation, registry=None):
-    if operation in watch_commands.REGISTRIES and registry is None:
-        return None  # Research/conditional watches must not depend on a Registry.
-    if operation not in REGISTRY_COMMANDS + watch_commands.REGISTRIES:
+    if operation in CONDITIONAL_REGISTRIES + watch_commands.REGISTRIES and registry is None:
+        return None  # Old declared-price paths still need no market Registry.
+    if operation not in REGISTRY_COMMANDS + CONDITIONAL_REGISTRIES + watch_commands.REGISTRIES:
         return None
     from decision_kernel.application.relay_registry import RelayRegistry
     return registry if isinstance(registry, RelayRegistry) else RelayRegistry(registry or Path("docs/sources/relay-registry.json"))
@@ -92,4 +95,4 @@ def verify_fresh(receipt, operation, reader_factory, registry=None):
     if operation in PROBABILITY_WRITES + PROBABILITY_RECONCILES:
         from decision_kernel.application.probability_odds import verify_fresh as verify_probability
         return verify_probability(receipt, operation, reader_factory, _registry(operation, registry))
-    return verify_conditional(receipt, operation, reader_factory)
+    return verify_conditional(receipt, operation, reader_factory, _registry(operation, registry))

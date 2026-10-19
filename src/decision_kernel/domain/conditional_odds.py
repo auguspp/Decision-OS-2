@@ -16,6 +16,7 @@ from decision_kernel.domain.records import (
 )
 
 VERSION = "conditional-odds-v1"
+RETAINED_VERSION = "conditional-odds-retained-close-v1"
 CONTEXT = Context(prec=80, rounding=ROUND_HALF_EVEN)
 ZERO, ONE = Decimal("0"), Decimal("1")
 METHODS = {"current-fair-value": "equity-value-distance-v1",
@@ -205,17 +206,60 @@ def calculate(spec, price):
     """Pure declared-world calculation. Storage and evidence validation are upstream."""
     spec = validate_spec(spec)
     price = validate_price(price, spec)
+    return _result(spec, price)
+
+
+def validate_close_policy(payload):
+    """Explicit dated-close tolerances; no default investment or market policy."""
+    shape(payload, {"policy_id", "as_of", "rationale", "max_quote_age_days",
+                    "max_master_age_days", "max_capital_age_days"})
+    identifier(payload["policy_id"])
+    timestamp(payload["as_of"])
+    checked_text(payload["rationale"], limit=4096)
+    for key in ("max_quote_age_days", "max_master_age_days", "max_capital_age_days"):
+        require(type(payload[key]) is int and 1 <= payload[key] <= 36525, "ODDS_POLICY_DAY_BOUND")
+    return deepcopy(payload)
+
+
+def calculate_retained(spec, price):
+    """Same conditional arithmetic after the application qualified FTShare input.
+
+    This pure function cannot certify custody or market freshness. Its distinct
+    output version leaves the original declared-price result/replay unchanged.
+    """
+    spec = validate_spec(spec)
+    shape(price, {"schema", "price_id", "kind", "security", "currency", "share_count",
+                  "price", "as_of", "timestamp_semantics", "share_count_qualification"})
+    require(price["schema"] == "odds-qualified-close-v1"
+            and price["kind"] == "retained-ftshare-raw-close", "ODDS_PRICE_KIND_NOT_SUPPORTED")
+    identifier(price["price_id"])
+    require(number(price["price"]) > ZERO and price["security"] == spec["security"]
+        and price["currency"] == spec["currency"] and number(price["share_count"]) == number(spec["share_count"]),
+        "ODDS_QUALIFIED_PRICE_MISMATCH")
+    price_day = timestamp(price["as_of"]).date()
+    if spec["value_kind"] == "future-exit":
+        require(price_day < day(spec["target_date"]), "ODDS_TARGET_NOT_AFTER_PRICE")
+        require(all(day(flow["date"]) > price_day for world in spec["worlds"]
+                    for flow in world["distributions"]), "ODDS_PAST_DISTRIBUTION_REQUIRES_NEW_SPEC")
+    return _result(spec, deepcopy(price), retained=True)
+
+
+def _result(spec, price, *, retained=False):
     rows = world_results(spec, number(price["price"]))
-    limitations = list(BASE_LIMITATIONS) + spec["limitations"]
+    limitations = list(BASE_LIMITATIONS)
+    if retained:
+        limitations = ["RAW_DATED_CLOSE_NOT_EXECUTABLE_QUOTE_LATEST_FEED_OR_HUMAN_ACCEPTANCE"
+            if item == "NO_MARKET_QUALIFICATION_OR_HUMAN_ACCEPTANCE" else item for item in limitations]
+    limitations += spec["limitations"]
     price_day = timestamp(price["as_of"]).date()
     if price_day < day(spec["valuation_date"]):
         limitations.append("PRE_VALUATION_REFERENCE_NOT_POINT_IN_TIME_ANALYSIS")
     elif price_day != day(spec["valuation_date"]):
         limitations.append("NEW_PRICE_DOES_NOT_REFRESH_VALUATION_OR_RESEARCH")
-    return {"schema": VERSION, "method": spec["method"], "value_kind": spec["value_kind"],
+    return {"schema": RETAINED_VERSION if retained else VERSION, "method": spec["method"], "value_kind": spec["value_kind"],
             "valuation_date": spec["valuation_date"], "target_date": spec["target_date"],
             "price": price, "world_results": rows, "probability_status": "not-established",
-            "weighted_aggregate": None, "market_qualification": "not-established",
+            "weighted_aggregate": None, "market_qualification": "application-validation-required" if retained else "not-established",
             "human_acceptance": "not-confirmed", "investment_authority": "none",
             "is_annualized": False, "is_discounted": False,
             "decimal_precision": 80, "decimal_rounding": "ROUND_HALF_EVEN",

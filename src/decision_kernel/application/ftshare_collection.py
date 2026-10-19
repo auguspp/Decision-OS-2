@@ -601,7 +601,8 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
                                           calendar_references=plan["calendar_references"])
                 expected = _single_plan(base, context, collection_id=plan["collection_id"],
                     generation=plan["generation"], created_at=plan["created_at"],
-                    targets=plan["targets"], source_budget=plan["source_budget"])
+                    targets=plan["targets"], source_budget=plan["source_budget"],
+                    completion_policy=plan.get("completion_policy"))
                 _single_inherited_sources(expected, grouped)
             else:
                 context = _legacy_context(plan["legacy_reference"], registry, grouped,
@@ -623,7 +624,8 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
             for slot, unit in checked["units"].items():
                 if unit["status"] == "complete" and previous["units"][slot]["status"] != "complete":
                     loader = restore_single if plan["schema"] == SINGLE_PLAN_SCHEMA else restore_ftshare_batch
-                    loader(unit["reference"], grouped, request=plan["requests"][slot])
+                    captured = loader(unit["reference"], grouped, request=plan["requests"][slot])
+                    _capture_completion(captured, plan.get("completion_policy"))
     content = {"schema": SCHEMA, "registry": deepcopy(registry.snapshot),
                "predecessor": parent, "collection": checked}
     source = _source(content)
@@ -901,15 +903,16 @@ def _single_context(base, registry, store, *, start, end, calendar_references=No
     return context
 
 
-def _single_plan(base, context, *, collection_id, generation, created_at, targets, source_budget):
-    from decision_kernel.application.market_collection_inputs import _reading_clock
+def _single_plan(base, context, *, collection_id, generation, created_at, targets, source_budget,
+                 completion_policy=None):
+    from decision_kernel.application.market_completion import completed_close_clock
     _single_base_ready(base)
     prior = base["collection"]
     require(collection_id == prior["plan"]["collection_id"] and generation != prior["plan"]["generation"],
             "FTSHARE_SINGLE_BASE_IDENTITY")
     require(_clock(created_at) >= _clock(prior["updated_at"]), "FTSHARE_COLLECTION_CLOCK")
     final = datetime.strptime(context["end"], "%Y%m%d").date().isoformat()
-    _reading_clock(created_at, final)
+    completed_close_clock(created_at, final, completion_policy)
     targets = _single_targets(targets)
     require(type(source_budget) is int and source_budget == len(targets), "FTSHARE_COLLECTION_BUDGET_CHANGED")
     require(all(target["symbol"] in context["eligible_symbols"] for target in targets),
@@ -937,6 +940,8 @@ def _single_plan(base, context, *, collection_id, generation, created_at, target
         new_slots=new_slots, inherited_units=inherited, adoption=deepcopy(prior["plan"]["adoption"]),
         prior_generation_reserved_requests=(prior["plan"].get("prior_generation_reserved_requests", 0)
                                             + prior["reserved_requests"]))
+    if completion_policy is not None:
+        plan["completion_policy"] = completion_policy
     return plan
 
 
@@ -962,12 +967,22 @@ def _single_write_frontier(base, registry, store, *, generation):
 def _single_inherited_sources(plan, store):
     for slot, unit in plan["inherited_units"].items():
         if unit["status"] == "complete":
-            restore_single(unit["reference"], store, request=plan["requests"][slot])
+            captured = restore_single(unit["reference"], store, request=plan["requests"][slot])
+            _capture_completion(captured, plan.get("completion_policy"))
+
+
+def _capture_completion(capture, completion_policy):
+    if completion_policy is None:
+        return
+    from decision_kernel.application.market_completion import completed_close_clock
+    dates = [row["trade_date"] for rows in capture["normalized"]["series"].values() for row in rows]
+    if dates:
+        completed_close_clock(capture["acquired_at"], max(dates), completion_policy)
 
 
 def plan_ftshare_single_collection(base_reference, registry, store, *, collection_id,
                                   generation, created_at, start, end, targets, source_budget,
-                                  calendar_references=None):
+                                  calendar_references=None, completion_policy=None):
     """Plan bounded new v1 calls on the exact terminal FTShare frontier; no provider I/O."""
     require(isinstance(registry, RelayRegistry), "FTSHARE_COLLECTION_REGISTRY_REQUIRED")
     with market_read_scope(store) as reader:
@@ -976,7 +991,8 @@ def plan_ftshare_single_collection(base_reference, registry, store, *, collectio
         context = _single_context(base, registry, reader, start=start, end=end,
                                   calendar_references=calendar_references)
         plan = _single_plan(base, context, collection_id=collection_id, generation=generation,
-            created_at=created_at, targets=targets, source_budget=source_budget)
+            created_at=created_at, targets=targets, source_budget=source_budget,
+            completion_policy=completion_policy)
         _single_inherited_sources(plan, reader)
         units = {**deepcopy(plan["inherited_units"]), **{slot: {"status": "pending", "request_count": 0,
             "reference": None, "reason_code": None} for slot in plan["new_slots"]}}
@@ -988,11 +1004,15 @@ def _validate_single_collection(collection):
     require(set(collection) == {"schema", "plan", "revision", "units", "reserved_requests", "source_hold",
         "updated_at"} and collection["schema"] == STATE_SCHEMA, "FTSHARE_SINGLE_STATE")
     plan = collection["plan"]
-    require(set(plan) == {"schema", "collection_id", "generation", "created_at", "legacy_reference", "legacy",
+    fields = {"schema", "collection_id", "generation", "created_at", "legacy_reference", "legacy",
         "start", "end", "calendar_end", "since", "until", "master_references", "calendar_references",
         "legacy_calendar_references", "baseline_daily_reference", "sessions", "symbols", "eligible_symbols",
         "quarantined_symbols", "batch_size", "source_budget", "requests", "base_reference", "targets",
-        "new_slots", "inherited_units", "adoption", "prior_generation_reserved_requests"}, "FTSHARE_SINGLE_PLAN")
+        "new_slots", "inherited_units", "adoption", "prior_generation_reserved_requests"}
+    require(fields <= set(plan) <= fields | {"completion_policy"}, "FTSHARE_SINGLE_PLAN")
+    if "completion_policy" in plan:
+        from decision_kernel.application.market_completion import EOD_COMPLETION_POLICY
+        require(plan["completion_policy"] == EOD_COMPLETION_POLICY, "FTSHARE_COMPLETION_POLICY")
     identifier(plan["collection_id"]); identifier(plan["generation"])
     require(plan["collection_id"].startswith("ftshare-") and plan["batch_size"] is None
         and type(plan["since"]) is int and type(plan["until"]) is int
@@ -1085,7 +1105,8 @@ def _restore_single_collection(reference, content, registry, store):
         context = _single_context(base, registry, store, start=plan["start"], end=plan["end"],
                                   calendar_references=plan["calendar_references"])
         expected = _single_plan(base, context, collection_id=plan["collection_id"], generation=plan["generation"],
-            created_at=plan["created_at"], targets=plan["targets"], source_budget=plan["source_budget"])
+            created_at=plan["created_at"], targets=plan["targets"], source_budget=plan["source_budget"],
+            completion_policy=plan.get("completion_policy"))
         require(plan == expected, "FTSHARE_COLLECTION_RESTORED_CONTEXT_CHANGED")
         _, tip = _chain(store, registry, plan["collection_id"], plan["generation"])
         require(tip is not None and tip["revision"] >= collection["revision"], "FTSHARE_COLLECTION_CHAIN_REQUIRED")

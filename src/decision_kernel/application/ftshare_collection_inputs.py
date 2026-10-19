@@ -11,10 +11,11 @@ from datetime import date
 import hashlib
 
 from decision_kernel.application.ftshare_adoption import ADOPTION_PLAN_SCHEMA
-from decision_kernel.application.ftshare_collection import SINGLE_PLAN_SCHEMA
+from decision_kernel.application.ftshare_collection import SINGLE_PLAN_SCHEMA, _capture_completion
 from decision_kernel.application.market_collection_inputs import (
-    _empty_endpoint_observation, _empty_observation, _reading_clock,
+    _empty_endpoint_observation, _empty_observation,
 )
+from decision_kernel.application.market_completion import completed_close_clock
 from decision_kernel.application.market_custody import market_read_scope
 from decision_kernel.application.market_relay_inputs import _range
 from decision_kernel.application.market_security_inputs import _within_listing
@@ -136,6 +137,7 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
         try:
             capture = load_batch(unit["reference"], request=request)
             require(capture["request"] == request, "FTSHARE_READING_REQUEST_CHANGED")
+            _capture_completion(capture, plan.get("completion_policy"))
         except StoreUnavailable:
             raise
         except (RecordError, MarketInputError) as exc:
@@ -244,7 +246,7 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                 ("comparison-gaps" if family is endpoints else "data-gaps")
                 if surface["incomplete_count"] else "observed")
             surface["requested_end"] = end
-    clock, through = _reading_clock(read_as_of, end)
+    clock, through = completed_close_clock(read_as_of, end, plan.get("completion_policy"))
     complete = _requested_scope(plan, context) and all(
         source["status"] == "restored" for source in sources.values())
     calendar_through = date(int(plan["calendar_end"][:4]), int(plan["calendar_end"][4:6]),
@@ -260,6 +262,9 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
         "status": "unknown" if any(lag is None for lag in lags) else "stale" if any(lags)
             else "current-through-completed-day",
         "basis": "original-verified-calendars-through-prior-Asia-Shanghai-day"}
+    if plan.get("completion_policy") is not None:
+        freshness.update(completion_policy=plan["completion_policy"],
+            basis="original-verified-calendars-through-Asia-Shanghai-1835-observation-cutoff-not-provider-tick")
     comparison = {"schema": ENDPOINT_SCHEMA, "comparison_basis": "calendar-endpoints-v1",
         "normalization": NORMALIZATION, "daily_path_certified": False, **endpoints}
     view = {"schema": VIEW_SCHEMA, "provider": "FTSHARE", "start": start,

@@ -4,6 +4,7 @@ Snapshots and predecessors are explicit inputs. Replaying an old check never
 consults today's research pointer as if it were the originally observed one.
 """
 from dataclasses import asdict
+from contextlib import contextmanager
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 import json
@@ -49,6 +50,19 @@ class _Reads:
     def reference(self, commit, path):
         raw = self._get(["reference", commit, path], lambda: encoded(asdict(self.original.reference(commit, path))))
         return BlobRef(**json.loads(raw))
+    def paths(self, commit, prefix=""):
+        raw = self._get(["paths", commit, prefix], lambda: encoded(self.original.paths(commit, prefix)))
+        return json.loads(raw)
+    @contextmanager
+    def ftshare_close_read_scope(self):
+        # FTShare collection restoration needs the trusted root backend's
+        # source-only snapshot capability. Preserve its binding/API and final
+        # permission checks; never turn this memo into a writer or new store.
+        # This is explicitly FTShare-only: old Relay restore retains its
+        # original memo/read protocol and must not start a native snapshot.
+        from decision_kernel.application.odds_market import retained_close_read_scope
+        with retained_close_read_scope(VersionedStore(self.original)) as reader:
+            yield reader.backend
     def commit(self, files, *, expected):
         raise RecordError("WATCH_REPLAY_READER_IS_READ_ONLY")
 
@@ -139,7 +153,10 @@ class OddsWatch:
             unavailable = {"ODDS_CLOSE_DAY_NOT_FINISHED_OR_STALE", "ODDS_EXACT_CLOSE_MISSING",
                            "ODDS_SECURITY_MASTER_STALE", "ODDS_SECURITY_MASTER_MISSING",
                            "ODDS_CLOSE_NOT_TRADING_DAY", "ODDS_MARKET_CAPTURE_AFTER_EVALUATION",
-                           "ODDS_CLOSE_CAPTURE_DAY_NOT_FINISHED", "WATCH_PRICE_QUALIFICATION_MISMATCH"}
+                           "ODDS_CLOSE_CAPTURE_DAY_NOT_FINISHED", "WATCH_PRICE_QUALIFICATION_MISMATCH",
+                           "ODDS_FTSHARE_SOURCE_HOLD", "ODDS_CLOSE_OUTSIDE_COLLECTION_RANGE",
+                           "ODDS_FTSHARE_CLOSE_BEFORE_CUTOFF_OR_STALE",
+                           "ODDS_FTSHARE_CAPTURE_BEFORE_CLOSE_CUTOFF"}
             if code not in review | unavailable:
                 raise  # Transport, custody corruption and malformed payloads are not a false comparison.
             return {"status": "review-required" if code in review else "cannot-determine",
@@ -189,13 +206,22 @@ class OddsWatch:
         else:
             price = request["input"]
             p = watch["data_policy"]
-            require(price.get("kind") == p["price_kind"], "WATCH_PRICE_QUALIFICATION_MISMATCH")
-            # Existing Odds validates shape, security, shares, evidence, cash and method.
-            calculation = conditional.compute({"spec_ref": watch["basis"]["reference"], "price": price})
-            age = (at - timestamp(price["as_of"])).total_seconds()
-            if not 0 <= age <= p["max_price_age_days"] * 86400:
-                return {**out, "status": "cannot-determine", "reason": "WATCH_PRICE_FUTURE_OR_STALE"}
-            if not 0 <= (calendar_at.date() - day(spec["capital_structure"]["as_of"])).days <= p["max_capital_age_days"]:
+            if p["price_kind"] == "retained-ftshare-raw-close":
+                from decision_kernel.application.odds_market import FTSHARE_CLOSE_SCHEMA
+                require(price.get("schema") == FTSHARE_CLOSE_SCHEMA, "WATCH_PRICE_QUALIFICATION_MISMATCH")
+                calculation = ConditionalOdds(reader, self._registry(), clock=self.clock).compute({
+                    "spec_ref": watch["basis"]["reference"], "market": price,
+                    "market_policy": p["market_policy"], "evaluated_at": request["checked_at"]})
+                capital_age = p["market_policy"]["max_capital_age_days"]
+            else:
+                require(price.get("kind") == p["price_kind"], "WATCH_PRICE_QUALIFICATION_MISMATCH")
+                # Original v1 price and temporal semantics stay exact on replay.
+                calculation = conditional.compute({"spec_ref": watch["basis"]["reference"], "price": price})
+                age = (at - timestamp(price["as_of"])).total_seconds()
+                if not 0 <= age <= p["max_price_age_days"] * 86400:
+                    return {**out, "status": "cannot-determine", "reason": "WATCH_PRICE_FUTURE_OR_STALE"}
+                capital_age = p["max_capital_age_days"]
+            if not 0 <= (calendar_at.date() - day(spec["capital_structure"]["as_of"])).days <= capital_age:
                 return {**out, "status": "review-required", "reason": "WATCH_CAPITAL_ASSUMPTION_STALE"}
         c = watch["condition"]
         if c["metric"] == "price": value = calculation["price"]["price"]

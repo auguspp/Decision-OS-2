@@ -1,7 +1,7 @@
 """Finite, explicit Watch conditions; no scheduler, probability inference or action."""
 from copy import deepcopy
 
-from decision_kernel.domain.conditional_odds import number, shape, timestamp
+from decision_kernel.domain.conditional_odds import number, shape, timestamp, validate_close_policy
 from decision_kernel.domain.records import BlobRef, checked_text, encoded, identifier, require
 from decision_kernel.domain.research_artifacts import artifact_reference
 
@@ -55,10 +55,16 @@ def validate_watch(payload):
             and type(win["end_after_trigger"]) is bool, "WATCH_WINDOW_INVALID")
     if mode == "conditional":
         p = w["data_policy"]
-        shape(p, {"price_kind", "max_price_age_days", "max_capital_age_days"})
-        require(p["price_kind"] in ("declared-reference", "relay-observation"), "WATCH_PRICE_REQUIREMENT_UNSUPPORTED")
-        for key in ("max_price_age_days", "max_capital_age_days"):
-            require(type(p[key]) is int and 1 <= p[key] <= 36525, "WATCH_AGE_POLICY_REQUIRED")
+        if isinstance(p, dict) and p.get("price_kind") == "retained-ftshare-raw-close":
+            shape(p, {"price_kind", "market_policy"})
+            validate_close_policy(p["market_policy"])
+            require(timestamp(p["market_policy"]["as_of"]) <= timestamp(a["as_of"]),
+                    "WATCH_POLICY_AFTER_ACTIVATION")
+        else:
+            shape(p, {"price_kind", "max_price_age_days", "max_capital_age_days"})
+            require(p["price_kind"] in ("declared-reference", "relay-observation"), "WATCH_PRICE_REQUIREMENT_UNSUPPORTED")
+            for key in ("max_price_age_days", "max_capital_age_days"):
+                require(type(p[key]) is int and 1 <= p[key] <= 36525, "WATCH_AGE_POLICY_REQUIRED")
     else:
         require(w["data_policy"] is None, "WATCH_UNEXPECTED_DATA_POLICY")
     require(w["effect"] == "record-only", "WATCH_EFFECT_NOT_AUTHORIZED")

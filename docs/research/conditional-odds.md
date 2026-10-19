@@ -1,6 +1,6 @@
-# Odds 首组：冻结研究、条件估值与价格重算
+# Odds：冻结研究、条件估值与价格重算
 
-责任 [#60](https://github.com/auguspp/Decision-OS-2/issues/60)，落实[设计第14章](../decision-os-2.0-design.md#chapter-14)及[实施基线§7.1](../implementation-baseline.md#contracts)。这是无概率条件计算的首个完整交付组，不是全量概率Odds、行情资格、Watch或Decision上线。原Full、SourceRef、原字节附件、提交日志及Git备份继续承担各自责任；不建立新数据库、研究current或行情提供方。
+责任 [#60](https://github.com/auguspp/Decision-OS-2/issues/60)，落实[设计第14章](../decision-os-2.0-design.md#chapter-14)及[实施基线§7.1](../implementation-baseline.md#contracts)。本入口负责无概率条件计算及其明确价格输入，包含后文FTShare留存收盘接线；[概率Odds](probability-odds.md)、[Watch](odds-watch.md)各有独立合同，不代签Decision。原Full、SourceRef、原字节附件、提交日志及Git备份继续承担各自责任；不建立新数据库、研究current或行情提供方。
 
 ## 能做什么，不能做什么
 
@@ -11,7 +11,7 @@
 
 两者都不自动年化、不折现、不换币、不计算费用/税费、现金再投资、期望收益或胜率。当前价值载荷不得有未来目标日和另加分配现金，不能把Full已经贴现的每股估值塞进未来收益。目标日是退出价值日期，不是盈利预测年份的任意简称。
 
-`probability_status=not-established`，只允许明确声明世界，不默认等权；加权输出为null。本组没有概率风险政策和合格Market适配，显式概率、所谓qualified-market和未知方法会被拒绝。**这不阻止无概率条件分析。** 后续概率Odds必须独立建立真实概率/风险/行情资格及新方法版本，不把本组限制永久当作产品取消，也不能从机构预测数或后来涨幅补概率。
+`probability_status=not-established`，只允许明确声明世界，不默认等权；加权输出为null。`odds-price-v1`不接受显式概率、所谓qualified-market或未知方法；FTShare合格留存价必须沿后文市场输入恢复真实来源。**这不阻止无概率条件分析。** 概率Odds沿独立入口建立真实概率/风险/行情资格，不把无概率限制当作产品取消，也不能从机构预测数或后来涨幅补概率。
 
 ## 有限输入与精确绑定
 
@@ -38,6 +38,28 @@
 
 as_of须含时区；其日历日期对应所选报价日，调用者应采用来源本地时区，不自动推断时区/收盘时间。价格必须正数，证券/股类/币种/股数匹配冻结规格。可替换price-id/来源引用/日期/数值等价格上下文，但不得改变规格；新报价不滚动目标日。若分配日已过去或价格日不早于退出日，拒绝计算，要求显式调整规格，不能静默删除旧现金流。历史价配后续研究、当前估值配新日期价格均带限制，不能称历史PIT或新研究。
 
+### 已留存 FTShare 原始收盘价
+
+现役`calculate-odds/save-odds/read-odds`另支持`{spec_ref, market, market_policy, evaluated_at}`，使无概率条件分析直接消费[FTShare日线](../sources/ftshare-daily.md)原集合。原`{spec_ref,price}`、`odds-price-v1`与历史结果保持不变；FTShare价格不包装成声明价或Relay观察。
+
+| 输入 | 内容 |
+|---|---|
+| `market` | `{schema:"odds-ftshare-close-v1",price_id,collection_ref,exchange,quote_date}`。`collection_ref`必须是原集合的确切SourceRef；`exchange`为SSE/SZSE；`quote_date`为明确的YYYY-MM-DD，不自动寻找最新日期。 |
+| `market_policy` | `policy_id/as_of/rationale`及`max_quote_age_days/max_master_age_days/max_capital_age_days`，年龄均为显式正整数、最大36525日。日期与容忍度的依据由本次用途说明，程序不提供投资默认值。 |
+| `evaluated_at` | 带时区的本次评价时点；不早于政策，不晚于实际运行时间。 |
+
+复用`restore_ftshare_collection`取得原日历、证券主表及请求身份，只恢复该证券对应的`adjust_kind=none`原始查询，再逐日定位`close`。不接受调用者自填价格、复权选择或`qualified=true`；不回退另一提供方、另一日期或未保管查询。引用/原件损坏直接失败，来源hold不授予新资格。缺失的其他证券或前复权序列不抹去该只证券已成立的原始收盘用途，也不因此证明全市场完整。
+
+所选日必须在集合范围和实际开市日历内；证券、交易所、上市期和CNY普通A股匹配。新FTShare路径采用固定政策`ashare-eod-1835-v1`：评价时点与原始响应取得时点都不得早于报价日的北京时间18:35，全部采用资料的捕获时点不得晚于评价。该规则允许正常收盘后日更当晚被消费；18:35之前取得的原件，即使次日读取也不自动取得这一资格。原Relay次日规则不改写。
+
+FTShare输出`as_of`的18:35:00+08:00是**保守的收盘后观察政策截止**，不是供应商tick、交易所关市证明或独立最终价认证；原响应实际取得时间另外保留。报价年龄按本地日历日计，同日为0；证券主表和固定资本结构各自检查年龄。`freshness=within-declared-age-policy`只说明原明确容忍度，`latest_market_close=not-certified`不改称最新价、可成交价或历史PIT。该截止只服务现有沪深普通A股日线消费，盘中/竞价及其他市场不套用。
+
+新结果使用`conditional-odds-retained-close-v1`，保留原80位算术及当前价值/未来退出价值区分，连同`market_policy`、全部实际采用引用/取得时间/原请求摘要、原`calculation_input`保存。`read-odds`按原输入重新恢复、重算；原v1仍按原price重算。没有新存储、研究current、概率参数或行情请求。算术相同不表示研究估值随新价更新。
+
+CLI原命令可给`--registry docs/sources/relay-registry.json`，因为FTShare集合仍引用原Relay日历与主表。不给时，新市场路径使用当前checkout登记；重放历史登记变化必须提供原匹配资源。旧声明价/Relay观察结果不新增Registry依赖。宿主沿原Odds路由消费相同输入，权限与稳定提交意图不变。
+
+原生GitHub宿主在恢复FTShare集合时复用现役MarketRadar的`GitMarketReader`，研究规格和结果仍走原Store。来源快照只读、沿同一绑定和同一个GitHub API预算，退出前重查可见性和可达性；保存后的独立reader重新取得原始字节，不继承写入者的来源快照。Watch的操作内引用缓存只透传这项原底层能力，不放宽512请求上限。
+
 ## 保存与真正的价格刷新
 
 先提交原研究，再冻结其受支持估值产出；一份规格绑定一个真实研究版本和其正文摘要，不模拟旧ResearchSnapshot。冻结对象与各价格结果沿原ResearchArtifacts保存为application/json，路径仍是`research/artifacts/.../manifest.json + content.bin`。结果内含确切规格引用、规格摘要、研究引用、价格时钟与证据、原未解问题、方法版本及逐世界计算。没有第二current、删除接口或后台行情请求。
@@ -62,6 +84,8 @@ decision-os store --binding readonly.json read-odds --ref saved-result-ref.json
 
 第二个价格仍使用同一个spec_ref；相同spec SHA可验证股数、目标日、价值/现金和假设都未改变。返回值保留小数收益（0.25=25%），不把其误显示为0.25%。本组不创建价格订阅或自动刷新；结果引用由实际调用者保留，按需可用原deliver的supporting-file/artifact_ref携带，不能把绑定旧研究的spec称为新修订已经重估。
 
+FTShare合格收盘也可作为第二个价格输入：保存包装仍是`{calculation:<上节市场计算输入>,rights_confirmed:true,rights_basis:<真实依据>}`。这些字段不由工程示例授予实际保管权。
+
 ### 现役显式宿主
 
 `research-runtime.yml` 新增`freeze-valuation/read-valuation/calculate-odds/save-odds/read-odds`，写操作只有freeze/save。读spec/result的payload为`{reference:<exact ref>}`；calculate与CLI相同。原code_sha、稳定submission_id、expected_head与公开产物约束保持，代码变化明确重新核验，读入口无写权限。无需第二个Secret或工作流。
@@ -75,6 +99,8 @@ decision-os store --binding readonly.json read-odds --ref saved-result-ref.json
 外部复用检查：Python 3.12官方decimal文档（https://docs.python.org/3.12/library/decimal.html）支持显式Context/localcontext及可控精度；现成标准库与旧算术足够，不引入金融建模包或第二数值栈。原固定方法不修改；未来方法变动采用新版本，历史读取责任继续。
 
 测试覆盖原两价格正例、无概率边界、当前价值非回报、股类币种/股本/时点/分红/来源定位、真Git保存读回、旧研究变化提示、同意图冲突/未知写只读对账、宿主权限和原同一次cold-wheel安装。自查不是独立批准；CI不是经济研究。没有为工程构造真实公司判断或补概率。
+
+FTShare接线继续直接用现役集合、单股原始响应恢复与Decimal，不引入新的市场reader或第三方计算包。专属回归`tests/test_ftshare_odds.py`用真实Store保管合成的两个原始查询，实际进入条件/概率Odds和两类Watch、独立Git读回及原命令；检查同日18:35截止前拒绝、截止后消费、次日原输入重演、陈旧、错期、来源hold、未保管、伪装复权、损坏和不匹配Registry。合成工程验证不代签真实研究概率或全市场可靠性。退出FTShare采用时退该窄适配、对应输入/消费者与专属回归，继续保留旧结果和原资料的历史读取义务。
 
 退出本能力时同步处理独立domain/application/odds_commands、CLI/宿主路由和专属测试；原artifact/store及历史方法/引用继续可读，不清理用户资料。普通反向PR回退工程，数据副作用不随代码回退消失。
 

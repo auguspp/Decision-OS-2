@@ -147,17 +147,24 @@ def test_existing_workflow_exposes_only_a_new_read_operation():
 def exercise_installed_room(outside,python,env,store):
     """Consume the structured research and Brief from the existing cold-wheel helper."""
     script=r'''
-import json,sys
+import base64,json,sys
 from dataclasses import asdict
 from pathlib import Path
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.application.versioned_store import VersionedStore
+from decision_kernel.application.research_artifacts import ResearchArtifacts
+from decision_kernel.domain.research_artifacts import ArtifactInput
 s=VersionedStore(GitStore(Path(sys.argv[1])))
 head=s.backend.head()
 paths=[p for p in s.backend.paths(head,'research/artifacts/mixed-edition/') if p.endswith('/manifest.json')]
 assert len(paths)==1
+artifacts=ResearchArtifacts(s)
+original=artifacts.read(s.backend.reference(head,paths[0]))
+artifacts.put('installed-discovery-edition',ArtifactInput.from_bytes('news-edition-installed-discovery',
+ 'news-edition.json','application/json',base64.b64decode(original['data_base64'])))
+head=s.backend.head()
 plan={'as_of':'2026-10-16T12:00:00Z','catalogue':{'limit':1},
- 'reference':asdict(s.current('mixed-research')),'brief':asdict(s.backend.reference(head,paths[0]))}
+ 'reference':asdict(s.current('mixed-research')),'brief':{'select':'latest-saved'}}
 Path('room-plan.json').write_text(json.dumps(plan),encoding='utf-8')
 print(head)
 '''
@@ -172,6 +179,8 @@ print(head)
         return json.loads(p.stdout)
     first=run('installed-reading-room.html');second=run('installed-reading-room-again.html')
     assert first==second and first['catalogue']['snapshot']==setup.stdout.strip()
+    assert first['brief_discovery']['status']=='selected' and first['brief_discovery']['complete'] is True
+    assert first['plan']['brief']==first['brief']['reference']
     pinned=next(r for r in first['readings'] if r.get('case_id')=='mixed-research')
     assert pinned['case_id']=='mixed-research' and pinned['brief_relation']['status']=='included'
     assert 'Original finding.' in pinned['body'] and first['persistence']=='not-written'

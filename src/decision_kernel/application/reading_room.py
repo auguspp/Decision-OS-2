@@ -23,6 +23,7 @@ MAX_VIEW_BYTES = 6 * 1024 * 1024
 
 def plan_input(value):
     from decision_kernel.application.research_agenda import clock, research_reference
+    from decision_kernel.application.brief_discovery import latest_selector
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
@@ -36,7 +37,10 @@ def plan_input(value):
     result = {"as_of": value["as_of"], "catalogue": {**deepcopy(catalogue), "limit": limit},
               "reference": research_reference(value["reference"]) if value.get("reference") is not None else None}
     for name in ("agenda", "brief"):
-        result[name] = asdict(artifact_reference(value[name])) if value.get(name) is not None else None
+        if name == "brief" and latest_selector(value.get(name)):
+            result[name] = deepcopy(value[name])
+        else:
+            result[name] = asdict(artifact_reference(value[name])) if value.get(name) is not None else None
     if value.get("materials") is not None:
         from decision_kernel.application.reading_materials import material_plan
         result["materials"] = material_plan(value["materials"])
@@ -114,6 +118,10 @@ class ReadingRoom:
         doc, _ = open_edition(self.source_reader, ResearchArtifacts(self.store), reference)
         return doc
 
+    def _discover_brief(self, snapshot, as_of):
+        from decision_kernel.application.brief_discovery import discover_latest
+        return discover_latest(self.store, snapshot=snapshot, as_of=as_of)
+
     def _research(self, reference):
         research = self.store.read_revision(BlobRef(**reference))
         require(research["reference"] == reference, "ROOM_RESEARCH_REFERENCE_MISMATCH")
@@ -131,15 +139,33 @@ class ReadingRoom:
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
+        from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
+        refresh_plan = {**deepcopy(plan), "catalogue": {"limit": plan["catalogue"]["limit"]}}
+        discovery = None
+        if latest_selector(plan["brief"]):
+            try:
+                discovery = self._discover_brief(catalogue["snapshot"], plan["as_of"])
+            except (RecordError, KeyError, TypeError) as error:
+                discovery = {"snapshot": catalogue["snapshot"], "complete": False,
+                             "reference": None, **_failure(error)}
+            if discovery["status"] == "selected":
+                # All subsequent navigation/replay uses the frozen ArtifactRef.
+                # Only the explicit refresh plan resolves the selector again.
+                plan["brief"] = deepcopy(discovery["reference"])
         refs = [c["reference"] for c in catalogue["items"] if c["status"] == "readable"]
         if plan["reference"] is not None and plan["reference"] not in refs:
             refs.append(plan["reference"])
         agenda = _panel(lambda: self._agenda(refs, plan), plan["agenda"])
         brief = {"reference": None, "status": "not-supplied"}
-        if plan["brief"] is not None:
+        if latest_selector(plan["brief"]):
+            brief = {"reference": None, "status": discovery["status"]}
+            if discovery.get("error"):
+                brief["error"] = discovery["error"]
+        elif plan["brief"] is not None:
             brief = _panel(lambda: self._brief(plan["brief"]), plan["brief"])
             if brief["status"] == "readable":
                 doc = brief["view"]
+                brief["age"] = cutoff_age(doc["plan"]["cutoff"], plan["as_of"])
                 if not feedback_export and (doc["attention_state"] or
                         (doc.get("research") or {}).get("agenda_reference")):
                     # Do not put previously saved notes in the host's public output.
@@ -172,13 +198,16 @@ class ReadingRoom:
                 "cursor": deepcopy(catalogue["next_cursor"]), "limit": plan["catalogue"]["limit"]}}
         result = {"schema": "reading-room-v1", "plan": plan, "catalogue": catalogue,
                   "readings": readings, "agenda": agenda, "brief": brief, "next_plan": next_plan,
+                  "refresh_plan": refresh_plan,
                   "coverage": "one-catalogue-page-plus-explicit-reference-and-specified-artifacts",
                   "time_basis": "as-of-is-review-clock-not-research-cutoff-or-PIT",
                   "human_selection": "not-recorded-by-reading", "human_acceptance": "not-established",
                   "research_assessment": "not-performed", "execution": "not-started",
                   "notification": "not-sent", "persistence": "not-written"}
         partial = catalogue["status"] == "partial-page" or agenda["status"] != "readable" or any(
-            r["status"] != "readable" for r in readings) or brief["status"] not in ("readable", "not-supplied")
+            r["status"] != "readable" for r in readings) or brief["status"] not in ("readable", "not-supplied", "no-saved-brief")
+        if discovery is not None:
+            result["brief_discovery"] = discovery
         if agenda["status"] == "readable" and agenda["view"]["status"] == "partial":
             partial = True
         if plan.get("materials"):

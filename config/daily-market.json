@@ -1,0 +1,19 @@
+{
+  "schema": "daily-market-policy-v1",
+  "enabled": true,
+  "schedule_utc": "35 10 * * 1-5",
+  "not_before_local": "18:35",
+  "lookback_days": 119,
+  "max_calendar_requests": 2,
+  "max_price_requests": 12,
+  "symbols": ["000001.SZ", "002384.SZ", "002714.SZ", "300750.SZ", "600000.SH", "688981.SH"],
+  "seed_reference": {
+    "manifest": {
+      "repository": "auguspp/Decision-OS-2",
+      "commit": "e6b4531e1caddf2e4a542e84f0f51a863c4e1a09",
+      "path": "source-views/ftshare-collection-e169eb134452944bcaa0f5580214ba64-r016/bd55dab40cca3fcc2746627b76565415be7f42bf149524efbd468073b2d9a105/manifest.json",
+      "sha256": "85df4e739bc113439888e933530be9103d7cecfed0a7dc7d87e1e5a37ee6bd3f"
+    },
+    "selection": {"kind": "all", "start": null, "end": null, "columns": []}
+  }
+}

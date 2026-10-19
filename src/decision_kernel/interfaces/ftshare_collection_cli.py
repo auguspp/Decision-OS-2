@@ -461,7 +461,8 @@ def _run_kernel_adoption(*, config, registry, open_unit, kernel_loader,
 def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                    access_confirmed=False, custody_authorized=False, client_factory=None,
                    guard=None, progress=None, clock=None, monotonic=time.monotonic,
-                   sleep=time.sleep, capacity=market_capacity, calendar_references=None, kernel_loader=None):
+                   sleep=time.sleep, capacity=market_capacity, calendar_references=None, kernel_loader=None,
+                   quota_wait=None):
     """Finite source sync, source-free adoption, or independently restored status."""
     require(operation in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
     writing = operation != "ftshare-status"
@@ -499,8 +500,20 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
     report()
     for number in range(1, max_work_units + 1):
         if previous_limits is not None and not previous_limits.admits(MAX_REQUESTS):
-            receipt.update(status="paused", reason_code="FTSHARE_STORE_RATE_LIMIT")
-            break
+            admitted = False
+            if quota_wait is not None:
+                try:
+                    admitted = quota_wait(api) is True
+                finally:
+                    # The callback uses the preceding unit's API. Its native
+                    # read probes remain part of that original bounded counter,
+                    # including when permission or quota refresh fails.
+                    unit["store_api_requests"] = getattr(api, "_requests", None)
+                    receipt["store_rate_limits"] = previous_limits.receipt()
+                    report()
+            if not admitted or not previous_limits.admits(MAX_REQUESTS):
+                receipt.update(status="paused", reason_code="FTSHARE_STORE_RATE_LIMIT")
+                break
         try:
             store, fresh, api = open_unit(writing)
         except Exception as exc:

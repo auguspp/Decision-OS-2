@@ -8,7 +8,7 @@
 
 打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，选择最近一次运行，在 Summary 查看更新情况、内容日期与行情覆盖。完整离线页面在该次运行的 `dos2-daily-market-*` 产物中，下载后打开 `reading-room.html`，集中阅读最新已存 Brief、研究原文和到期待复核问题。新生成的页面不代表已存 Brief 已更新。
 
-现有六股池按北京时间工作日 18:35 更新原价和前复权日线，并刷新同一个阅读入口。交易日以实际交易所日历为准；GitHub 调度可能延迟，实际状态以该次运行回执为准。需要提前阅读时，可以在该工作流选择 `status` 并填写当前 `main` 的确切代码版本，只读取已存内容。范围、暂停及接续方式见[日常更新合同](docs/architecture/daily-market.md)；直接使用原阅读宿主见[统一阅读室](docs/delivery/reading-room.md)。
+现有六股池在北京时间工作日 18:35 启动原价和前复权日线更新，完成后生成本次阅读页。交易日以实际交易所日历为准；GitHub 调度可能延迟，接口额度不足时会等待真实额度刷新，整轮可能需要数小时，累计等待最多五小时。查看最近一次运行的实际状态与数据日期即可判断是否已更新。需要提前阅读时，可以在该工作流选择 `status` 并填写当前 `main` 的确切代码版本，只读取已存内容。范围、暂停及接续方式见[日常更新合同](docs/architecture/daily-market.md)；直接使用原阅读宿主见[统一阅读室](docs/delivery/reading-room.md)。
 
 ## 从这里开始
 

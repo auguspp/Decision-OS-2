@@ -64,7 +64,7 @@ jobs:
   daily:
     if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'update'))
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 330
     permissions:
       contents: write
       actions: read

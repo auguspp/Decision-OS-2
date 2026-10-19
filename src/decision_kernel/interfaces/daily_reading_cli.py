@@ -85,11 +85,11 @@ def _summary_lines(model):
         if cycle.get("reason_code") and cycle["reason_code"] != receipt.get("reason_code"):
             lines.append("任务保留的限制：" + cycle["reason_code"])
     elif context["market_resolution"] == "resolved":
-        lines.append("尚无可读的已存日更任务；若市场根可读，仍按其原日期与覆盖解释。")
+        lines.append("尚无日更记录。")
     else:
-        lines.append("日更任务状态未能核定，不能推断没有历史任务。")
+        lines.append("暂时无法读取日更状态。")
     if context["market_resolution"] != "resolved":
-        lines.append("最新市场版本尚未确定：" + str(context["market_error"]) + "；未用旧版本替代。")
+        lines.append("最新市场版本尚未确定：" + str(context["market_error"]) + "。")
     part = model.get("market")
     view = ((part.get("view") or {}).get("view") or {}) if part and part.get("status") == "readable" else {}
     if view:
@@ -100,21 +100,21 @@ def _summary_lines(model):
             values = view[name]
             observed, total = values.get("observed_count"), values.get("scope_count")
             lines.append(title + "完整窗口覆盖：" + str(observed if observed is not None else "未知") + " / "
-                         + str(total if total is not None else "完整范围未知") + "；未将日常跟踪的有限证券数当全市场分母。")
+                         + str(total if total is not None else "完整范围未知") + "。")
         fresh = view.get("freshness", {}).get("status")
         lines.append("市场当前时效：" + {"unknown": "未知", "stale": "尚未覆盖最近交易日",
             "current-through-completed-day": "已覆盖当前读取所需交易日"}.get(fresh, "按原版本日期阅读") + "。")
     elif part:
-        lines.append("市场面板未成功读回，实际日期与覆盖均不能由本次运行成功推断。")
+        lines.append("行情暂时无法读取，数据日期和覆盖情况未知。")
     brief = model["brief"]
     if brief["status"] == "readable":
         lines.append("已存简报内容截止：" + brief["view"]["plan"]["cutoff"] + "。")
         age = brief.get("age") or {}
         if age.get("status") == "older-than-24h":
-            lines.append("这份简报的内容截止距本次阅读已超过24小时；本轮没有生成新的简报。")
+            lines.append("这份简报的内容截止距本次阅读已超过24小时。")
         elif age.get("status") == "read-clock-before-cutoff":
             lines.append("阅读时钟早于简报截止，不能确认其更新时效。")
-        lines.append("最新已存版本不等于今天的新简报；没有因此启动研究或产生新的概率判断。")
+        lines.append("最新已存版本不等于今天的新简报。")
     else:
         lines.append("简报：" + {"no-saved-brief": "正常发行目录尚无已存版本", "not-supplied": "未提供",
             "missing": "缺失", "invalid": "校验未通过", "unavailable": "暂不可用", "partial": "最新发现尚不完整",
@@ -122,7 +122,6 @@ def _summary_lines(model):
             "sources-permission-required": "来源导出条件未通过"}.get(brief["status"], "当前未能读回") + "。")
     catalogue = model["catalogue"]
     lines.append("研究目录：" + str(catalogue["total_cases"]) + " 个已存案例，本页 " + str(catalogue["returned"]) + " 个；原文及待复核问题在阅读页。")
-    lines.append("本阅读步骤未请求来源网站、写入records、生成研究或发送通知；行情更新的实际请求和失败仍保留在原运行回执。")
     return lines
 
 
@@ -133,7 +132,7 @@ def _markdown_text(value):
 def summary_markdown(model):
     lines = _summary_lines(model)
     result = "## Decision OS 日常阅读\n\n" + "\n\n".join(_markdown_text(line) for line in lines)
-    result += "\n\n在本次私有运行附件中打开 **reading-room.html** 阅读；**reading-room.json** 保留对应精确引用与状态。\n"
+    result += "\n\n在本次运行附件中打开 **reading-room.html** 阅读全文。\n"
     require(len(result.encode()) <= 32 * 1024, "DAILY_READING_SUMMARY_BOUND")
     return result
 
@@ -145,7 +144,7 @@ def daily_page(model):
     primary = [line for line in lines if line.startswith(("本次行情更新", "更新原因", "原行情读回限制", "最新市场版本尚未确定"))]
     panel = '<section class="panel" aria-label="本次更新情况"><h2>本次更新情况</h2>'
     panel += "".join("<p>" + escape(line) + "</p>" for line in primary)
-    panel += '<details><summary>数据日期、覆盖与本次运行范围</summary>'
+    panel += '<details><summary>数据日期与内容覆盖</summary>'
     panel += "".join("<p>" + escape(line) + "</p>" for line in lines if line not in primary)
     panel += "</details></section>"
     page = render_page(model)

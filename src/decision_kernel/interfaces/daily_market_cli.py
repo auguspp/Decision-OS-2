@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -39,6 +40,85 @@ TITLE = "decision-os-daily-market"
 POLICY_FILE = Path("config/daily-market.json")
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 ADMISSION_REQUESTS = 240
+MAX_QUOTA_REFRESH_WAITS = 5
+MAX_QUOTA_WAIT_SECONDS = 5 * 3600
+
+
+class DailyQuotaWindows:
+    """Wait only between safe units; new quota must come from native headers."""
+    def __init__(self, limits, refresh, *, clock=time.time, monotonic=time.monotonic, sleep=time.sleep):
+        self.limits, self.refresh = limits, refresh
+        self.clock, self.monotonic, self.sleep = clock, monotonic, sleep
+        self.waits, self.waited = 0, 0.0
+        self.status, self.reason = "not-needed", None
+        self.progress = None
+
+    def receipt(self):
+        return {"schema": "daily-market-quota-wait-v1", "status": self.status,
+            "reason_code": self.reason, "refresh_waits": self.waits,
+            "max_refresh_waits": MAX_QUOTA_REFRESH_WAITS, "waited_seconds": round(self.waited, 6),
+            "max_wait_seconds": MAX_QUOTA_WAIT_SECONDS, "native_quota": self.limits.receipt()}
+
+    def _emit(self, status, reason=None):
+        self.status, self.reason = status, reason
+        if self.progress is not None:
+            self.progress()
+
+    def _paused(self, reason):
+        self._emit("paused", reason)
+        return False
+
+    def wait(self, api, reserve=MAX_REQUESTS):
+        require(isinstance(api, GitHubAPI) and api.rate_limits is self.limits,
+            "DAILY_MARKET_QUOTA_IDENTITY")
+        if self.limits.admits(reserve):
+            return True
+        observed = self.limits.receipt()
+        resources = observed["resources"]
+        if observed["throttled"] or not observed["observed"]:
+            return self._paused("DAILY_MARKET_QUOTA_NOT_WAITABLE")
+        # A GET cannot establish a new GraphQL quota window. Never replenish an
+        # old GraphQL observation from wall time or from a core response.
+        if "graphql" in resources and resources["graphql"]["remaining"] < reserve:
+            return self._paused("DAILY_MARKET_GRAPHQL_QUOTA_REQUIRES_REVIEW")
+        core = resources["core"]
+        now = self.clock()
+        if not isinstance(now, (int, float)) or not math.isfinite(now) \
+                or not now < core["reset"] <= now + 3600 or core["limit"] < reserve:
+            return self._paused("DAILY_MARKET_QUOTA_RESET_UNUSABLE")
+        delay = core["reset"] - now
+        if self.waits >= MAX_QUOTA_REFRESH_WAITS or self.waited + delay > MAX_QUOTA_WAIT_SECONDS \
+                or api._requests + 4 > MAX_REQUESTS:
+            return self._paused("DAILY_MARKET_QUOTA_WAIT_BOUND")
+        self.waits += 1
+        self._emit("waiting-for-native-reset")
+        while self.clock() < core["reset"]:
+            delay = min(60.0, core["reset"] - self.clock(), MAX_QUOTA_WAIT_SECONDS - self.waited)
+            if delay <= 0:
+                return self._paused("DAILY_MARKET_QUOTA_WAIT_BOUND")
+            before = self.monotonic()
+            self.sleep(delay)
+            elapsed = self.monotonic() - before
+            if not math.isfinite(elapsed) or elapsed <= 0:
+                return self._paused("DAILY_MARKET_QUOTA_CLOCK")
+            self.waited += elapsed
+            self._emit("waiting-for-native-reset")
+            if self.waited > MAX_QUOTA_WAIT_SECONDS:
+                return self._paused("DAILY_MARKET_QUOTA_WAIT_BOUND")
+        # Permission/429 failures propagate. They never become another wait or
+        # permission to reset a source client, reservation, or native allowance.
+        try:
+            self.refresh(api)
+        except Exception:
+            self._emit("failed", "DAILY_MARKET_QUOTA_NATIVE_REFRESH_FAILED")
+            raise
+        newer = self.limits.receipt()
+        latest = newer["resources"].get("core")
+        if newer["throttled"] or latest is None or latest["reset"] <= core["reset"] \
+                or latest["reset"] <= self.clock() or not self.limits.admits(reserve):
+            return self._paused("DAILY_MARKET_QUOTA_REFRESH_UNCONFIRMED")
+        self._emit("observed-new-native-window")
+        return True
 
 
 def settings(event, env, approved):
@@ -94,18 +174,25 @@ def native_ready(api, selected):
     return {"main_ci_run": latest["id"], "native_run_created_at": run.get("created_at")}
 
 
-def remote_units(token, selected):
+def remote_units(token, selected, *, clock=time.time, monotonic=time.monotonic, sleep=time.sleep):
     limits = GitHubRateLimits()
+    quota = DailyQuotaWindows(limits, lambda api: native_ready(api, selected),
+        clock=clock, monotonic=monotonic, sleep=sleep)
     def open_unit(write):
         require(type(write) is bool and (not write or selected["operation"] == "update"),
             "DAILY_MARKET_READ_ONLY")
         api = GitHubAPI(token)
         api.rate_limits = limits
         native_ready(api, selected)
+        if write:
+            require(quota.wait(api), "DAILY_MARKET_STORE_RATE_LIMIT")
         binding = _records_runtime_binding("sync" if write else "status")
         readonly = replace(binding, write_enabled=False)
         store = VersionedStore(GitHubStore(binding, api))
         return store, lambda: VersionedStore(GitMarketReader(readonly, api)), api
+    open_unit.quota_wait = quota.wait
+    open_unit.quota_receipt = quota.receipt
+    open_unit.set_quota_progress = lambda callback: setattr(quota, "progress", callback)
     return open_unit
 
 
@@ -146,6 +233,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         "cycle_reference": None, "generation": None, "calendar_references": {}}
     def update():
         report["source_requests"] = report["calendar_source_requests"] + report["price_source_requests"]
+        quota_receipt = getattr(open_unit, "quota_receipt", None)
+        if callable(quota_receipt):
+            report["store_quota_wait"] = quota_receipt()
         if item is not None:
             report.update(cycle_date=item["cycle"]["date"], cycle_status=item["cycle"]["status"],
                 calendar_reserved_requests=sum(row["reserved_requests"] for row in item["cycle"]["calendars"].values()))
@@ -162,6 +252,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             require(capacity(fresh())["admit_work_unit"] is True, "DAILY_MARKET_STORAGE_CAPACITY")
             _admit(api)
         return store, fresh, api
+    quota_progress = getattr(open_unit, "set_quota_progress", None)
+    if callable(quota_progress):
+        quota_progress(update)
     update()
     try:
         store, fresh, api = unit(operation == "update" and approved["enabled"])
@@ -257,7 +350,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         open_unit=open_unit, max_work_units=approved["max_price_requests"],
                         access_confirmed=True, custody_authorized=True, client_factory=price_client_factory,
                         guard=guard, progress=price_progress, clock=clock, monotonic=monotonic,
-                        sleep=sleep, capacity=capacity, calendar_references=references)
+                        sleep=sleep, capacity=capacity, calendar_references=references,
+                        quota_wait=getattr(open_unit, "quota_wait", None))
                     price = executed["receipt"]
                     report["price_source_requests"], report["price_execution"] = price["source_requests"], price
                     if price["status"] in {"complete", "already-complete"}:

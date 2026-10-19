@@ -1,8 +1,10 @@
 """Daily business controls over real source custody; all providers are synthetic."""
+from collections import Counter
 from copy import copy, deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
+from urllib.error import HTTPError
 
 import pytest
 
@@ -13,12 +15,15 @@ from decision_kernel.application.ftshare_collection import (
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, UnknownWrite, encoded
 from decision_kernel.infrastructure.git_store import GitStore
+from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubRateLimits, MAX_REQUESTS
+from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.relay_http import RelayHTTP
 from decision_kernel.interfaces import daily_market_cli as cli
 from test_ftshare_collection import (
     _retain, plan_single, settle_single, single_capture, single_collection_fixture,
 )
 from test_ftshare_collection_runtime import NativeAPI
+from test_github_transport import Response
 from test_market_collection_inputs import CollectionOpener
 from test_market_relay_inputs import REGISTRY
 from test_market_snapshot import local_fetch, native
@@ -26,9 +31,138 @@ from test_market_snapshot import local_fetch, native
 NOW = "2026-10-19T12:10:00+00:00"
 
 
+class QuotaClock:
+    def __init__(self, at=1000):
+        self.at, self.elapsed, self.chunks = at, 0, []
+
+    def sleep(self, seconds):
+        assert 0 <= seconds <= 60
+        if seconds:
+            self.chunks.append(seconds)
+        self.at += seconds
+        self.elapsed += seconds
+
+
+def quota_headers(*, remaining=400, reset=1060, resource="core", limit=1000):
+    return {"x-ratelimit-resource": resource, "x-ratelimit-limit": str(limit),
+        "x-ratelimit-remaining": str(remaining), "x-ratelimit-reset": str(reset)}
+
+
+def quota_fixture(headers=None, *, refresh_headers=None, refresh_error=None):
+    """Actual bounded GitHub transport, with only the native responses replaced."""
+    clock, requests = QuotaClock(), []
+    class Wire:
+        def open(self, request, timeout):
+            requests.append(request.method)
+            if len(requests) > 1 and refresh_error:
+                raise HTTPError(request.full_url, refresh_error, "synthetic refusal",
+                    quota_headers(remaining=0), None)
+            return Response(b"{}", request.full_url, headers=(headers or {}) if len(requests) == 1
+                else refresh_headers or quota_headers(remaining=996, reset=4660))
+    api = GitHubAPI("synthetic-quota-only")
+    api._opener = Wire()
+    api.request("GET", "/repos/example/private-store")
+    def refresh(current):
+        for _ in range(4):
+            current.request("GET", "/repos/example/private-store")
+    quota = cli.DailyQuotaWindows(api.rate_limits, refresh, clock=lambda: clock.at,
+        monotonic=lambda: clock.elapsed, sleep=clock.sleep)
+    return api, quota, clock, requests
+
+
+def test_quota_wait_requires_new_native_headers_and_preserves_graphql_observation():
+    api, quota, clock, requests = quota_fixture(quota_headers())
+    api.rate_limits.observe(quota_headers(resource="graphql", remaining=950))
+    graphql = api.rate_limits.receipt()["resources"]["graphql"]
+    progress = []
+    quota.progress = lambda: progress.append(quota.receipt())
+    assert quota.wait(api) is True
+    receipt = quota.receipt()
+    assert clock.chunks == [60] and requests == ["GET"] * 5
+    assert receipt["refresh_waits"] == 1 and receipt["waited_seconds"] == 60
+    assert receipt["status"] == "observed-new-native-window"
+    assert receipt["native_quota"]["resources"]["core"]["reset"] == 4660
+    assert receipt["native_quota"]["resources"]["graphql"] == graphql
+    assert any(row["status"] == "waiting-for-native-reset" for row in progress)
+    assert quota.wait(api) is True and len(requests) == 5 and clock.chunks == [60]
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("missing", "DAILY_MARKET_QUOTA_NOT_WAITABLE"),
+    ("throttled", "DAILY_MARKET_QUOTA_NOT_WAITABLE"),
+    ("graphql", "DAILY_MARKET_GRAPHQL_QUOTA_REQUIRES_REVIEW"),
+    ("expired", "DAILY_MARKET_QUOTA_RESET_UNUSABLE"),
+    ("distant", "DAILY_MARKET_QUOTA_RESET_UNUSABLE"),
+    ("insufficient-limit", "DAILY_MARKET_QUOTA_RESET_UNUSABLE"),
+    ("unit-budget", "DAILY_MARKET_QUOTA_WAIT_BOUND"),
+])
+def test_quota_observations_that_cannot_authorize_wait_pause_without_requests(case, reason):
+    headers = {} if case == "missing" else quota_headers(reset=1000 if case == "expired"
+        else 4601 if case == "distant" else 1060, limit=500 if case == "insufficient-limit" else 1000)
+    api, quota, clock, requests = quota_fixture(headers)
+    if case == "throttled":
+        api.rate_limits.throttled = True
+    if case == "graphql":
+        api.rate_limits.observe(quota_headers(resource="graphql", remaining=511))
+    if case == "unit-budget":
+        api._requests = MAX_REQUESTS - 3
+    before = api.rate_limits.receipt()
+    assert quota.wait(api) is False
+    assert quota.receipt()["reason_code"] == reason
+    assert quota.receipt()["refresh_waits"] == 0 and clock.chunks == [] and requests == ["GET"]
+    assert api.rate_limits.receipt() == before
+
+
+@pytest.mark.parametrize("headers", [quota_headers(remaining=1000),
+    {"x-ratelimit-resource": "core", "x-ratelimit-remaining": "1000"}])
+def test_stale_or_incomplete_refresh_headers_never_replenish_quota(headers):
+    api, quota, clock, requests = quota_fixture(quota_headers(), refresh_headers=headers)
+    assert quota.wait(api) is False
+    assert quota.receipt()["reason_code"] == "DAILY_MARKET_QUOTA_REFRESH_UNCONFIRMED"
+    assert quota.receipt()["native_quota"]["resources"]["core"]["remaining"] < 400
+    assert clock.chunks == [60] and len(requests) == 5
+    assert quota.wait(api) is False and len(requests) == 5 and clock.chunks == [60]
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_native_refusal_during_refresh_is_not_caught_or_waited_again(status):
+    api, quota, clock, requests = quota_fixture(quota_headers(), refresh_error=status)
+    with pytest.raises(RecordError, match="REMOTE_RATE_LIMIT"):
+        quota.wait(api)
+    assert api.rate_limits.throttled
+    assert quota.receipt()["status"] == "failed"
+    assert quota.wait(api) is False
+    assert clock.chunks == [60] and len(requests) == 2
+
+
+def test_quota_wait_bound_includes_initial_window_plus_only_five_refreshes():
+    clock = QuotaClock()
+    api = GitHubAPI("synthetic-quota-only")
+    calls = []
+    class Wire:
+        def open(self, request, timeout):
+            calls.append(request.method)
+            return Response(b"{}", request.full_url,
+                headers=quota_headers(remaining=999, reset=int(clock.at) + 3600))
+    api._opener = Wire()
+    quota = cli.DailyQuotaWindows(api.rate_limits,
+        lambda current: current.request("GET", "/repos/example/private-store"),
+        clock=lambda: clock.at, monotonic=lambda: clock.elapsed, sleep=clock.sleep)
+    for number in range(5):
+        api.rate_limits.observe(quota_headers(reset=int(clock.at) + 3600))
+        assert quota.wait(api) is True
+        assert quota.receipt()["refresh_waits"] == number + 1
+    api.rate_limits.observe(quota_headers(reset=int(clock.at) + 3600))
+    assert quota.wait(api) is False
+    receipt = quota.receipt()
+    assert receipt["reason_code"] == "DAILY_MARKET_QUOTA_WAIT_BOUND"
+    assert receipt["refresh_waits"] == 5 and receipt["waited_seconds"] == 5 * 3600
+    assert len(calls) == 5 and len(clock.chunks) == 300 and max(clock.chunks) == 60
+
+
 class Host:
-    def __init__(self, storage=None):
-        self.fixture = single_collection_fixture(storage=storage)
+    def __init__(self, storage=None, count=3):
+        self.fixture = single_collection_fixture(storage=storage, count=count)
         f = self.fixture
         initial = _retain(f["single"], f["store"], f["fresh"])
         _, final = settle_single(f, f["single"], initial)
@@ -92,6 +226,202 @@ class Host:
             clock=lambda: self.now, calendar_client_factory=self.calendar, price_client_factory=self.price,
             capacity=self.capacity, monotonic=lambda: 10, sleep=lambda seconds: None)
         return cli.run_daily(**{**options, **kwargs})
+
+
+@pytest.mark.parametrize("status", [403, 429])
+def test_refresh_refusal_keeps_daily_source_counts_and_completed_slot_without_replay(status):
+    host, clock = Host(), QuotaClock()
+    limits, apis, calls = GitHubRateLimits(), [], []
+    limits.observe(quota_headers(remaining=1000))
+    class Wire:
+        def open(self, request, timeout):
+            calls.append(request.method)
+            raise HTTPError(request.full_url, status, "synthetic refusal",
+                quota_headers(remaining=0), None)
+    def opened(write):
+        api = GitHubAPI("synthetic-quota-only")
+        api.rate_limits, api._opener = limits, Wire()
+        apis.append(api)
+        return host.fixture["store"], host.fixture["fresh"], api
+    quota = cli.DailyQuotaWindows(limits,
+        lambda api: api.request("GET", "/repos/example/private-store"),
+        clock=lambda: clock.at, monotonic=lambda: clock.elapsed, sleep=clock.sleep)
+    opened.quota_wait, opened.quota_receipt = quota.wait, quota.receipt
+    def price():
+        client = host.price()
+        original = client.candlesticks
+        def capture(*args, **kwargs):
+            value = original(*args, **kwargs)
+            limits.observe(quota_headers())
+            return value
+        client.candlesticks = capture
+        return client
+    result = host.run(open_unit=opened, price_client_factory=price)
+    receipt = result["receipt"]
+    assert receipt["status"] == "blocked" and receipt["reason_code"] == "REMOTE_RATE_LIMIT"
+    assert (receipt["calendar_source_requests"], receipt["price_source_requests"], receipt["source_requests"]) == (2, 1, 3)
+    assert receipt["price_execution"]["source_requests"] == receipt["price_execution"]["reserved_requests"] == 1
+    unit = receipt["price_execution"]["work_units"][0]
+    assert unit["status"] == "complete" and unit["store_api_requests"] == 1
+    assert receipt["price_execution"]["store_rate_limits"]["throttled"]
+    assert receipt["store_quota_wait"]["status"] == "failed"
+    assert calls == ["GET"] and clock.chunks == [60]
+    assert len(host.price_clients) == 1 and host.price_clients[0].requests == 1
+    cycle = daily.latest_cycle(host.fixture["fresh"]())["cycle"]
+    assert cycle["status"] == "market-pending"
+    current = restore_ftshare_collection(result["control"]["market_reference"], REGISTRY, host.fixture["fresh"]())
+    assert current["collection"]["reserved_requests"] == 1
+    assert current["collection"]["units"][unit["slot"]]["status"] == "complete"
+
+
+@pytest.mark.parametrize("mode", ["failed", "held", "unknown-retention"])
+def test_failed_held_or_unknown_source_never_enters_between_unit_quota_wait(mode, monkeypatch):
+    from decision_kernel.interfaces import ftshare_collection_cli as prices
+    from test_ftshare_collection_runtime import SingleHost, SingleProvider, single_execute
+
+    host = SingleHost()
+    host.config["kernel_sync"].update(targets=[
+        {"symbol": "600001.SH", "adjust_kind": "none"},
+        {"symbol": "600001.SH", "adjust_kind": "forward"}], source_budget=2)
+    provider = SingleProvider(host, fail=403 if mode == "failed" else False, observed_zero=mode == "held")
+    original = provider.candlesticks
+    def consumed(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        finally:
+            host.limits.observe(quota_headers(limit=5000, reset=2000000000))
+    provider.candlesticks = consumed
+    if mode == "unknown-retention":
+        retain = prices.retain_ftshare_single
+        def lost(*args, **kwargs):
+            retain(*args, **kwargs)
+            raise UnknownWrite("REMOTE_WRITE_UNCONFIRMED")
+        monkeypatch.setattr(prices, "retain_ftshare_single", lost)
+    waits = []
+    def wait(api):
+        waits.append(api)
+        pytest.fail("a failed, held or uncertain source cannot advance to a quota wait")
+    first = single_execute(host, provider, max_work_units=2, quota_wait=wait)
+    expected = {"failed": "failed", "held": "source-held", "unknown-retention": "persistence-unconfirmed"}
+    assert first["receipt"]["status"] == expected[mode], first
+    assert first["receipt"]["source_requests"] == provider.requests == 1 and waits == []
+    assert host.latest()["collection"]["reserved_requests"] == 1
+    again = single_execute(host, max_work_units=2, quota_wait=wait)
+    assert again["receipt"]["source_requests"] == 0 and waits == []
+    assert host.latest()["collection"]["reserved_requests"] == 1
+
+
+def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_one_run(
+        native, monkeypatch, tmp_path, record_property):
+    model, _ = native
+    model.binding = replace(model.binding, repository=cli.REPO, repository_id=1420041744)
+    anchor = model.git.commit({"store.json": model.binding.marker()}, expected=model.git.head())
+    model.binding = replace(model.binding, anchor=anchor)
+    model.git.binding, model.git.repository = model.binding, model.binding.repository
+    model.meta.update(id=1420041744, full_name=cli.REPO)
+    local_fresh = lambda: VersionedStore(copy(model.git))
+    host = Host(storage=(model.git, VersionedStore(model.git), local_fresh), count=6)
+    host.approved.update(symbols=sorted(host.fixture["context"]["eligible_symbols"])[:6], max_price_requests=12)
+    assert len(host.approved["symbols"]) == 6
+    # The complete native/Git/source model uses explicitly synthetic time. It
+    # proves same-run quota accounting, never an actual future scheduled run.
+    admitted = host.now = "2026-10-20T10:35:00+00:00"
+    clock = QuotaClock(datetime.fromisoformat(admitted).timestamp())
+    native_model = NativeAPI()
+    native_model.run.update(path=cli.WORKFLOW, name=cli.TITLE, created_at=admitted)
+    native_model.ci.update(total_count=1)
+    native_model.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
+        repository={"id": 1420041744}, head_repository={"id": 1420041744})
+    selected = {"operation": "update", "code_sha": native_model.main["object"]["sha"],
+        "run_id": 8001, "run_attempt": 1, "event": "workflow_dispatch"}
+    counts, apis, fetches, progress, trace = {}, [], [], [], []
+
+    class Wire:
+        def open(self, request, timeout):
+            window = int(clock.at // 3600)
+            reset = (window + 1) * 3600
+            totals = counts.setdefault(window, Counter())
+            resource = "graphql" if request.method == "POST" else "core"
+            totals[resource] += 1
+            path = request.full_url.removeprefix("https://api.github.com")
+            trace.append({"window": window, "resource": resource, "method": request.method, "path": path})
+            headers = quota_headers(resource=resource, remaining=max(0, 1000 - totals[resource]), reset=reset)
+            if totals[resource] > 1000:
+                raise HTTPError(request.full_url, 429, "synthetic quota exhausted", headers, None)
+            payload = json.loads(request.data) if request.data else None
+            if path.endswith("/git/ref/heads/main"):
+                value = deepcopy(native_model.main)
+            elif path.endswith("/actions/runs/8001"):
+                value = deepcopy(native_model.run)
+            elif "/actions/workflows/ci.yml/runs?" in path:
+                value = deepcopy(native_model.ci)
+            else:
+                value = model.request(request.method, path, payload)
+            return Response(encoded(value), request.full_url, headers=headers)
+
+    class BudgetAPI(GitHubAPI):
+        def __init__(self, token):
+            super().__init__(token)
+            self._opener = Wire()
+            apis.append(self)
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        host.now = datetime.fromtimestamp(clock.at, timezone.utc).isoformat()
+
+    monkeypatch.setattr(cli, "GitHubAPI", BudgetAPI)
+    monkeypatch.setattr(cli, "_records_runtime_binding", lambda operation:
+        replace(model.binding, write_enabled=operation == "sync"))
+    monkeypatch.setattr(cli, "GitMarketReader", lambda binding, api:
+        GitMarketReader(binding, api, fetch=local_fetch(model, fetches)))
+    startup = BudgetAPI("synthetic-native-daily-only")
+    cli.native_ready(startup, selected)
+    opened = cli.remote_units("synthetic-native-daily-only", selected, clock=lambda: clock.at,
+        monotonic=lambda: clock.elapsed, sleep=sleep)
+    def report(receipt, control):
+        row = {"calendars": receipt["calendar_source_requests"], "prices": receipt["price_source_requests"],
+            "waits": receipt["store_quota_wait"]["refresh_waits"], "status": receipt["status"]}
+        if not progress or row != progress[-1]:
+            progress.append(row)
+    options = dict(open_unit=opened, clock=lambda: host.now, admission_at=admitted,
+        guard=lambda api: cli.check_private(api, selected), capacity=cli.market_capacity,
+        monotonic=lambda: clock.elapsed, sleep=sleep, progress=report)
+    first = host.run(**options)
+    # Match the runtime's final native release check, which has its own API
+    # instance but consumes the same server resource allowance.
+    cli.check_private(startup, selected)
+    receipt = first["receipt"]
+    evidence = {"schema": "synthetic-daily-quota-windows-v1", "live_source_requests": 0,
+        "live_store_writes": 0, "per_resource_hourly_limit": 1000,
+        "windows": [{"window": key, **value} for key, value in sorted(counts.items())],
+        "max_unit_requests": max(api._requests for api in apis), "progress": progress,
+        "core_remaining_before_reading": 1000 - counts[int(clock.at // 3600)]["core"],
+        "result": first}
+    (tmp_path / "daily-quota-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    (tmp_path / "daily-quota-trace.json").write_text(json.dumps(trace, indent=2) + "\n")
+    record_property("daily_quota_windows", json.dumps(evidence["windows"]))
+    assert receipt["status"] == "complete", evidence
+    assert (receipt["calendar_source_requests"], receipt["price_source_requests"], receipt["source_requests"]) == (2, 12, 14)
+    assert receipt["cycle_status"] == "complete" and receipt["cycle_date"] == "20261020"
+    assert len(host.calendar_clients) == len(host.price_clients) == 1
+    assert host.calendar_clients[0].requests == 2 and host.price_clients[0].requests == 12
+    assert receipt["store_quota_wait"]["refresh_waits"] == 5 and len(counts) == 6
+    assert receipt["store_quota_wait"]["waited_seconds"] <= 5 * 3600
+    assert clock.chunks and max(clock.chunks) <= 60
+    assert max(api._requests for api in apis) <= MAX_REQUESTS
+    assert all(api.rate_limits is apis[1].rate_limits for api in apis[1:])
+    assert all(value["core"] <= 1000 and value["graphql"] <= 1000 for value in counts.values())
+    assert evidence["core_remaining_before_reading"] >= 260
+    assert any(row["calendars"] == 2 and row["prices"] == 0 and row["waits"] == 1 for row in progress)
+    assert any(row["prices"] == 12 and row["waits"] == 5 for row in progress)
+    assert host.now[:10] == admitted[:10]  # The model finishes in the same local evening.
+    assert all(not call["destination"].exists() for call in fetches)
+
+    before = model.git.head()
+    again = host.run(**options)
+    assert again["receipt"]["status"] == "already-complete", again
+    assert again["receipt"]["source_requests"] == 0 and model.git.head() == before
+    assert len(host.calendar_clients) == len(host.price_clients) == 1
 
 
 def test_daily_updates_new_session_and_same_day_does_not_replay_any_source():

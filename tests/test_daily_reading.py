@@ -82,10 +82,11 @@ def test_failed_update_and_older_market_remain_visible_in_human_summary(monkeypa
     assert result["status"] == "partial" and result["daily_update"]["source_receipt"]["source_requests"] == 1
     assert "来源已暂停" in summary and "2026\\-10\\-16" in summary
     assert summary.count("6 / 5226") == 2 and "超过24小时" in summary and "不等于今天的新简报" in summary
-    assert "市场当前时效：未知" in summary and "新的概率判断" in summary
+    assert "市场当前时效：未知" in summary and "**reading-room.html** 阅读全文" in summary
+    assert all(text not in summary for text in ("分母", "records", "来源网站", "发送通知", "新的概率判断"))
     html = cli.daily_page(result)
     assert "本次更新情况" in html and "来源已暂停" in html and "FTSHARE_HTTP_403" in html
-    assert '<details><summary>数据日期、覆盖与本次运行范围</summary>' in html
+    assert '<details><summary>数据日期与内容覆盖</summary>' in html
 
 
 def test_unresolved_market_history_does_not_fall_back_to_seed_or_claim_no_history(monkeypatch):
@@ -94,8 +95,8 @@ def test_unresolved_market_history_does_not_fall_back_to_seed_or_claim_no_histor
     assert "market" not in calls[1][1]["plan"] and "market" not in result
     assert result["status"] == "partial" and result["daily_update"]["market_error"] == "DAILY_MARKET_HISTORY_FORK"
     summary = cli.summary_markdown(result)
-    assert "不能推断没有历史任务" in summary and "未用旧版本替代" in summary
-    assert "0 / 5226" not in summary and "尚无可读的已存日更任务" not in summary
+    assert "暂时无法读取日更状态" in summary and "最新市场版本尚未确定" in summary
+    assert "0 / 5226" not in summary and "尚无日更记录" not in summary
 
 
 def test_no_saved_brief_or_research_is_not_filled_with_generated_content(monkeypatch):

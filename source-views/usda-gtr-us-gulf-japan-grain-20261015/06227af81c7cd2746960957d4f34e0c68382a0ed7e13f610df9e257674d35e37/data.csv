@@ -1,0 +1,4 @@
+subject_id,metric,specification,region,currency,unit,price_kind,market,contract,tax_basis,frequency,period_kind,assessment,period_start,period_end,value
+usda-gtr-bulk-grain-us-gulf-to-japan,ocean-freight-rate,bulk-grain-wheat-corn-soybeans-route-benchmark,U.S.-Gulf-to-Japan,USD,USD/metric-ton,quote,not-applicable,not-applicable,unknown,monthly,price-level,period-average,2026-07-01,2026-07-31,68.95
+usda-gtr-bulk-grain-us-gulf-to-japan,ocean-freight-rate,bulk-grain-wheat-corn-soybeans-route-benchmark,U.S.-Gulf-to-Japan,USD,USD/metric-ton,quote,not-applicable,not-applicable,unknown,monthly,price-level,period-average,2026-08-01,2026-08-31,72.94
+usda-gtr-bulk-grain-us-gulf-to-japan,ocean-freight-rate,bulk-grain-wheat-corn-soybeans-route-benchmark,U.S.-Gulf-to-Japan,USD,USD/metric-ton,quote,not-applicable,not-applicable,unknown,monthly,price-level,period-average,2026-09-01,2026-09-30,76.38

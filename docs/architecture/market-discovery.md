@@ -190,7 +190,11 @@ python -m decision_kernel.interfaces.market_discovery_cli read \
 ~~~
 
 An explicit save additionally uses the run owner's write-enabled binding,
-submission identifier and custody confirmation. Source input is always an
+submission identifier and `--custody-authorized` private custody confirmation.
+The manual host forwards its independent `custody_authorized` input without
+setting `public_rights_confirmed`; the latter retains its actual public-rights
+meaning. Private retention does not confer public redistribution rights, and the
+discovery writer continues to require the native private target. Source input is always an
 exact SourceRef; the command cannot accept arbitrary caller prices or states.
 Normal room plans accept discovery.reference or discovery.build, exactly one,
 and an optional kind, entity_id, offset and limit (1 to 50). Filtering changes

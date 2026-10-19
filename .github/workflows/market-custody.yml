@@ -16,10 +16,14 @@ on:
         type: string
         required: true
         description: 'Exact source/artifact reference, market reading, or discovery plan JSON or gzip-json-v1; <=60000 transport bytes, <=2 MiB decoded'
+      custody_authorized:
+        type: boolean
+        default: false
+        description: 'Explicit authorization to retain in the natively verified private records store; no public redistribution grant'
       public_rights_confirmed:
         type: boolean
         default: false
-        description: 'Required for save: all supplied capture projections may be publicly retained'
+        description: 'Separate public retention rights, only when actually established; private custody may leave false'
       offset:
         type: string
         default: '0'

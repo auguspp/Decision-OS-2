@@ -19,14 +19,17 @@ from decision_kernel.interfaces.store_cli import _load
 from decision_kernel.observations.market_daily import MarketInputError
 
 
-def execute(operation, payload, store, *, registry, submission_id=None, rights_confirmed=False):
+def execute(operation, payload, store, *, registry, submission_id=None, custody_authorized=False,
+            rights_confirmed=False):
     require(operation in ("build", "save", "read"), "DISCOVERY_OPERATION_INVALID")
     if operation == "read":
         artifact_reference(payload)
     else:
         payload = plan_input(payload)
     if operation == "save":
-        require(rights_confirmed is True and isinstance(submission_id, str), "DISCOVERY_SAVE_NOT_AUTHORIZED")
+        require(type(custody_authorized) is bool and type(rights_confirmed) is bool
+                and (custody_authorized or rights_confirmed) and isinstance(submission_id, str),
+                "DISCOVERY_SAVE_NOT_AUTHORIZED")
         return MarketDiscovery(store, registry=registry).save(submission_id, payload)
     require(submission_id is None, "DISCOVERY_UNEXPECTED_WRITE_FIELDS")
     with reading_scope(store.backend) as backend:
@@ -45,6 +48,8 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=Path("docs/sources/relay-registry.json"))
     parser.add_argument("--submission-id")
     parser.add_argument("--public-rights-confirmed", action="store_true")
+    parser.add_argument("--custody-authorized", action="store_true",
+                        help="Explicit private custody authorization; does not grant public redistribution")
     args = parser.parse_args(argv)
     try:
         payload = _load(args.input)
@@ -60,7 +65,8 @@ def main(argv=None):
             require(backend.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
             store = VersionedStore(backend)
         result = execute(args.operation, payload, store, registry=RelayRegistry(args.registry),
-                         submission_id=args.submission_id, rights_confirmed=args.public_rights_confirmed)
+                         submission_id=args.submission_id, custody_authorized=args.custody_authorized,
+                         rights_confirmed=args.public_rights_confirmed)
         if args.binding is not None:
             require(store.backend.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
         print(encoded(result).decode(), end="")

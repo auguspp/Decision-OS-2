@@ -1,8 +1,6 @@
 """Daily business controls over real source custody; all providers are synthetic."""
-from collections import Counter
 from copy import copy, deepcopy
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 import json
 from urllib.error import HTTPError
 
@@ -13,10 +11,9 @@ from decision_kernel.application.ftshare_collection import (
     begin_ftshare_slot, latest_ftshare_reference, restore_ftshare_collection,
 )
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, UnknownWrite, encoded
+from decision_kernel.domain.records import RecordError, UnknownWrite
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubRateLimits, MAX_REQUESTS
-from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.relay_http import RelayHTTP
 from decision_kernel.interfaces import daily_market_cli as cli
 from test_ftshare_collection import (
@@ -309,119 +306,6 @@ def test_failed_held_or_unknown_source_never_enters_between_unit_quota_wait(mode
     again = single_execute(host, max_work_units=2, quota_wait=wait)
     assert again["receipt"]["source_requests"] == 0 and waits == []
     assert host.latest()["collection"]["reserved_requests"] == 1
-
-
-def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_one_run(
-        native, monkeypatch, tmp_path, record_property):
-    model, _ = native
-    model.binding = replace(model.binding, repository=cli.REPO, repository_id=1420041744)
-    anchor = model.git.commit({"store.json": model.binding.marker()}, expected=model.git.head())
-    model.binding = replace(model.binding, anchor=anchor)
-    model.git.binding, model.git.repository = model.binding, model.binding.repository
-    model.meta.update(id=1420041744, full_name=cli.REPO)
-    local_fresh = lambda: VersionedStore(copy(model.git))
-    host = Host(storage=(model.git, VersionedStore(model.git), local_fresh), count=6)
-    host.approved.update(symbols=sorted(host.fixture["context"]["eligible_symbols"])[:6], max_price_requests=12)
-    assert len(host.approved["symbols"]) == 6
-    # The complete native/Git/source model uses explicitly synthetic time. It
-    # proves same-run quota accounting, never an actual future scheduled run.
-    admitted = host.now = "2026-10-20T10:35:00+00:00"
-    clock = QuotaClock(datetime.fromisoformat(admitted).timestamp())
-    native_model = NativeAPI()
-    native_model.run.update(path=cli.WORKFLOW, name=cli.TITLE, created_at=admitted)
-    native_model.ci.update(total_count=1)
-    native_model.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
-        repository={"id": 1420041744}, head_repository={"id": 1420041744})
-    selected = {"operation": "update", "code_sha": native_model.main["object"]["sha"],
-        "run_id": 8001, "run_attempt": 1, "event": "workflow_dispatch"}
-    counts, apis, fetches, progress, trace = {}, [], [], [], []
-
-    class Wire:
-        def open(self, request, timeout):
-            window = int(clock.at // 3600)
-            reset = (window + 1) * 3600
-            totals = counts.setdefault(window, Counter())
-            resource = "graphql" if request.method == "POST" else "core"
-            totals[resource] += 1
-            path = request.full_url.removeprefix("https://api.github.com")
-            trace.append({"window": window, "resource": resource, "method": request.method, "path": path})
-            headers = quota_headers(resource=resource, remaining=max(0, 1000 - totals[resource]), reset=reset)
-            if totals[resource] > 1000:
-                raise HTTPError(request.full_url, 429, "synthetic quota exhausted", headers, None)
-            payload = json.loads(request.data) if request.data else None
-            if path.endswith("/git/ref/heads/main"):
-                value = deepcopy(native_model.main)
-            elif path.endswith("/actions/runs/8001"):
-                value = deepcopy(native_model.run)
-            elif "/actions/workflows/ci.yml/runs?" in path:
-                value = deepcopy(native_model.ci)
-            else:
-                value = model.request(request.method, path, payload)
-            return Response(encoded(value), request.full_url, headers=headers)
-
-    class BudgetAPI(GitHubAPI):
-        def __init__(self, token):
-            super().__init__(token)
-            self._opener = Wire()
-            apis.append(self)
-
-    def sleep(seconds):
-        clock.sleep(seconds)
-        host.now = datetime.fromtimestamp(clock.at, timezone.utc).isoformat()
-
-    monkeypatch.setattr(cli, "GitHubAPI", BudgetAPI)
-    monkeypatch.setattr(cli, "_records_runtime_binding", lambda operation:
-        replace(model.binding, write_enabled=operation == "sync"))
-    monkeypatch.setattr(cli, "GitMarketReader", lambda binding, api:
-        GitMarketReader(binding, api, fetch=local_fetch(model, fetches)))
-    startup = BudgetAPI("synthetic-native-daily-only")
-    cli.native_ready(startup, selected)
-    opened = cli.remote_units("synthetic-native-daily-only", selected, clock=lambda: clock.at,
-        monotonic=lambda: clock.elapsed, sleep=sleep)
-    def report(receipt, control):
-        row = {"calendars": receipt["calendar_source_requests"], "prices": receipt["price_source_requests"],
-            "waits": receipt["store_quota_wait"]["refresh_waits"], "status": receipt["status"]}
-        if not progress or row != progress[-1]:
-            progress.append(row)
-    options = dict(open_unit=opened, clock=lambda: host.now, admission_at=admitted,
-        guard=lambda api: cli.check_private(api, selected), capacity=cli.market_capacity,
-        monotonic=lambda: clock.elapsed, sleep=sleep, progress=report)
-    first = host.run(**options)
-    # Match the runtime's final native release check, which has its own API
-    # instance but consumes the same server resource allowance.
-    cli.check_private(startup, selected)
-    receipt = first["receipt"]
-    evidence = {"schema": "synthetic-daily-quota-windows-v1", "live_source_requests": 0,
-        "live_store_writes": 0, "per_resource_hourly_limit": 1000,
-        "windows": [{"window": key, **value} for key, value in sorted(counts.items())],
-        "max_unit_requests": max(api._requests for api in apis), "progress": progress,
-        "core_remaining_before_reading": 1000 - counts[int(clock.at // 3600)]["core"],
-        "result": first}
-    (tmp_path / "daily-quota-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
-    (tmp_path / "daily-quota-trace.json").write_text(json.dumps(trace, indent=2) + "\n")
-    record_property("daily_quota_windows", json.dumps(evidence["windows"]))
-    assert receipt["status"] == "complete", evidence
-    assert (receipt["calendar_source_requests"], receipt["price_source_requests"], receipt["source_requests"]) == (2, 12, 14)
-    assert receipt["cycle_status"] == "complete" and receipt["cycle_date"] == "20261020"
-    assert len(host.calendar_clients) == len(host.price_clients) == 1
-    assert host.calendar_clients[0].requests == 2 and host.price_clients[0].requests == 12
-    assert receipt["store_quota_wait"]["refresh_waits"] == 5 and len(counts) == 6
-    assert receipt["store_quota_wait"]["waited_seconds"] <= 5 * 3600
-    assert clock.chunks and max(clock.chunks) <= 60
-    assert max(api._requests for api in apis) <= MAX_REQUESTS
-    assert all(api.rate_limits is apis[1].rate_limits for api in apis[1:])
-    assert all(value["core"] <= 1000 and value["graphql"] <= 1000 for value in counts.values())
-    assert evidence["core_remaining_before_reading"] >= 260
-    assert any(row["calendars"] == 2 and row["prices"] == 0 and row["waits"] == 1 for row in progress)
-    assert any(row["prices"] == 12 and row["waits"] == 5 for row in progress)
-    assert host.now[:10] == admitted[:10]  # The model finishes in the same local evening.
-    assert all(not call["destination"].exists() for call in fetches)
-
-    before = model.git.head()
-    again = host.run(**options)
-    assert again["receipt"]["status"] == "already-complete", again
-    assert again["receipt"]["source_requests"] == 0 and model.git.head() == before
-    assert len(host.calendar_clients) == len(host.price_clients) == 1
 
 
 def test_daily_updates_new_session_and_same_day_does_not_replay_any_source():

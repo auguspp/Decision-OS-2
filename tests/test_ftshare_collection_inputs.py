@@ -289,11 +289,11 @@ def single_inputs(*, full_scope=False):
     return collection, context, captures
 
 
-def read_single(bundle, **kwargs):
+def read_single(bundle, *, read_as_of=CLOCK, **kwargs):
     collection, context, captures = bundle
     def load(_ref, *, request):
         return next(capture for capture in captures.values() if capture["request"] == request)
-    return _read_ftshare_inputs(collection, context, load, read_as_of=CLOCK, **kwargs)[0]
+    return _read_ftshare_inputs(collection, context, load, read_as_of=read_as_of, **kwargs)[0]
 
 
 def test_kernel_single_routes_keep_independent_counterpart_gap_and_native_lineage():
@@ -326,3 +326,164 @@ def test_kernel_full_5226_denominator_and_missing_windows_survive_page_and_entit
     assert view["freshness"]["status"] == "unknown" and view["source_requests"] == 0
     assert {venue["current_session_lag"] for venue in view["by_exchange"].values()} == {None}
     assert len(encoded(view)) < 2 * 1024 * 1024
+
+
+def single_sync_inputs(*, full_scope=False):
+    from decision_kernel.application.ftshare_collection import SINGLE_PLAN_SCHEMA
+    from decision_kernel.application.ftshare_single import capture_single, single_request
+    collection, context, original = single_inputs(full_scope=full_scope)
+    plan, inherited, requests, captures = collection["plan"], {}, {}, {}
+    for role, request in plan["requests"].items():
+        params = request["parameters"]
+        slot = params["adjust_kind"] + ":" + params["symbol"]
+        requests[slot], captures[slot] = request, original[role]
+        inherited[slot] = collection["units"][role]
+    slot = "forward:600000.SH"
+    request = single_request(symbol="600000.SH", since=millis("2026-07-01"),
+        until=millis("2026-10-16", True), adjust_kind="forward")
+    requests[slot] = request
+    captures[slot] = capture_single(original["forward-sz-history"]["body_utf8"].encode(),
+        **{key: request["parameters"][key] for key in ("symbol", "since", "until", "adjust_kind")},
+        acquired_at="2026-10-19T13:00:00+00:00")
+    plan.update(schema=SINGLE_PLAN_SCHEMA, base_reference=reference("ftshare-collection-adoption"),
+        requests=requests, new_slots=[slot], inherited_units=deepcopy(inherited), source_budget=1,
+        prior_generation_reserved_requests=0)
+    collection.update(units={**inherited, slot: {"status": "complete", "request_count": 1,
+        "reference": reference("ftshare-single-sh-forward"), "reason_code": None}},
+        reserved_requests=1, revision=2, updated_at="2026-10-19T13:00:01+00:00")
+    return collection, context, captures
+
+
+def test_single_sync_inherits_originals_and_adds_one_price_without_shrinking_scope():
+    bundle = single_sync_inputs(full_scope=True)
+    first = read_single(bundle, limit=1)
+    selected = read_single(bundle, entity_id="600000.SH")
+    assert first["scope_count"] == selected["scope_count"] == 5226
+    assert first["view_version"] == selected["view_version"]
+    for family in (first, first["endpoint_comparisons"]):
+        for kind in ("raw", "qfq"):
+            assert [row["observed_count"] for row in family[kind]["horizon_counts"]] == [2] * 3
+            assert [row["missing_count"] for row in family[kind]["horizon_counts"]] == [5224] * 3
+    lineage = first["source_lineage"]
+    assert len(lineage["single_queries"]) == 4 and "batches" not in lineage
+    assert lineage["kernel_sync"] == {"base_reference": bundle[0]["plan"]["base_reference"],
+        "new_slots": ["forward:600000.SH"], "inherited_slots": [
+            "forward:000001.SZ", "none:000001.SZ", "none:600000.SH"], "source_budget": 1,
+        "prior_generation_reserved_requests": 0}
+    assert first["freshness"]["status"] == "unknown" and first["source_requests"] == 0
+    assert entry(selected, code="600000.SH")["lineage_representation"] == (
+        "original-ftshare-whole-range-single-query")
+
+
+@pytest.mark.parametrize("state", ["pending", "in-flight", "failed"])
+def test_single_sync_unsettled_or_failed_new_slot_keeps_inherited_counterpart(state):
+    bundle = single_sync_inputs()
+    bundle[0]["units"]["forward:600000.SH"].update(status=state, reference=None,
+        reason_code="FTSHARE_HTTP_503" if state == "failed" else None)
+    view = read_single(bundle)
+    assert view["raw"]["observed_count"] == 2 and view["qfq"]["observed_count"] == 1
+    assert entry(view, kind="raw", code="600000.SH")["status"] == "observed"
+    assert entry(view, code="600000.SH")["input_status"] == "not-supplied"
+    assert view["freshness"]["status"] == "unknown"
+
+
+def test_single_sync_uses_calendar_sessions_to_distinguish_new_open_and_closed_days():
+    bundle = single_sync_inputs()
+    bundle[0]["plan"].update(end="20261018", calendar_end="20261020")
+    # The synthetic calendars explicitly contain no sessions on October 17/18.
+    closed = read_single(bundle, read_as_of="2026-10-19T12:00:00+08:00")
+    assert closed["freshness"]["status"] == "current-through-completed-day"
+    assert closed["raw"]["as_of"] == "2026-10-16"
+    bundle[0]["plan"]["end"] = "20261019"
+    for venue in ("SSE", "SZSE"):
+        bundle[1]["calendars"][venue].append("2026-10-19")
+        bundle[1]["sessions"][venue].append("2026-10-19")
+    opened = read_single(bundle, read_as_of="2026-10-20T12:00:00+08:00")
+    assert opened["freshness"]["status"] == "unknown"
+    assert opened["raw"]["observed_count"] == opened["qfq"]["observed_count"] == 0
+    assert opened["queries"]["forward:600000.SH"]["status"] == "restored"
+    assert all(window["status"] != "observed" for window in entry(opened)["horizons"])
+
+
+def test_single_sync_replacement_never_fills_a_new_forward_gap_from_old_capture():
+    from decision_kernel.application.ftshare_single import capture_single, single_request
+    bundle = single_sync_inputs()
+    collection, context, captures = bundle
+    plan = collection["plan"]
+    slot = "forward:000001.SZ"
+    previous = captures[slot]
+    request = single_request(symbol="000001.SZ", since=millis("2026-07-01"),
+        until=millis("2026-10-19", True), adjust_kind="forward")
+    days = context["sessions"]["SZSE"]
+    rows = json.loads(previous["body_utf8"])["data"]
+    rows = [row for row in rows if row["ts_millis_open"] != millis(days[-3])]
+    for row in rows:
+        row.update(open="9", high="9", low="9", close="9")
+    rows.append({**rows[-1], "ts_millis_open": millis("2026-10-19"),
+        "ts_millis": millis("2026-10-19", True)})
+    captures["old-forward"] = previous
+    captures[slot] = capture_single(encoded({"code": 0, "data": rows}),
+        **{key: request["parameters"][key] for key in ("symbol", "since", "until", "adjust_kind")},
+        acquired_at="2026-10-19T13:00:00+00:00")
+    plan.update(end="20261019", calendar_end="20261020", new_slots=[slot])
+    plan["requests"][slot] = request
+    plan["inherited_units"] = {key: deepcopy(value) for key, value in collection["units"].items()
+                               if key != slot}
+    collection["units"][slot] = {"status": "complete", "request_count": 1,
+        "reference": reference("ftshare-single-sz-forward-new-range"), "reason_code": None}
+    for venue in ("SSE", "SZSE"):
+        context["calendars"][venue].append("2026-10-19")
+        context["sessions"][venue].append("2026-10-19")
+    view = read_single(bundle, read_as_of="2026-10-20T12:00:00+08:00")
+    assert entry(view)["horizons"][0]["status"] == "missing-market-sessions"
+    endpoint = entry(view, endpoint=True)["horizons"][0]
+    assert endpoint["status"] == "observed" and endpoint["baseline_value"] == "9"
+    lineage = view["source_lineage"]["single_queries"][slot]
+    assert lineage["request"] == request and lineage["wire_sha256"] == captures[slot]["wire_sha256"]
+    assert lineage["wire_sha256"] != previous["wire_sha256"]
+    assert view["freshness"]["status"] == "unknown"
+
+
+def test_normal_single_sync_reader_selects_v1_restore_and_reports_partial_new_date(monkeypatch):
+    from contextlib import nullcontext
+    import decision_kernel.application.ftshare_collection as custody
+    import decision_kernel.application.ftshare_collection_inputs as consumer
+    import decision_kernel.application.ftshare_single as single
+    bundle = single_sync_inputs()
+    collection, context, captures = bundle
+    reference_value = reference("ftshare-collection-single-sync")
+    calls = []
+    monkeypatch.setattr(consumer, "market_read_scope", nullcontext)
+    monkeypatch.setattr(custody, "restore_ftshare_collection", lambda *args:
+        {"collection": collection, "context": context, "reference": reference_value})
+    def restore(_reference, _store, *, request):
+        calls.append(request)
+        return next(capture for capture in captures.values() if capture["request"] == request)
+    monkeypatch.setattr(single, "restore_single", restore)
+    monkeypatch.setattr(custody, "restore_ftshare_batch", lambda *args, **kwargs:
+        pytest.fail("single sync must retain its v1 request identity"))
+    restored = consumer.read_ftshare_collection_version(reference_value, object(), object(), read_as_of=CLOCK)
+    assert len(calls) == 4 and restored["serving"] == "current-complete"
+    assert restored["latest_attempt"]["inherited_query_count"] == 3
+    assert restored["latest_attempt"]["new_query_count"] == 1
+    assert restored["latest_attempt"]["reserved_requests"] == 1
+    assert restored["source_requests"] == 0
+    def unavailable(_reference, _store, *, request):
+        if request["parameters"]["symbol"] == "600000.SH" and request["parameters"]["adjust_kind"] == "forward":
+            raise RecordError("FTSHARE_SINGLE_CAPTURE_UNAVAILABLE")
+        return restore(_reference, _store, request=request)
+    monkeypatch.setattr(single, "restore_single", unavailable)
+    missing = consumer.read_ftshare_collection_version(reference_value, object(), object(), read_as_of=CLOCK)
+    assert missing["status"] == "partial-restoration" and missing["serving"] == "current-partial"
+    assert missing["view"]["freshness"]["status"] == "unknown"
+    assert missing["view"]["raw"]["observed_count"] == 2
+    monkeypatch.setattr(single, "restore_single", restore)
+    collection["plan"].update(end="20261019", calendar_end="20261020")
+    for venue in ("SSE", "SZSE"):
+        context["sessions"][venue].append("2026-10-19")
+        context["calendars"][venue].append("2026-10-19")
+    result = consumer.read_ftshare_collection_version(reference_value, object(), object(),
+        read_as_of="2026-10-20T12:00:00+08:00")
+    assert result["serving"] == "current-partial"
+    assert result["latest_attempt"]["status"] == "partial"
+    assert result["view"]["freshness"]["status"] == "unknown"

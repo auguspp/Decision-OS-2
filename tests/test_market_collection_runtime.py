@@ -600,7 +600,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert inputs["operation"]["default"] == "ftshare-status"
     assert inputs["selection"]["required"] == "true"
     assert json.loads(inputs["selection"]["default"]) == {
-        "collection_id": "ftshare-cn-eod", "generation": "g20261016"}
+        "collection_id": "ftshare-cn-eod", "generation": "g20261016-v1"}
     assert inputs["code_sha"]["required"] == "true" and "default" not in inputs["code_sha"]
     assert inputs["work_units"]["default"] == "1" and inputs["repair_request"]["default"] == ""
     assert inputs["access_and_custody_confirmed"]["default"] == "false"

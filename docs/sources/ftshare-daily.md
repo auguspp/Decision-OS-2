@@ -4,11 +4,11 @@
 
 用户在 2026-10-18 的 #10 接管委托中明确要求将日线数据源切换为 FTShare，并已在同仓 Secret 设置 `FTSHARE_API_KEY`。这项委托修改日线来源选择；不会把既有 Relay 记录、失败、重试额度或复权因子改名成 FTShare，也不改变同仓 `main` / `records` 保管路线。
 
-本责任组提供固定来源传输、严格日 K 资格检查、有限账户验证，以及同一 Store 上的生产集合与正常读取接线。`ftshare-check` / `ftshare-check-continue` / `ftshare-check-kernel` 不写 records；生产批量采集由 `ftshare-sync` 执行。已验证的 Kernel v1 原文通过 `ftshare-adopt-kernel` 直接采用，新增行情 HTTP 为 0。配置的 `qualification: null` 明确表示现有批量采集尚未激活；独立的 `kernel_adoption` 指定单股原文证据，不能填写批量资格。有限输入的采用不代表持续可用率或完整市场覆盖。
+本责任组提供固定来源传输、严格日 K 资格检查、有限账户验证，以及同一 Store 上的生产集合与正常读取接线。`ftshare-check` / `ftshare-check-continue` / `ftshare-check-kernel` 不写 records，原核验已经结束。已验证的 Kernel v1 原文通过 `ftshare-adopt-kernel` 直接采用，新增行情 HTTP 为 0。正常 `ftshare-sync` 现在由可信配置的 `kernel_sync` 选择 v1 单股整段更新，直接继承已保管的资格和价格；旧批量配置 `qualification: null` 保留，不用单股证据填写批量资格。有限输入和有界更新不代表长期可用率或完整市场覆盖。
 
 ## 可核对的上游合同
 
-实现依据是 FTShare 官方 [FTShare-skill 固定版本](https://github.com/FTShare-Lab/FTShare-skill/tree/d2233464fc26b6d3c885f60543e316565361bd83) 中的 [stock-candlesticks-batch](https://github.com/FTShare-Lab/FTShare-skill/blob/d2233464fc26b6d3c885f60543e316565361bd83/ftshare-market-data/sub-skills/stock-candlesticks-batch/SKILL.md) 及其 handler；不能用旧 v1 或 MCP 包装器的限额代替当前 REST 合同。
+原批量实现依据是 FTShare 官方 [FTShare-skill 固定版本](https://github.com/FTShare-Lab/FTShare-skill/tree/d2233464fc26b6d3c885f60543e316565361bd83) 中的 [stock-candlesticks-batch](https://github.com/FTShare-Lab/FTShare-skill/blob/d2233464fc26b6d3c885f60543e316565361bd83/ftshare-market-data/sub-skills/stock-candlesticks-batch/SKILL.md) 及其 handler；以下保留它的独立协议。当前采用的 v1 合同与真实结果见「复用 Kernel v1 整段日线」，两种入口不能混用请求身份、成功 envelope 或账户资格。
 
 - 固定 HTTPS origin 为 `https://market.ft.tech`，前缀 `/gateway`；凭据仅发送到该 origin 的已列举接口，不接受任意 URL、代理、跳转或调用方请求头。
 - 日 K 使用 `GET /api/v2/market/data/stock-candlesticks/batch`；`symbols` 为重复 query 参数，`interval_unit=day`，`adjust_kind=none|forward`。
@@ -108,26 +108,26 @@
 
 ## 同一 Store 的生产接线
 
-可信配置为 [config/ftshare-daily.json](../../config/ftshare-daily.json)，固定集合 `ftshare-cn-eod` / 世代 `g20261016`，引用上述 Source10 的完整原集合。当前有界价格区间为 2026-07-01 至 2026-10-16；它不自动延长日期，也不新增定时任务。
+可信配置为 [config/ftshare-daily.json](../../config/ftshare-daily.json)，固定集合 `ftshare-cn-eod`，当前更新世代为 `g20261016-v1`。其 `kernel_sync.base_reference` 精确指向原采用世代 `g20261016` 的 FTShare 根，原 Source10 仍为不可变的 Relay 上下文前驱。当前区间为 2026-07-01 至 2026-10-16，目标仅 `600000.SH / forward`，新增预算为 1；其余三个既存价格 owner 直接继承。本配置不自动延长日期、扩大股票池或新增定时任务。
 
 | 手动 operation | 输入与来源访问 | 结果 |
 |---|---|---|
 | `ftshare-status`（默认） | 固定集合与世代；来源 HTTP 为 0 | 从既存 records 恢复最新 FTShare 集合、预留次数、缺口与暂停原因 |
-| `ftshare-sync` | 固定集合与世代，`work_units` 为 1–32；每单元最多一个 FTShare HTTP | 先保管预留，再取一次原始正文并保管结果；未完成槽保持真实状态 |
-| `ftshare-adopt-kernel` | 固定集合与世代，`work_units=1`；采用原 v1 核验 artifact，新增来源 HTTP 为 0 | 将四份已验证原文及证据保管到同一 Store，三条唯一价格序列进入正常 collection 读取 |
+| `ftshare-sync` | 可信有限集合与世代，`work_units` 为 1–32；每个新目标最多一个 v1 单股整段 HTTP | 先保管预留，再取一次原始正文并保管结果；继承 owner 不重新请求，未完成槽保持真实状态 |
+| `ftshare-adopt-kernel` | 原采用世代的历史入口，`work_units=1`，新增来源 HTTP 为 0 | 原四份正文及证据已经保管；启用 `kernel_sync` 的配置拒绝再次采用，不向新世代复制同一原核验 |
 | `ftshare-calendar` | 固定 study `ftshare-calendar-continuity-20261018`、`work_units=1` | 仅两次 Relay `trade_cal` 元数据请求，独立保管 SSE / SZSE 截至 10/18 的日历；不取 Relay 日线价格 |
 
 上述入口仍在 `ashare-data.yml` 的原有来源互斥组内。写入只允许原生 private 的同仓、当前 main、合格 main CI、attempt 1 和既有明确私有保管授权；公开权利输入为 false。`ftshare-status` 需要 contents / actions 只读权限。`ftshare-adopt-kernel` 仅取得既有 Store 写入与 Actions 读取权限，没有 FTShare 或 Relay Secret。FTShare Secret 仅进入实际 FTShare capture / sync 步骤；日历只使用既有 Relay Secret，发布产物前另一步重新核验 private 与 main。
 
-典型 selection 为 `{"collection_id":"ftshare-cn-eod","generation":"g20261016"}`。首次 sync 可额外携带日历运行保管的 `calendar_references: {"SSE": SourceRef, "SZSE": SourceRef}`，必须是本仓独立可恢复的完整引用，覆盖原区间且不能改变既有历史开闭市记录。后续运行省略时继承已保管日历，显式提供时必须与原计划相同。`ftshare-status` 不接受日历覆盖输入。
+典型 selection 为 `{"collection_id":"ftshare-cn-eod","generation":"g20261016-v1"}`。首次 sync 可额外携带日历运行保管的 `calendar_references: {"SSE": SourceRef, "SZSE": SourceRef}`，必须是本仓独立可恢复的完整引用，覆盖计划区间且不能改变既有历史开闭市记录。后续运行省略时继承已保管日历，显式提供时必须与原计划相同。`ftshare-status` 不接受日历覆盖输入；历史根继续通过原精确 SourceRef 正常读取。
 
 ### 批量来源资格与未激活状态
 
 `qualification` 只能为空或含 `run_id`、`artifact_id`、`sha256`、`code_sha` 四个字段。填写前核对成功 continuation 的原生身份、原始 ZIP、实际已耗预算、重复响应、Decimal 同日原价比较、样本缺失和真实响应容量；其中 code SHA 是该次资格运行的代码，不能用后来的生产 main SHA 冒充。五项 candle 通过仅代表这五项结构、非空样本和重复检查，历史个别空证券仍须在独立分析中披露。
 
-为空时 sync 在创建 Store 或 FTShare 客户端之前返回 `FTSHARE_RUNTIME_QUALIFICATION_PENDING`，不预留、写 records 或请求行情。status 可以继续只读恢复已有集合；尚无集合时返回 `not-retained` / `FTSHARE_COLLECTION_NOT_RETAINED`、来源请求 0、退出码 2。这表示尚未保管新源数据。
+未配置 `kernel_sync` 且批量资格为空时，sync 在创建 Store 或 FTShare 客户端之前返回 `FTSHARE_RUNTIME_QUALIFICATION_PENDING`，不预留、写 records 或请求行情。status 可以继续只读恢复已有集合；尚无集合时返回 `not-retained` / `FTSHARE_COLLECTION_NOT_RETAINED`、来源请求 0、退出码 2。这表示该世代尚未保管新源数据。
 
-当前有限世代的 sync 仍依赖原 continuation artifact 未过期；工作流保留期为 30 天。过期会阻止后续来源访问，只读恢复不依赖该临时 artifact。长期资格证明保管与跨世代自动更新尚未交付，不能将这个有界入口解释为持续更新服务。
+旧批量分支仍依赖合格 continuation 的临时 artifact；实际 v2 运行没有取得该资格。当前 v1 分支从同一 Store 恢复原 adoption、原始 ZIP 与四份 capture，匹配可信 `kernel_adoption` 身份后才创建来源客户端，不重新下载临时 study artifact，也不重复四次资格请求。自动跨世代更新仍未启用。
 
 ### 采用已经验证的 Kernel v1 原文
 
@@ -139,9 +139,23 @@
 
 正常 CLI / `open_market` / room 消费同一个 collection 根，仍以全部主表为分母。对本次两个证券分别读取，并读取一个无 FTShare 输入的证券，才能验证分页没有隐藏缺口。源检查、原文采用、独立 Store 恢复与正常产品读取分别按实际回执成立；本次有限采用不关闭 #10 的全市场覆盖与持续更新责任。
 
+### 已保管 v1 的有限后继更新
+
+[原采用组交接](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6258970328)已经核验实际采用、正常 status / room 和新备份的离线恢复。后继按[6259072790](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6259072790)接通同一个 `ftshare-sync`，使用 `ftshare-single-collection-plan-v1`，外层 custody、状态、预留及未知写 journal 保持原合同。
+
+`kernel_sync` 只接受 `base_reference`、`start`、`end`、`targets`、`source_budget` 五项。每个 target 是唯一的 `symbol / adjust_kind`；预算严格等于新目标数。新请求以该股、该复权类型及完整日期区间为身份，不按交易日拆请求。当前配置的 1 次是补缺口的生产预算，与已终止研究的实际 6 次分开记账；不把预留次数当作每次都已发出 HTTP 或账户计费。
+
+新世代以精确 FTShare base 为 genesis 前驱，必须是该集合可写前沿，不能改指旧 revision 或另开 child 绕过失败、inflight、hold 或已预留请求。上一有限计划未终结时不能开新世代。继承 complete / failed owner 的原请求、结果引用和原因，本代计数为 0；同一失败请求不会因世代名变化重新获得访问次数。历史根仍可独立恢复，不受最新写入前沿限制。
+
+后继可推进日期，但起止必须单调，单次区间最多 119 个自然日，覆盖新日期的两所合格日历须已经保管。原 Relay 日线仅用于原资格证据，不随每次更新重抓。替换的 owner 使用一次新的完整整段请求；旧版本留在前驱中，不把两次 forward 的价格拼成一条序列。未更新 owner 可以继续读取旧价格，但其请求没有覆盖新开市日时，完整状态和 freshness 都保持缺口；日历已经证明休市的日期不强制重抓价格。
+
+所有继承与新建的活动 owner 合计最多 212，根正文仍最多 512 KiB。有限目标不会改变完整 5,226 项主表与 5,224 项可请求分母。当前 1 个新目标即使成功，也只是将 raw 2 / forward 1 的输入增至 raw 2 / forward 2，不签全市场无缺失；实际执行、窗口和恢复结论以新世代原生回执为准。
+
+已从实际采用后的 `ca6477ccdb6de562a0764499b81876c50a3be737` 原 records bundle 执行只读新计划预检：5,226 / 5,224 / 2，3 继承 owner、1 新槽、预算 1、预留 0。计划 136,792 字节，状态 138,547 字节，初始根 139,308 / 524,288 字节，SourceInput 162,348 / 2,097,152 字节；既有 Store 容量门通过。该预检新增来源请求和 Store 写入均为 0；实际运行仍须再次通过原生容量与预算门，预检不代签新行情已经取得。
+
 ### 范围、保管与不可重置的账
 
-范围继承原生主表的 5,226 项声明；5,224 项可请求，2 项主表隔离继续留在完整缺失分母。默认每批 50 股，每批分别一次 `none` 与一次整段 `forward`，对应 210 个价格槽。不得以删除隔离项、覆盖旧来源身份或拼接不同 forward 请求来增加覆盖。
+范围继承原生主表的 5,226 项声明；5,224 项可请求，2 项主表隔离继续留在完整缺失分母。原批量计划每批 50 股，分别一次 `none` 与一次整段 `forward`，对应 210 个价格槽；当前 v1 计划只采用显式有限目标，不将该批量列表展开成逐股全回填。不得以删除隔离项、覆盖旧来源身份或拼接不同 forward 请求来增加覆盖。
 
 原 Source10 的 220 槽、原始终态、维修 grant 与预算随明确前驱保留。FTShare 使用独立 SourceInput 和集合身份，在相同 repository / records / store_id / anchor 上保管，不建立第二套数据仓。每槽先保管 `inflight` 与一次不可退回的预留；再执行至多一次 FTShare 请求。成功正文按原始字节独立读回，随后才保管完成根；错误保留 failed 及稳定原因。未知写按原键对账，未核清的 inflight 禁止重发。
 

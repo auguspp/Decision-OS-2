@@ -320,12 +320,12 @@ def execute(out, group):
     _, remaining = E["partition"](plan["collection"], plan["contract_paths"])
     args = list(plan["contract_paths"]) if group == "contracts" else ["--ignore=" + p for p in plan["contract_paths"]]
     if group != "contracts" and remaining:
-        args += ["--splits", "4", "--group", group, "--splitting-algorithm", "duration_based_chunks", "--durations-path", str(out / "durations-hint.json")]
+        args += ["--splits", str(len(E["GROUPS"]) - 1), "--group", group, "--splitting-algorithm", "least_duration", "--durations-path", str(out / "durations-hint.json")]
     code, text = pytest_run(out, "selected", args, collect=True)
     selected = E["nodes"](text)
     require(code == (0 if selected else 5), "COLLECTION_EXIT")
     (out / "collection.txt").write_text("\n".join(selected) + ("\n" if selected else ""))
-    test_args = args + (["-n", "2", "--dist=loadfile", "--max-worker-restart=0"] if group != "contracts" and selected else [])
+    test_args = args + (["-n", "2", "--dist=loadfile", "--no-loadscope-reorder", "--max-worker-restart=0"] if group != "contracts" and selected else [])
     code, _ = pytest_run(out, "junit", test_args)
     count = E["passed_tests"](selected, (out / "junit.xml").read_bytes())
     require(code == (0 if selected else 5), "TEST_EXIT")

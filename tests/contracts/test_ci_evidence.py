@@ -13,30 +13,30 @@ def test_complete_disjoint_bundle(evidence, bundle):
 def test_bad_bundle_fails(evidence, bundle, fault):
     sources = dict(bundle["sources"])
     if fault == "missing":
-        del sources["4"]
+        del sources["8"]
     elif fault == "duplicate":
-        sources["4"] = bundle["source"]("4", chosen=bundle["selected"]["3"])
+        sources["8"] = bundle["source"]("8", chosen=bundle["selected"]["7"])
     elif fault == "omitted":
-        sources["4"] = bundle["source"]("4", chosen=[])
+        sources["8"] = bundle["source"]("8", chosen=[])
     elif fault == "foreign":
-        sources["4"] = bundle["source"]("4", chosen=["tests/test_other.py::test_unknown"])
+        sources["8"] = bundle["source"]("8", chosen=["tests/test_other.py::test_unknown"])
     elif fault in ("wrong_head", "wrong_run"):
         key = "code_sha" if fault == "wrong_head" else "run_id"
-        sources["4"] = bundle["source"]("4", mutate=lambda r: r["identity"].update({key: "9" * 40}))
+        sources["8"] = bundle["source"]("8", mutate=lambda r: r["identity"].update({key: "9" * 40}))
     elif fault == "digest":
-        raw, meta = sources["4"]
-        sources["4"] = (raw + b"x", {**meta, "size_in_bytes": len(raw) + 1})
+        raw, meta = sources["8"]
+        sources["8"] = (raw + b"x", {**meta, "size_in_bytes": len(raw) + 1})
     else:
         key, value = {"count": ("count", 99), "timing": ("timing_digest", "f" * 64), "exit": ("exit_code", 5), "empty": ("empty", True)}[fault]
-        sources["4"] = bundle["source"]("4", mutate=lambda r: r.update({key: value}))
+        sources["8"] = bundle["source"]("8", mutate=lambda r: r.update({key: value}))
     with pytest.raises(ValueError):
         evidence.verify_full(bundle["plan"], sources, fresh=True)
 
 
 def test_proven_empty_partition_is_not_a_missing_job(evidence, bundle):
-    bundle["plan"]["collection"].remove(bundle["selected"]["4"][0])
-    bundle["sources"]["4"] = bundle["source"]("4", chosen=[])
-    assert len(evidence.verify_full(bundle["plan"], bundle["sources"], fresh=True)) == 4
+    bundle["plan"]["collection"].remove(bundle["selected"]["8"][0])
+    bundle["sources"]["8"] = bundle["source"]("8", chosen=[])
+    assert len(evidence.verify_full(bundle["plan"], bundle["sources"], fresh=True)) == len(bundle["plan"]["collection"])
 
 
 @pytest.mark.parametrize("field,value", [("python", "3.12.14"), ("runner_arch", "ARM64"), ("image_version", None), ("tree", "d" * 40)])

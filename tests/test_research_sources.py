@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 import pytest
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.research_sources import (
-    STAGES, SCHEMA, admitted, validate_plan, capture_plan, source_inputs, _table,
+    STAGES, SCHEMA, admitted, validate_plan, capture_plan, inspect_result, source_inputs, _table,
 )
 from decision_kernel.domain.records import RecordError, SourceRef
 from decision_kernel.infrastructure.relay_http import ROOT, RelayHTTP
@@ -203,6 +203,47 @@ def test_unrequested_personal_or_text_columns_not_retained():
     result=list(capture_plan(plan(),registry(),client=client,public_rights_confirmed=True))[0]
     assert result['capture']['complete'] and 'private long prose' not in json.dumps(result)
     assert result['capture']['pages'][0]['table']['omitted_unrequested_columns']==2
+
+
+def test_inspected_pages_and_parameters_are_isolated_from_the_supplied_capture():
+    client, _ = http(body())
+    captured = list(capture_plan(plan(), registry(), client=client,
+        public_rights_confirmed=True, clock=lambda: STAMP))[0]
+    original = deepcopy(captured)
+    view = inspect_result(captured, registry())
+    assert captured == original and view['complete'] and view['row_count'] == 1
+    assert set(view['pages'][0]) == {'offset', 'captured_at', 'table', 'transport'}
+    view['pages'][0]['table']['items'][0][-1] = 'changed return value'
+    view['pages'][0]['transport']['http_status'] = 403
+    view['parameters']['trade_date'] = '20260101'
+    assert captured == original
+
+    later = inspect_result(captured, registry())
+    expected = deepcopy(later)
+    captured['capture']['pages'][0]['table']['items'][0][-1] = 'changed input'
+    captured['capture']['pages'][0]['table']['fields'].append('private_column')
+    captured['use']['parameters']['trade_date'] = '20260101'
+    assert later == expected
+
+
+@pytest.mark.parametrize('mutation', ['scope', 'nonfinite', 'transport', 'completeness'])
+def test_inspection_rechecks_nested_input_mutated_after_a_successful_read(mutation):
+    client, _ = http(body())
+    captured = list(capture_plan(plan(), registry(), client=client,
+        public_rights_confirmed=True, clock=lambda: STAMP))[0]
+    assert inspect_result(captured, registry())['complete']
+    page = captured['capture']['pages'][0]
+    if mutation == 'scope':
+        page['table']['items'][0][0] = '000001.SZ'
+    elif mutation == 'nonfinite':
+        page['table']['items'][0][-1] = float('nan')
+    elif mutation == 'transport':
+        page['transport']['wire_sha256'] = 'changed'
+    else:
+        page['table']['reported_count'] = 101
+    with pytest.raises(RecordError):
+        inspect_result(captured, registry())
+    assert client.requests == 1
 
 
 def test_existing_store_and_next_research_reader_consume_same_source(tmp_path):

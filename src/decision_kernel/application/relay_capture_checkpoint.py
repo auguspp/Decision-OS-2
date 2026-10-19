@@ -229,9 +229,9 @@ def validate_retry_state(value):
     return deepcopy(value)
 
 
-def validate_capture_checkpoint(value, request, registry, *, max_pages, policy=None):
-    """Integrity/semantic validation, not authentication of caller-provided JSON."""
-    from decision_kernel.application.research_sources import inspect_result
+def _check_capture_checkpoint(value, request, registry, *, max_pages, policy=None):
+    """Check the complete state without copying tables for a discarded return value."""
+    from decision_kernel.application.research_sources import _inspect_result
     require(policy is None or vars(policy) == POLICY, 'RELAY_CHECKPOINT_POLICY_CHANGED')
     require(isinstance(value, dict) and set(value) == {'schema', 'capture', 'control'}
             and value['schema'] == CHECKPOINT_SCHEMA, 'RELAY_CHECKPOINT_SCHEMA')
@@ -272,7 +272,7 @@ def validate_capture_checkpoint(value, request, registry, *, max_pages, policy=N
                 'RELAY_CHECKPOINT_PAGE')
         if execution['retry_decision'] is not None:
             _decision(execution['retry_decision'])
-    view = inspect_result({'case_id': 'relay-capture-checkpoint', 'use': request, 'capture': capture}, registry)
+    view = _inspect_result({'case_id': 'relay-capture-checkpoint', 'use': request, 'capture': capture}, registry)
     pages = capture['pages']
     require(len(pages) <= max_pages and sum(len(encoded(p['table'])) for p in pages) <= 8 * 1024 * 1024,
             'RELAY_CHECKPOINT_CAPTURE_BOUND')
@@ -313,7 +313,12 @@ def validate_capture_checkpoint(value, request, registry, *, max_pages, policy=N
             offset = pages[-1]['offset']
         expected = {**request['parameters'], 'offset': str(offset)} if offset else dict(request['parameters'])
         require(capture['next_parameters'] == expected, 'RELAY_CHECKPOINT_OFFSET_CHANGED')
-    return deepcopy(value)
+    return value
+
+
+def validate_capture_checkpoint(value, request, registry, *, max_pages, policy=None):
+    """Validate all supplied state and return a detached copy, not authentication."""
+    return deepcopy(_check_capture_checkpoint(value, request, registry, max_pages=max_pages, policy=policy))
 
 
 def validate_capture_transition(previous, current, request, registry, *, max_pages, policy=None):
@@ -322,8 +327,17 @@ def validate_capture_transition(previous, current, request, registry, *, max_pag
     Callers authenticate the predecessor reference. This checks the actual
     next state, rather than accepting an independently plausible fresh budget.
     """
-    old = validate_capture_checkpoint(previous, request, registry, max_pages=max_pages, policy=policy)
-    new = validate_capture_checkpoint(current, request, registry, max_pages=max_pages, policy=policy)
+    old = _check_capture_checkpoint(previous, request, registry, max_pages=max_pages, policy=policy)
+    new = _check_capture_checkpoint(current, request, registry, max_pages=max_pages, policy=policy)
+    return deepcopy(_check_capture_transition(old, new))
+
+
+def _check_capture_transition(old, new):
+    """Check an edge between states already fully checked by the same caller.
+
+    This private, read-only check neither copies its inputs nor grants validity
+    to a standalone state. Public transition validation always checks both states.
+    """
     if encoded(old) == encoded(new):
         return new
     a, b = old['control'], new['control']
@@ -429,8 +443,10 @@ class CaptureCheckpoint:
     def persist(self):
         value = {'schema': CHECKPOINT_SCHEMA, 'capture': deepcopy(self.capture), 'control': deepcopy(self.control)}
         try:
-            validate_capture_checkpoint(value, self.request, self.registry, max_pages=self.max_pages, policy=self.session.policy)
-            if self.previous is not None:
+            if self.previous is None:
+                validate_capture_checkpoint(value, self.request, self.registry,
+                                            max_pages=self.max_pages, policy=self.session.policy)
+            else:
                 validate_capture_transition(self.previous, value, self.request, self.registry,
                                             max_pages=self.max_pages, policy=self.session.policy)
         except Exception:

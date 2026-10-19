@@ -93,7 +93,10 @@ def save(store, doc, submission_id):
     artifact = ArtifactInput.from_bytes(artifact_id(doc), "handoff.json", "application/json", encoded(doc))
     def one_per_day(head):
         prefix = "research/artifacts/" + artifact.artifact_id + "/"
-        if any(p.startswith(prefix) and ARTIFACT_PATH.fullmatch(p) for p in store.backend.paths(head, prefix)):
+        # GitHubStore accepts family-level inventory prefixes, not arbitrary
+        # artifact subdirectories. Keep its allowlist and filter locally.
+        if any(p.startswith(prefix) and ARTIFACT_PATH.fullmatch(p)
+               for p in store.backend.paths(head, "research/artifacts/")):
             raise Conflict("HOSTED_DAY_ALREADY_SAVED")
     ref = ResearchArtifacts(store).put(submission_id, artifact, before_new_write=one_per_day)
     # Canonical original text is read back, never rewritten after saving.

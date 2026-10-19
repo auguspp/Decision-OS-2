@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -53,6 +53,9 @@ def plan_input(value):
     if value.get("market") is not None:
         from decision_kernel.application.reading_market import market_plan
         result["market"] = market_plan(value["market"])
+    if value.get("discovery") is not None:
+        from decision_kernel.application.reading_discovery import discovery_plan
+        result["discovery"] = discovery_plan(value["discovery"])
     return result
 
 
@@ -137,6 +140,7 @@ class ReadingRoom:
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
         require(not plan.get("industry") or industry_export, "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED")
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
+        require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
@@ -257,6 +261,16 @@ class ReadingRoom:
                               "reference": deepcopy(plan["market"]["reference"])}}, **_failure(error)}
             result["market"] = market
             partial = partial or market["status"] != "readable" or market.get("partial", False)
+        if plan.get("discovery"):
+            from decision_kernel.application.reading_discovery import open_discovery
+            from decision_kernel.observations.market_daily import MarketInputError
+            try:
+                discovery_panel = open_discovery(self.store, plan["discovery"], registry=self.market_registry)
+            except (RecordError, MarketInputError, KeyError, TypeError) as error:
+                discovery_panel = {"reference": plan["discovery"].get("reference"),
+                                   "plan": plan["discovery"], **_failure(error)}
+            result["discovery"] = discovery_panel
+            partial = partial or discovery_panel["status"] != "readable" or discovery_panel.get("partial", False)
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

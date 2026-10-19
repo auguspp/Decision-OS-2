@@ -378,15 +378,17 @@ def retain_market_reading(payload, registry, store, *, fresh_reader, public_righ
             "query_count": len(queries), "page_count": len(page_cache), "restored": restored}
 
 
-def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity_id=None):
-    """Exact stored versions only. A lost query degrades its dependants, not peers."""
-    require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100, "PAGE_INVALID")
+def restore_market_reading_inputs(reference, registry, store):
+    """Restore the original qualified reading recipe for existing consumers.
+
+    State observation needs the original daily path, not caller-supplied returns.
+    This is the same bounded query restoration used by the ordinary reader;
+    it adds no source request, write, alternate normalization or authorization.
+    """
     ref, content = _read_manifest(store, reference, READING_SCHEMA)
     require(set(content) == {"schema", "reading", "queries"} and isinstance(content["queries"], dict)
             and len(content["queries"]) <= MAX_QUERIES, "MARKET_CUSTODY_READING_MANIFEST")
     require(isinstance(content["reading"], dict), "MARKET_CUSTODY_READING_MANIFEST")
-    if content["reading"].get("schema") == "relay-three-market-reading-v1":
-        require(entity_id is None, "MARKET_RELAY_COMBINED_FILTER_USE_SINGLE_SURFACE")
     queries = content["queries"]
     require(all(isinstance(k, str) and re.fullmatch(r"[a-f0-9]{64}", k) for k in queries), "MARKET_CUSTODY_QUERY_KEY")
     outcomes, cache, used = [], {}, set()
@@ -417,6 +419,17 @@ def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity
     payload = _map_results(content["reading"], restore)
     require(used == queries.keys(), "MARKET_CUSTODY_UNUSED_QUERY")
     failed = sum(error is not None for _, error in cache.values())
+    return {"reference": asdict(ref), "payload": payload, "query_count": len(cache),
+            "unavailable_queries": failed, "sources": outcomes}
+
+
+def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity_id=None):
+    """Exact stored versions only. A lost query degrades its dependants, not peers."""
+    require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100, "PAGE_INVALID")
+    restored = restore_market_reading_inputs(reference, registry, store)
+    payload, failed = restored["payload"], restored["unavailable_queries"]
+    if payload.get("schema") == "relay-three-market-reading-v1":
+        require(entity_id is None, "MARKET_RELAY_COMBINED_FILTER_USE_SINGLE_SURFACE")
     # Shared-context failures from a single reader are returned as a failed view;
     # the established three-surface reader already isolates failures by channel.
     try:
@@ -426,8 +439,9 @@ def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity
         if not failed:
             raise
         view, reading_error = None, str(exc)
-    return {"status": "partial-restoration" if failed else "restored", "reference": asdict(ref),
-            "query_count": len(cache), "unavailable_queries": failed, "sources": outcomes, "view": view,
+    return {"status": "partial-restoration" if failed else "restored", "reference": restored["reference"],
+            "query_count": restored["query_count"], "unavailable_queries": failed,
+            "sources": restored["sources"], "view": view,
             "reading_error": reading_error, "original_http_restored": False,
             "execution_diagnostics": "not-retained", "source_requests": 0,
             "qualification": "restored-source-excerpts-not-live-health-discovery-or-economic-approval"}

@@ -82,6 +82,12 @@ jobs:
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
           FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
         run: python -m decision_kernel.interfaces.daily_market_cli runtime --out "$RUNNER_TEMP/dos2-daily-market"
+      - name: Preserve state and original discovery events after a qualified actual market update
+        id: discovery
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_discovery_cli --out "$RUNNER_TEMP/dos2-daily-market"
       - name: Build daily reading from saved Brief, research and the actual market attempt
         id: reading
         if: always()

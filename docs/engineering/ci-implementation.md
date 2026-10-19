@@ -42,6 +42,8 @@ python -m decision_kernel --version
 
 现役按实际集合与耗时校准为 8×2，使用锁定 pytest-split 的 `least_duration`；分片数跟随证据组，片内使用 pytest-xdist 的 `loadfile` 与 `--no-loadscope-reorder`，保留原文件顺序，避免按测试数量把耗时较长的单测试文件排到末尾。后续可按完整 CI 合同继续校准参数；未知新测试照常执行，原 300 秒测试进程时限、完整集合和实际运行门禁不变。
 
+pytest 保留致命信号的 faulthandler，显式 `faulthandler_timeout=0` 停用异步定时线程栈输出；外层测试进程仍有 300 秒硬限，worker 异常退出不重启、不计通过。此前实际 main 的 worker 在 60 秒诊断输出中途失联，原件没有退出码或信号，根因尚未确认（[#10 原始检查点](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6265853675)）。[CPython 的并发 faulthandler 报告](https://github.com/python/cpython/issues/116008)支持停用可选异步诊断的风险缓解；不能据此确认本次解释器根因。代价是较长测试不再自动输出第 60 秒线程栈，原超时、失败和完整证据门禁保持。
+
 产物名绑定 `run_id` 与 `run_attempt`：`dos2-plan-*`、`dos2-part-{contracts,1,2,3,4,5,6,7,8}-*`、`dos2-ci-*`。最终产物保留计划、实际 summary、九组原始 ZIP/API 元数据及时长。下载须通过原生归属、唯一产物、大小、SHA-256、CRC、安全路径和展开上限；只读取固定数据名。最终 full 可重新验证所有原始分片。原生最新失败或 rerun 不被旧成功替代；读取不确定不产生复用资格。
 
 GH_TOKEN 仅给必要 Git/Actions 只读步骤，不给安装、collect 或测试；checkout 不保留凭据。CI 不接收业务 secrets，不配置外发/研究任务。最终 gate 的 `always()` 只保证验证失败路径也被执行，不把前置失败转成功。原始失败日志保留，不循环 rerun 换绿。

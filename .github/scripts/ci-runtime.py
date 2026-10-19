@@ -232,7 +232,8 @@ def reuse(out):
 
 def pytest_run(out, label, args, *, collect=False):
     argv = [sys.executable, "-m", "pytest", "-c", "pyproject.toml", "-q", *args]
-    argv += ["--collect-only"] if collect else [f"--junitxml={out / (label + '.xml')}", "-o", "faulthandler_timeout=60"]
+    # Keep fatal fault handlers without the asynchronous timed traceback dump.
+    argv += ["--collect-only"] if collect else [f"--junitxml={out / (label + '.xml')}", "-o", "faulthandler_timeout=0"]
     env = dict(os.environ)
     env.pop("GH_TOKEN", None)
     env.pop("GITHUB_TOKEN", None)

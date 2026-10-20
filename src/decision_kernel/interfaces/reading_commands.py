@@ -48,6 +48,18 @@ def preflight(operation, payload, *, public=True):
 
 
 def perform(store, payload, *, public=True, market_registry=None):
+    from decision_kernel.infrastructure.runtime_publication import checked_output_visibility, publication_basis, publication_payload
+    original_backend = store.backend
+    adopted_publication = False
+    binding = getattr(original_backend, "binding", None)
+    if publication_basis(binding, "reading") is not None:
+        visibility = store.backend.live_visibility()
+        if visibility == "public":
+            # Validate original shape before filling only the publication fields.
+            preflight(OPERATION, payload, public=False)
+            payload = publication_payload(OPERATION, payload, binding)
+            public = True
+            adopted_publication = True
     preflight(OPERATION, payload, public=public)
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
     # Exit checks run before returning the model to any HTML/report writer.
@@ -64,6 +76,9 @@ def perform(store, payload, *, public=True, market_registry=None):
             decision_export=not public or payload.get("public_sources_custody_confirmed") is True,
             outcome_export=not public or payload.get("public_sources_custody_confirmed") is True)
         result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
+    if adopted_publication:
+        checked_output_visibility(original_backend, "reading", "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
+        require(publication_basis(binding, "reading") is not None, "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
     return result
 
 

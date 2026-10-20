@@ -33,7 +33,7 @@ on:
       public_rights_confirmed:
         type: boolean
         default: false
-        description: 'Required for PUBLIC records. A native-verified PRIVATE repository instead uses the custody authorization'
+        description: 'Optional per-call public rights for legacy Relay sync; normal FTShare uses the reviewed public-runtime deployment authorization; keep historical control flags unchanged'
 permissions: {}
 concurrency:
   group: decision-os-relay-source
@@ -68,12 +68,12 @@ jobs:
   rejected-sync:
     if: >-
       github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
-      ((inputs.operation == 'sync' && (inputs.access_and_custody_confirmed != true ||
-      (github.event.repository.private != true && inputs.public_rights_confirmed != true))) ||
+      ((inputs.operation == 'sync' && inputs.access_and_custody_confirmed != true) ||
       (inputs.operation == 'repair' && (inputs.access_and_custody_confirmed != true || github.event.repository.private != true)) ||
-      ((inputs.operation == 'ftshare-check' || inputs.operation == 'ftshare-check-continue' || inputs.operation == 'ftshare-check-kernel' || inputs.operation == 'ftshare-adopt-kernel' || inputs.operation == 'ftshare-calendar' || inputs.operation == 'ftshare-sync') &&
+      ((inputs.operation == 'ftshare-check' || inputs.operation == 'ftshare-check-continue' || inputs.operation == 'ftshare-check-kernel' || inputs.operation == 'ftshare-adopt-kernel' || inputs.operation == 'ftshare-calendar') &&
       (inputs.access_and_custody_confirmed != true || github.event.repository.private != true || inputs.public_rights_confirmed != false)) ||
-      (inputs.operation == 'ftshare-status' && (github.event.repository.private != true || inputs.public_rights_confirmed != false)))
+      (inputs.operation == 'ftshare-sync' && inputs.access_and_custody_confirmed != true) ||
+      ((inputs.operation == 'ftshare-sync' || inputs.operation == 'ftshare-status') && inputs.public_rights_confirmed != false))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -84,7 +84,7 @@ jobs:
           echo "::error::ASHARE_PUBLIC_RIGHTS_REQUIRED_OR_ACCESS_NOT_CONFIRMED"
           exit 1
   sync:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && inputs.access_and_custody_confirmed == true && (github.event.repository.private == true || inputs.public_rights_confirmed == true)
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'sync' && inputs.access_and_custody_confirmed == true
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -97,6 +97,11 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
+      - name: Check native visibility and owner publication authority before source admission
+        if: inputs.public_rights_confirmed != true
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.infrastructure.runtime_publication check sources
       - name: Advance explicitly authorized records with native privacy recheck and per-page checkpoints
         env:
           DECISION_OS_MARKET_STORE_TOKEN: ${{ github.token }}
@@ -300,7 +305,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   ftshare-sync:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-sync' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-sync' && inputs.access_and_custody_confirmed == true && inputs.public_rights_confirmed == false
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -314,25 +319,23 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
+      - name: Check native visibility and owner publication authority before source admission
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.infrastructure.runtime_publication check sources
       - name: Retain bounded FTShare whole-range daily requests and irreversible per-slot reservations
         id: runtime
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
           FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
         run: python -m decision_kernel.interfaces.ftshare_collection_cli runtime --out "$RUNNER_TEMP/dos2-ftshare-collection"
-      - name: Recheck private custody before releasing exact reading references
+      - name: Recheck native publication before releasing exact reading references
         if: always()
         id: release
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PY'
-          import os
-          from decision_kernel.infrastructure.github_store import GitHubAPI
-          from decision_kernel.interfaces.ftshare_check_cli import check_private
-          check_private(GitHubAPI(os.environ["DECISION_OS_STORE_TOKEN"]), {"code_sha": os.environ["GITHUB_SHA"]})
-          PY
-      - name: Preserve the private result and exact reading control
+        run: python -m decision_kernel.infrastructure.runtime_publication check market
+      - name: Preserve the authorized result and exact reading control
         if: always() && steps.release.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -381,7 +384,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   ftshare-status:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-status' && github.event.repository.private == true && inputs.public_rights_confirmed == false
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-status' && inputs.public_rights_confirmed == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -395,24 +398,22 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
+      - name: Check native visibility and owner publication authority before source admission
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.infrastructure.runtime_publication check market
       - name: Read the retained FTShare collection without source credentials
         id: runtime
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.ftshare_collection_cli runtime --out "$RUNNER_TEMP/dos2-ftshare-collection"
-      - name: Recheck private custody before releasing exact reading references
+      - name: Recheck native publication before releasing exact reading references
         if: always()
         id: release
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PY'
-          import os
-          from decision_kernel.infrastructure.github_store import GitHubAPI
-          from decision_kernel.interfaces.ftshare_check_cli import check_private
-          check_private(GitHubAPI(os.environ["DECISION_OS_STORE_TOKEN"]), {"code_sha": os.environ["GITHUB_SHA"]})
-          PY
-      - name: Preserve the private result and exact reading control
+        run: python -m decision_kernel.infrastructure.runtime_publication check market
+      - name: Preserve the authorized result and exact reading control
         if: always() && steps.release.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

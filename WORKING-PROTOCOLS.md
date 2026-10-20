@@ -111,11 +111,11 @@ Draft供本组迭代；Ready表示范围收口，后续仅修本组问题。同S
 
 用户于2026-10-20将现仓由 private 切回 public，并要求沿[#164](https://github.com/auguspp/Decision-OS-2/issues/164)直接适配现仓代码；不再以新代码仓或资料迁移作为本次工程前置。`main` 只承载工程材料，独立 `records` 仍是原保管目标；同仓可见性也适用于数据分支，代码不能隐藏已经公开的历史。原 repository_id、分支、store_id、anchor 和建仓标记保留。[可信只读绑定](config/store-binding.json)中的历史 `visibility=public` 不是当前许可，仍须核原生可见性及具体读写/发布资格；不改写锚点、历史或 source 权利字段求通过。已授权研究和来源访问按原范围接续，但旧私有保管授权不等于公开再分发授权，不能因换可见性重置请求、失败或预算。
 
-公开工程 CI 与业务数据操作分别处理。[现仓公开模式](docs/engineering/public-runtime.md)的日更预检只取得原生仓库/运行元数据，不读取 records，不注入来源 Secret；Public 的 status 成功仅表示诊断完成，更新/补更/定时未获公开数据授权时明确失败，不以全作业 skipped 充成功。原生 private 的后续作业继续原授权与最终输出复核；既有明确公开权利的手动入口不被该私有日更门禁替代。
+公开工程 CI 与业务操作分别处理。用户已在[#164](https://github.com/auguspp/Decision-OS-2/issues/164#issuecomment-6282012674)明确“视同已经许可，可以按全面公开改造”；此为现有来源、研究、Brief、行情、反馈、经营准备及备份公开运行的用户确认，不声称独立法律核验。固定[部署授权](config/public-runtime.json)绑定原仓库ID、records、anchor和store_id，随受审main代码加载，可通过enabled=false撤销；来源文本、调用者新增字段、fork或环境变量不得替代它。正常日更预检仍无来源Secret，实际Public且授权有效后才接原业务作业，正文/HTML/附件保持真实Public标记与最终复核；状态预检成功不代签行情更新。研究宿主只填既有公开权限字段并保留原输入摘要、有效载荷摘要及授权引用，不改正文、旧SourceRef、判断或人工接受。
 
 私有化不等于取得第三方资料的任意用途或公开再分发权。公开目标仍需逐来源、逐内容的独立公开权利；凭据、账户/个人识别信息、第三方隐私、无再分发许可的第三方原文及正式人工Decision不得公开或放入Issue/PR/日志。历史公开内容无法保证被收回，既有私人材料不自动迁出。`records` 分支与宽仓库凭据不构成角色隔离；实际数据写入、GPT消费、备份恢复和运行任务各自验收，不因仓库变私有而扩大采集/通知/部署权限。
 
-现役阅读室只读宿主可在原生核验 private 后，按已有获准范围读取私有成果；同一受信后端须在输入引用、正文及页面输出前再次核验，观测到 private 后反转 public 则停止输出。调用者或来源自报 private 不能触发此路径；公开阅读继续核原各类公开确认。这个读取适配不改变 `deliver`、研究/资料写入、其他宿主或正式Decision的原授权与门禁。市场数据的显式 sync、原预算和暂停接续详见[持续数据合同](docs/architecture/ashare-data-continuity.md)。
+现役阅读室只读宿主可在原生核验 private 后，按已有获准范围读取私有成果；同一受信后端须在输入引用、正文及页面输出前再次核验，观测到 private 后反转 public 则停止输出。调用者或来源自报 private 不能触发此路径；公开阅读沿上述已确认部署授权或原逐次公开确认。这个读取适配不改变 `deliver`、研究/资料写入、其他宿主或正式Decision的原授权与门禁。市场数据的显式 sync、原预算和暂停接续详见[持续数据合同](docs/architecture/ashare-data-continuity.md)。
 
 沿已验证GitHub通路工作，按当前暴露schema调用；实际能力、账户权限、连接安装范围、目标设置分别判断。本地shell/网络失败不是插件无权；明确平台/权限拒绝停止相应动作，不能换通道绕过。参数错误确定未发出可修正；不确定已发送的写入先读回对账，不能换key/标题/目的地重发。
 
@@ -136,4 +136,4 @@ Quick/Full/采集/Brief按目标第18章各自操作；工程凭据不自动下�
 
 - [本仓最终设计](docs/decision-os-2.0-design.md)：第3、18、21—25章；用户裁决优先于旧兼容/费用/施工约束。
 - [旧统一协议固定版本](https://github.com/auguspp/decision-kernel/blob/cb3bbc87eeeeadb6bf24d7adc8cc214cd80ab9b8/WORKING-PROTOCOLS.md)：统一入口、Reuse/Modularity、有限验证与不重复施工。本文件不规范继承旧任务或旧研究reader。
-- [GitHub模板说明](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/about-issue-and-pull-request-templates)、[自动关闭设置](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/managing-auto-closing-issues)：2026-10-15核读，官方功能说明不证明本仓设置已生效。
+- [GitHub模板说明](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/about-issue-and-pull-request-templates)、[自动关闭设置](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-auto-closing-issues)：2026-10-15核读，官方功能说明不证明本仓设置已生效。

@@ -158,6 +158,11 @@ def authorize_market_custody(store, *, custody_authorized=False, public_rights_c
             "MARKET_CUSTODY_AUTHORIZATION_INVALID")
     binding = getattr(store.backend, "binding", None)
     if binding is not None:
+        # A deployment publication grant does not grant source access or a write.
+        # The caller still needs its existing custody mandate and native binding.
+        from decision_kernel.infrastructure.runtime_publication import publication_basis
+        if custody_authorized and publication_basis(binding, "sources") is not None:
+            public_rights_confirmed = True
         # A missing authorization is rejected before any extra network/API
         # request. This preserves the original shared request budget and avoids
         # even probing remote visibility for an unauthorized source write.

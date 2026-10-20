@@ -19,6 +19,7 @@ from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubRateLimits, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.interfaces.store_cli import _load
+from decision_kernel.infrastructure.runtime_publication import publication_basis
 
 REGISTRY = Path("docs/sources/relay-registry.json")
 MARKET_TOKEN_ENV = "DECISION_OS_MARKET_STORE_TOKEN"
@@ -129,6 +130,11 @@ def run_runtime(event, env, out, *, execute=run_collection):
         require(not env.get(BINDING_ENV), "ASHARE_RUNTIME_BINDING_OVERRIDE_FORBIDDEN")
         binding = _records_runtime_binding(operation)
         require(bool(env.get(MARKET_TOKEN_ENV)), "ASHARE_STORE_TOKEN_REQUIRED")
+        if operation == "sync" and authorized:
+            basis = publication_basis(binding, "sources")
+            if basis is not None:
+                public_rights = True
+                context["publication_authorization"] = basis
         # A public sync still requires redistribution permission. Repair's
         # mandatory private check uses each existing unit API below, so native
         # evidence admission cannot hide reads in an extra, uncounted session.

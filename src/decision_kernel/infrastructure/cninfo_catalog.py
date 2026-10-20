@@ -6,6 +6,7 @@ provider fallback, proxy, cookies, retries, scheduling or persistent provider st
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from http.client import HTTPException
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -55,12 +56,18 @@ class OfficialCatalogTransport:
                 require(encoding in ("", "identity") and mime in (
                     "application/json", "text/json", "text/plain", "text/javascript"),
                     "CNINFO_RESPONSE_CONTENT_INVALID")
+                length = response.headers.get("Content-Length")
+                require(length is None or isinstance(length, str) and length.isascii()
+                        and length.isdigit() and len(length) <= 10 and int(length) <= MAX_RESPONSE,
+                        "CNINFO_RESPONSE_LENGTH_INVALID")
                 raw = response.read(MAX_RESPONSE + 1)
                 require(len(raw) <= MAX_RESPONSE, "CNINFO_RESPONSE_TOO_LARGE")
+                require(length is None or int(length) == len(raw), "CNINFO_RESPONSE_LENGTH_INVALID")
         except HTTPError as exc:
             # 403/429/redirect are explicit failures, not empty-page evidence or fallback approval.
+            exc.close()
             raise RecordError("CNINFO_HTTP_" + str(exc.code)) from None
-        except (URLError, OSError, TimeoutError) as exc:
+        except (URLError, OSError, TimeoutError, HTTPException) as exc:
             raise RecordError("CNINFO_TRANSPORT_UNAVAILABLE") from None
         try:
             def unique(pairs):

@@ -1,6 +1,9 @@
 """Synthetic boundary tests; not historical discovery or source availability claims."""
 from copy import deepcopy
 from datetime import datetime
+from http.client import IncompleteRead
+import json
+from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -49,14 +52,19 @@ def test_no_exchange_or_stock_whitelist(code):
     assert normalize_row(row(code=code), START, END)["stock_code"] == code
 
 
-@pytest.mark.parametrize("field,value", [("secCode", "x"), ("secCode", None), ("orgId", "../x"),
-    ("announcementId", "../x"), ("announcementTime", 1), ("announcementTime", True),
-    ("announcementTitle", "<script>x</script>"), ("adjunctUrl", "https://evil.example/a.pdf"),
-    ("adjunctUrl", "finalpage/2026-10-16/../x.pdf")])
-def test_invalid_row_is_gap_not_empty_success(field, value):
+@pytest.mark.parametrize("field,value,reason", [
+    ("secCode", "x", "CNINFO_STOCK_CODE_REQUIRED"), ("secCode", None, "CNINFO_STOCK_CODE_REQUIRED"),
+    ("orgId", "../x", "DISCOVERY_ID_INVALID"), ("announcementId", "../x", "DISCOVERY_ID_INVALID"),
+    ("announcementTime", 1, "CNINFO_PUBLICATION_TIME_INVALID"),
+    ("announcementTime", True, "CNINFO_PUBLICATION_TIME_INVALID"),
+    ("announcementTitle", "<script>x</script>", "CNINFO_TITLE_MARKUP_INVALID"),
+    ("adjunctUrl", "https://evil.example/a.pdf", "CNINFO_PDF_LOCATOR_INVALID"),
+    ("adjunctUrl", "finalpage/2026-10-16/../x.pdf", "CNINFO_PDF_LOCATOR_INVALID")])
+def test_invalid_row_is_gap_not_empty_success(field, value, reason):
     raw = row(); raw[field] = value
     result = normalize_query(TERMS[0], [page(1, [raw])], start=START, end=END)
     assert not result["complete_query"] and result["rejected_rows"] == 1
+    assert result["rejected_row_details"] == [{"page_number": 1, "row_number": 1, "reason_code": reason}]
 
 
 def test_highlight_removed_without_executing_html():
@@ -129,3 +137,77 @@ def test_partial_transport_does_not_delete_earlier_pages():
     doc = capture(start=START, end=END, transport_factory=factory, clock=lambda: AT)
     assert doc["unique_versions"] == 30
     assert all(q["pages_read"] == 1 and q["status"] == "partial" for q in doc["queries"])
+
+
+def test_rejection_positions_retain_original_pages_and_good_rows_without_raw_content():
+    first = [row(n) for n in range(30)]
+    first[3] = row(3, title="<script>private-rejected-title</script>")
+    second = [row(30, code="private-rejected-code"), row(31)]
+    result = normalize_query(TERMS[0], [page(32, first), page(32, second)], start=START, end=END)
+    assert result["rows_read"] == 32 and result["rejected_rows"] == 2
+    assert len(result["entries"]) == 30 and not result["complete_query"]
+    assert result["rejected_row_details"] == [
+        {"page_number": 1, "row_number": 4, "reason_code": "CNINFO_TITLE_MARKUP_INVALID"},
+        {"page_number": 2, "row_number": 1, "reason_code": "CNINFO_STOCK_CODE_REQUIRED"},
+    ]
+    assert "private-rejected" not in json.dumps(result)
+    assert result["gaps"] == ["INVALID_ROWS_RETAINED_AS_GAP"]
+
+
+def test_rejection_details_cover_only_the_existing_four_by_thirty_scope():
+    pages = [page(120, [None] * 30) for _ in range(4)]
+    result = normalize_query(TERMS[0], pages, start=START, end=END)
+    assert result["rows_read"] == result["rejected_rows"] == len(result["rejected_row_details"]) == 120
+    assert result["rejected_row_details"][-1] == {
+        "page_number": 4, "row_number": 30, "reason_code": "DISCOVERY_ROW_INVALID"}
+    assert not result["complete_query"] and result["entries"] == []
+
+
+def test_unrecognized_exception_message_cannot_become_source_diagnostic(monkeypatch):
+    def reject(*args):
+        raise RecordError("private-error-message")
+    monkeypatch.setattr("decision_kernel.observations.announcement_discovery.normalize_row", reject)
+    result = normalize_query(TERMS[0], [page(1, [row()])], start=START, end=END)
+    assert result["rejected_row_details"][0]["reason_code"] == "DISCOVERY_ROW_INVALID"
+    assert "private-error-message" not in json.dumps(result)
+
+
+def test_old_snapshot_without_row_diagnostics_remains_a_frozen_comparison_input():
+    queries = [normalize_query(t, [page(1, [row()])], start=START, end=END) for t in TERMS]
+    current = assemble(queries, start=START, end=END, acquired_at=AT)
+    prior = deepcopy(current)
+    for query in prior["queries"]:
+        del query["rejected_row_details"]
+    frozen_prior = deepcopy(prior)
+    assert compare_versions(current, prior)[0]["increment"] == "same-version"
+    assert prior == frozen_prior
+    assert current["entries"] == prior["entries"]
+    assert all(q["rejected_row_details"] == [] for q in current["queries"])
+
+
+def test_partial_cninfo_http_body_preserves_prior_pages_in_normal_discovery():
+    from decision_kernel.infrastructure.cninfo_catalog import ANNOUNCEMENTS, OfficialCatalogTransport
+    from test_cninfo_catalog_transport import FakeResponse
+
+    calls, responses = [], []
+    class BrokenResponse(FakeResponse):
+        def read(self, limit):
+            raise IncompleteRead(b"private-source-fragment", 100)
+    class Opener:
+        def open(self, request, timeout):
+            form = parse_qs(request.data.decode())
+            calls.append(form)
+            if form["pageNum"] == ["1"]:
+                response = FakeResponse(ANNOUNCEMENTS, json.dumps(page(31, [row(n) for n in range(30)])).encode())
+            else:
+                response = BrokenResponse(ANNOUNCEMENTS)
+            responses.append(response)
+            return response
+    doc = capture(start=START, end=END,
+        transport_factory=lambda: OfficialCatalogTransport(opener=Opener()), clock=lambda: AT)
+    assert len(calls) == doc["requests_attempted"] == 14  # Two original pages per keyword, no retry.
+    assert not doc["source_hold"] and not doc["all_declared_queries_complete"]
+    assert doc["unique_versions"] == 30 and all(response.closed for response in responses)
+    assert all(q["pages_read"] == 1 and q["rows_read"] == 30 and q["status"] == "partial"
+        and "CNINFO_TRANSPORT_UNAVAILABLE" in q["gaps"] for q in doc["queries"])
+    assert "private-source-fragment" not in json.dumps(doc)

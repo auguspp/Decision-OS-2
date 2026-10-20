@@ -9,12 +9,12 @@ import pytest
 from decision_kernel.application import reading_participant
 from decision_kernel.application.reading_room import ReadingRoom
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, encoded
+from decision_kernel.domain.records import RecordError, SourceInput, encoded
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.interfaces import reading_commands, reading_participant_page, research_runtime
 from decision_kernel.interfaces.reading_page import render_page
-from test_participant_reading import PREPARED, packet, prepare, saved
+from test_participant_reading import PREPARED, make_packet, packet, prepare, put, saved
 from test_research_runtime import CODE, host, inputs
 
 
@@ -69,6 +69,37 @@ def test_native_private_room_writes_matching_html_without_public_rights_claim(ho
     assert result['participants']['view']['writes'] == result['participants']['view']['source_requests'] == 0
     assert (tmp_path / 'room/reading-room.html').read_text() == render_page(result)
     assert result['human_acceptance'] == 'not-established'
+
+
+def test_normal_native_host_replays_registered_capture_with_trusted_code_registry(host, tmp_path):
+    from decision_kernel.application.research_sources import capture_plan
+    from decision_kernel.infrastructure.relay_http import RelayHTTP
+    from decision_kernel.infrastructure.relay_retry import RetryPolicy
+    from test_market_relay_inputs import REGISTRY, SyntheticOpener
+    fields = ['ts_code', 'trade_date', 'exalter', 'buy']
+    opener = SyntheticOpener('top_inst', fields, [['002384.SZ', '20261016', '机构专用', '10']])
+    request = {'api': 'top_inst', 'stage': 'baseline', 'purpose': 'Synthetic normal consumer test',
+               'parameters': {'trade_date': '20261016', 'fields': ','.join(fields), 'limit': '100'}}
+    capture = list(capture_plan({'schema': 'research-source-plan-v1', 'case_id': 'synthetic-participant',
+        'requests': [request]}, REGISTRY, public_rights_confirmed=True,
+        client=RelayHTTP(opener=opener, credential='synthetic-key-only'),
+        policy=RetryPolicy(max_attempts=1, max_wait_seconds=0), clock=lambda: PREPARED))[0]
+    host.binding = replace(host.binding, private_upgrade_allowed=True)
+    host.meta['private'] = True
+    writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
+    source = put(writer, SourceInput('synthetic-registered-inst', 'content', 'Synthetic complete capture',
+        'synthetic:participant-host', encoded(capture).decode(), acquired_at=PREPARED))
+    root = packet(writer, make_packet([{'input_id': 'institution', 'api': 'top_inst',
+                  'format': 'registered-relay', 'references': [asdict(source)]}]))
+    calls, before = len(opener.calls), host.git.head()
+    report = research_runtime.run_command(host.binding, api=host,
+        inputs=inputs('reading-room', {'plan': plan(root, family='institution-seats')}),
+        code_sha=CODE, output=tmp_path / 'registered')
+    view = report['result']['participants']['view']
+    assert view['scope']['accepted_rows'] == 1 and view['scope']['unavailable_inputs'] == 0
+    assert view['rows'][0]['raw']['exalter'] == '机构专用'
+    assert view['input_outcomes'][0]['control']['complete'] is True
+    assert view['source_requests'] == 0 and len(opener.calls) == calls and host.git.head() == before
 
 
 def test_no_participant_plan_keeps_original_shape_and_renders_without_container(saved, monkeypatch):

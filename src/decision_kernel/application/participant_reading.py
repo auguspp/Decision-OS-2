@@ -87,6 +87,10 @@ def packet_input(value):
 
 
 def _registered_pages(value, registry):
+    if registry is None:
+        from pathlib import Path
+        from decision_kernel.application.relay_registry import RelayRegistry
+        registry = RelayRegistry(Path("docs/sources/relay-registry.json"))
     inspected = inspect_result(value, registry)
     require(inspected["api"] in observations.CONTRACTS, "PARTICIPANT_API_UNSUPPORTED")
     pages = []

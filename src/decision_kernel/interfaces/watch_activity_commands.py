@@ -6,8 +6,9 @@ from decision_kernel.domain.watch_activity import validate_change, validate_chec
 
 WRITES = ("change-odds-watch-activity", "save-odds-watch-activity-check")
 RECONCILES = ("reconcile-odds-watch-activity", "reconcile-odds-watch-activity-check")
-READS = ("current-odds-watch-activity", "list-odds-watch-activities", "read-odds-watch-activity", "check-odds-watch-activity")
-REFERENCES = ("current-odds-watch-activity", "read-odds-watch-activity")
+READS = ("current-odds-watch-activity", "list-odds-watch-activities", "read-odds-watch-activity", "check-odds-watch-activity",
+         "read-odds-watch-activity-segment")
+REFERENCES = ("current-odds-watch-activity", "read-odds-watch-activity", "read-odds-watch-activity-segment")
 REGISTRIES = WRITES + RECONCILES + READS
 COMMANDS = WRITES + RECONCILES + READS
 
@@ -26,4 +27,5 @@ def perform(store, operation, payload, submission_id, registry=None):
     if operation == "list-odds-watch-activities": return service.catalogue(payload)
     if operation == "check-odds-watch-activity": return service.preview(payload)
     shape(payload, {"reference"})
+    if operation == "read-odds-watch-activity-segment": return service.read_segment(payload["reference"])
     return service.current(payload["reference"]) if operation == "current-odds-watch-activity" else service.read(payload["reference"])

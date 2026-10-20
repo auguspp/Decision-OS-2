@@ -116,5 +116,7 @@ def exercise_installed_activity(call, watch_ref, seed):
     pause = call("change-odds-watch-activity", authorized("change", change(watch_ref, saved["reference"], "pause", now())), "installed-pause")
     page = call("list-odds-watch-activities", {"snapshot": None, "after": None, "limit": 1, "at": now()})
     assert page["items"][0]["state"] == "paused" and page["items"][0]["event_ref"] == pause["reference"]
-    retired = call("change-odds-watch-activity", authorized("change", change(watch_ref, pause["reference"], "retire", now())), "installed-retire")
+    from test_watch_history_runtime import exercise_installed_history
+    migrated = exercise_installed_history(call, watch_ref, pause["reference"])
+    retired = call("change-odds-watch-activity", authorized("change", change(watch_ref, migrated, "retire", now())), "installed-retire")
     assert retired["readback"]["status"] == "verified"

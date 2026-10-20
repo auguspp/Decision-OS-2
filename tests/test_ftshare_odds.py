@@ -90,6 +90,15 @@ def case():
     return build_case()
 
 
+@pytest.fixture
+def native_case(tmp_path):
+    """Saved Watch use proves original activity selection on a real Git graph."""
+    backend = GitStore.init_synthetic(tmp_path / "ftshare-watch.git")
+    store = VersionedStore(backend)
+    fresh = lambda: VersionedStore(GitStore(backend.root))
+    return build_case(storage=(backend, store, fresh))
+
+
 def conditional_input(case, market=None):
     return {"spec_ref": case["spec_ref"], "market": deepcopy(market or case["market"]),
         "market_policy": deepcopy(case["policy"]), "evaluated_at": EVALUATED}
@@ -191,8 +200,9 @@ def test_price_replacement_preserves_spec_probability_and_original_replay(case):
 
 @pytest.mark.parametrize("kind", ["conditional", "probability"])
 @pytest.mark.parametrize("version", [1, 2])
-def test_existing_watch_consumes_both_prices_and_replays_saved_checks(case, kind, version):
+def test_existing_watch_consumes_both_prices_and_replays_saved_checks(native_case, kind, version):
     from test_watch_conditions import v2_input
+    case = native_case
     service, ref = watch(case, kind, version)
     first_input = watch_request(case["store"], ref, at=EVALUATED,
                                 price=v2_input(case["market"]) if version == 2 else case["market"])
@@ -273,7 +283,8 @@ def test_sources_acquired_later_than_evaluation_never_backfill_a_quote(case):
         case["conditional"].compute(payload)
 
 
-def test_post_cutoff_same_day_close_reaches_watch_and_remains_usable_the_next_day(case):
+def test_post_cutoff_same_day_close_reaches_watch_and_remains_usable_the_next_day(native_case):
+    case = native_case
     market = replacement(case, acquired_at="2026-10-19T10:35:00+00:00")
     payload = conditional_input(case, market)
     saved = case["conditional"].save(authorized("calculation", payload), submission_id="post-close")
@@ -340,7 +351,8 @@ def test_retained_current_fair_value_still_means_distance_not_future_return(case
 
 
 @pytest.mark.parametrize("kind", ["conditional", "probability"])
-def test_held_replacement_never_falls_back_and_original_check_remains_readable(case, kind):
+def test_held_replacement_never_falls_back_and_original_check_remains_readable(native_case, kind):
+    case = native_case
     service, ref = watch(case, kind)
     original = service.save(authorized("check", watch_request(case["store"], ref, at=EVALUATED,
                             price=case["market"])), submission_id="before-hold")
@@ -406,9 +418,10 @@ def test_normal_odds_commands_save_read_and_verify_the_same_retained_input(case)
     assert result["result"]["market"]["source_requests"] == 0
 
 
-def test_registered_watch_uses_the_existing_activity_entry_with_ftshare(case):
+def test_registered_watch_uses_the_existing_activity_entry_with_ftshare(native_case):
     from decision_kernel.application.watch_activity import WatchActivity
     from test_watch_activity import change, query
+    case = native_case
     old, ref = watch(case)
     service = WatchActivity(case["store"], REGISTRY)
     registered = service.change(authorized("change", change(ref, at="2026-10-19T12:06:00+00:00")),
@@ -446,6 +459,7 @@ def test_ftshare_save_and_independent_readback_share_the_existing_native_budget(
     from test_github_store import GitAPI
     from test_market_snapshot import local_fetch
     from test_news_read_budget import transport
+    from test_odds_watch_runtime import native_watch_fetch
 
     model = GitAPI(tmp_path / "budget.git")
     model.git.repository, model.git.binding = model.binding.repository, model.binding
@@ -460,8 +474,9 @@ def test_ftshare_save_and_independent_readback_share_the_existing_native_budget(
     else:
         operation = "save-odds" if kind == "conditional" else "save-probability-odds"
         payload = authorized("calculation", conditional_input(case) if kind == "conditional" else probability_input(case))
-    api, fetches, readers = transport(model), [], []
+    api, fetches, readers, watch_fetches = transport(model), [], [], []
     monkeypatch.setattr("decision_kernel.infrastructure.market_snapshot._fetch_market_branch", local_fetch(model, fetches))
+    monkeypatch.setattr("decision_kernel.infrastructure.watch_snapshot._fetch_market_branch", native_watch_fetch(model, watch_fetches))
     writer = VersionedStore(GitHubStore(model.binding, api))
 
     def fresh():
@@ -476,5 +491,7 @@ def test_ftshare_save_and_independent_readback_share_the_existing_native_budget(
     assert readers[0].backend.api is writer.backend.api is api
     assert readers[0].backend.binding.write_enabled is False
     assert len(fetches) == 2 and all(call["api"] is api and not call["destination"].exists() for call in fetches)
+    if kind == "watch":
+        assert watch_fetches and all(call["api"] is api and not call["destination"].exists() for call in watch_fetches)
     assert api._requests == len(model.requests) <= MAX_REQUESTS == 512
     assert model.writes == 1

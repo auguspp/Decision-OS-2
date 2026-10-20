@@ -11,10 +11,19 @@ MAX_EVENTS = 128  # Full replay is bounded; no trusted/truncated prefix summarie
 
 
 def validate_change(payload):
-    shape(payload, {"watch_ref", "expected_event", "action", "at", "reason", "seed_check"})
+    keys = {"watch_ref", "expected_event", "action", "at", "reason", "seed_check"}
+    versioned = isinstance(payload, dict) and "history_version" in payload
+    shape(payload, keys | ({"history_version"} if versioned else set()))
     artifact_reference(payload["watch_ref"])
     if payload["expected_event"] is not None: artifact_reference(payload["expected_event"])
-    require(payload["action"] in ("register", "pause", "resume", "retire"), "WATCH_ACTIVITY_ACTION_UNSUPPORTED")
+    if versioned:
+        from decision_kernel.domain.watch_history import HISTORY_VERSION
+        require(payload["history_version"] == HISTORY_VERSION and payload["action"] in ("register", "migrate"),
+                "WATCH_ACTIVITY_HISTORY_REGISTRATION_REQUIRED")
+        require(payload["action"] != "migrate" or payload["expected_event"] is not None,
+                "WATCH_ACTIVITY_NOT_REGISTERED")
+    else:
+        require(payload["action"] in ("register", "pause", "resume", "retire"), "WATCH_ACTIVITY_ACTION_UNSUPPORTED")
     timestamp(payload["at"]); checked_text(payload["reason"], limit=4096)
     if payload["seed_check"] is not None:
         artifact_reference(payload["seed_check"])

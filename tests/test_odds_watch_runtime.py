@@ -18,7 +18,25 @@ from test_odds_watch import watch_payload, request
 from test_probability_odds_runtime import prepare_host
 
 
+def native_watch_fetch(host, calls):
+    from test_market_snapshot import local_fetch
+    from decision_kernel.infrastructure.git_store import GitStore
+    fetch = local_fetch(host, calls)
+    def native_fetch(binding, api, destination):
+        fetch(binding, api, destination)
+        # The existing GitAPI maps its declared branch to a physical synthetic
+        # `records` ref. Match the real fetch's destination ref in this copy.
+        if binding.branch != "records":
+            head = host.git.head()
+            for args in (("update-ref", "-d", "refs/heads/records", head),
+                         ("update-ref", "refs/heads/" + binding.branch, head, "0" * 40)):
+                subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "--git-dir=" + str(destination), *args],
+                               env=GitStore._env(), capture_output=True, check=True, timeout=30)
+    return native_fetch
+
+
 def setup_host(host, monkeypatch, *, probability=False):
+    monkeypatch.setattr("decision_kernel.infrastructure.watch_snapshot._fetch_market_branch", native_watch_fetch(host, []))
     monkeypatch.setattr("decision_kernel.application.versioned_store._now", lambda: "2026-01-03T02:30:00Z")
     if probability:
         store, service, spec, assessment, market = prepare_host(host, monkeypatch)

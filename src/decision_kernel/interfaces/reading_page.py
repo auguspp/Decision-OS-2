@@ -95,6 +95,7 @@ from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS
 from decision_kernel.interfaces.reading_global_page import CSS as GLOBAL_CSS, JS as GLOBAL_JS
 from decision_kernel.interfaces.reading_auction_page import CSS as AUCTION_CSS, JS as AUCTION_JS
 from decision_kernel.interfaces.reading_auction_minute_page import CSS as MINUTE_CSS, JS as MINUTE_JS
+from decision_kernel.interfaces.reading_auction_next_session_page import CSS as AUCTION_NEXT_CSS, JS as AUCTION_NEXT_JS
 
 from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
 from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_CSS, JS as DISCOVERY_JS
@@ -123,6 +124,8 @@ CSS += AUCTION_CSS
 JS += AUCTION_JS
 CSS += MINUTE_CSS
 JS += MINUTE_JS
+CSS += AUCTION_NEXT_CSS
+JS += AUCTION_NEXT_JS
 
 
 def render_page(model):
@@ -156,11 +159,14 @@ def render_page(model):
     minute_nav = '<a href="#auction-minute">原名单 09:40 分钟</a>' if "auction_minute" in model else ''
     minute_panel = ('<section class="panel" id="auction-minute"><h2>原竞价名单的 09:40 分钟观察</h2>'
                     '<div id="auction-minute-content"></div></section>') if "auction_minute" in model else ''
+    auction_next_nav = '<a href="#auction-next">原名单下一开市日</a>' if "auction_next_session" in model else ''
+    auction_next_panel = ('<section class="panel" id="auction-next"><h2>原竞价名单的下一开市日开收盘</h2>'
+                          '<div id="auction-next-content"></div></section>') if "auction_next_session" in model else ''
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
@@ -172,6 +178,7 @@ def render_page(model):
 {global_panel}
 {auction_panel}
 {minute_panel}
+{auction_next_panel}
 <section class="panel" id="discovery"><h2>行业、概念与独立个股状态发现</h2><div id="discovery-content"></div></section>
 {structure_panel}
 <section class="panel" id="industry"><h2>产业观察与公司经营角色</h2><div id="industry-content"></div></section>

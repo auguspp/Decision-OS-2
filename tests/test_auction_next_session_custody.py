@@ -94,6 +94,36 @@ def test_successor_loss_keeps_whole_prior_result_and_current_gap(variant):
     assert encoded(again['restored']['view']['previous_reference']) == encoded(new['reference'])
 
 
+@pytest.mark.parametrize('completed', [True, False], ids=['completed', 'not-established'])
+def test_all_missing_prices_keep_established_completion_through_two_successors(completed):
+    source = daily([])
+    if not completed:
+        for page in source['capture']['pages']:
+            page['transport'].pop('request_clock')
+    store, fresh, _, old = next_fixture(
+        lambda ref: payload(ref, quotes={'2026-10-21': source}))
+    prior = old['restored']['view']['cohorts'][0]['result']
+    assert prior['completion_clock'] == ('RECEIVED_AFTER_SESSION_COMPLETION' if completed else 'NOT_ESTABLISHED')
+    assert prior['rows'] and all(row['next_open'] is None and row['next_close'] is None for row in prior['rows'])
+    new = save(store, fresh, payload(None, previous=old['reference'], quotes={}, cal=None,
+                                    checked='2026-10-22T08:00:00+00:00'))
+    current = read_stored_market(new['reference'], REGISTRY, fresh())['view']['cohorts'][0]
+    assert current['current_attempt']['unavailable_previously_observed_fields'] == []
+    assert current['current_attempt']['previous_completion_unavailable'] is completed
+    if completed:
+        assert encoded(current['result']) == encoded(prior)
+        assert current['observation'] == 'PREVIOUS_DATED_OBSERVATIONS_RETAINED'
+    else:
+        assert current['result']['completion_clock'] == 'NOT_ESTABLISHED'
+        assert current['result']['quote_key'] is None
+        assert current['observation'] != 'PREVIOUS_DATED_OBSERVATIONS_RETAINED'
+    again = save(store, fresh, payload(None, previous=new['reference'], quotes={}, cal=None,
+                                      checked='2026-10-23T08:00:00+00:00'))
+    restored = read_stored_market(again['reference'], REGISTRY, fresh())['view']['cohorts'][0]
+    assert encoded(restored['result']) == encoded(current['result'])
+    assert restored['current_attempt']['previous_completion_unavailable'] is completed
+
+
 def test_first_partial_full_revision_and_unchanged_result_first_recorded_time():
     def initial(ref):
         return payload(ref, quotes={'2026-10-21': daily([['600001.SH', '20261021', '111']], returned=FIELDS[:-1])})
@@ -110,7 +140,7 @@ def test_first_partial_full_revision_and_unchanged_result_first_recorded_time():
     assert c['observation'] == 'UNCHANGED_DATED_OBSERVATIONS' and c['current_attempt']['unavailable_previously_observed_fields'] == []
 
 
-@pytest.mark.parametrize('field', ['price', 'members', 'calendar', 'query'])
+@pytest.mark.parametrize('field', ['price', 'members', 'calendar', 'query', 'completion'])
 def test_previous_model_hash_or_reference_is_not_a_substitute_for_exact_sources(field):
     store, fresh, original, old = next_fixture()
     value = root(store, old['reference']); c = value['reading']['snapshot']['cohorts'][0]
@@ -123,6 +153,8 @@ def test_previous_model_hash_or_reference_is_not_a_substitute_for_exact_sources(
         c['members_hash'] = digest(encoded(c['members']))
     elif field == 'calendar':
         c['calendar_prefix'][0]['is_open'] = False
+    elif field == 'completion':
+        c['current_attempt']['previous_completion_unavailable'] = True
     else:
         keys = list(value['queries']); value['queries'][keys[0]] = value['queries'][keys[1]]
     bad = forged(store, value); before = store.backend.head()

@@ -149,26 +149,31 @@ def project(cohort, calendar, through, quotes, checked_at, previous=None):
     current = dated_result(cohort, target, gap, quotes.get(target), checked_at)
     prior = (previous or {}).get('result')
     lost = []
+    completion_lost = False
     if prior is not None:
         require([(r['cohort_id'], r['entity_id'], r['group']) for r in prior['rows']]
                 == [(r['cohort_id'], r['entity_id'], r['group']) for r in current['rows']], 'PREVIOUS_MEMBERS_CHANGED')
         if prior['target_session'] == target:
+            completion_lost = (prior['completion_clock'] == 'RECEIVED_AFTER_SESSION_COMPLETION'
+                               and current['completion_clock'] != 'RECEIVED_AFTER_SESSION_COMPLETION')
             lost = [{'cohort_id': old['cohort_id'], 'entity_id': old['entity_id'], 'field': field,
                      'status': new[field + '_status'] if new['readable_' + field] is None
                      else current['completion_clock']}
                     for old, new in zip(prior['rows'], current['rows']) for field in ('open', 'close')
                     if (old['readable_' + field] is not None and new['readable_' + field] is None)
                     or (old['next_' + field] is not None and new['next_' + field] is None)]
-    result = deepcopy(prior) if lost else current
+    retain_previous = bool(lost) or completion_lost
+    result = deepcopy(prior) if retain_previous else current
     unchanged = bool(prior and result['result_hash'] == prior['result_hash'])
     if unchanged:
         result['first_recorded_at'] = prior['first_recorded_at']
     attempt = {'quote_key': current['quote_key'], 'completion_clock': current['completion_clock'],
                'quote_lineage': current['quote_lineage'], 'row_coverage': current['row_coverage'],
-               'unavailable_previously_observed_fields': lost}
+               'unavailable_previously_observed_fields': lost,
+               'previous_completion_unavailable': completion_lost}
     return {**deepcopy(cohort), 'target_session': target, 'calendar_prefix': prefix, 'calendar_gap': gap,
             'result': result, 'current_attempt': attempt,
-            'observation': 'PREVIOUS_DATED_OBSERVATIONS_RETAINED' if lost else
+            'observation': 'PREVIOUS_DATED_OBSERVATIONS_RETAINED' if retain_previous else
                            'UNCHANGED_DATED_OBSERVATIONS' if unchanged else 'DATED_OBSERVATIONS_UPDATED'}
 
 

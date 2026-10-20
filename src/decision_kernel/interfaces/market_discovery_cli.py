@@ -50,7 +50,7 @@ def main(argv=None):
     parser.add_argument("--submission-id")
     parser.add_argument("--public-rights-confirmed", action="store_true")
     parser.add_argument("--custody-authorized", action="store_true",
-                        help="Explicit private custody authorization; does not grant public redistribution")
+                        help="Explicit custody authorization; public saving also needs the fixed sources and market grant")
     args = parser.parse_args(argv)
     try:
         payload = _load(args.input)

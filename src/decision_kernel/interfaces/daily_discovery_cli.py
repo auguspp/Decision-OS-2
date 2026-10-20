@@ -1,4 +1,4 @@
-"""Persist qualified daily discovery on the existing private daily writer.
+"""Persist qualified daily discovery on the existing authorized daily writer.
 
 Only the job token and the source owner's canonical receipt/control are used.
 No provider credentials, network source request, new store or notification.

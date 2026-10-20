@@ -184,21 +184,22 @@ def test_collection_owner_prefix_cannot_turn_a_counts_receipt_into_a_reading(sav
         consumer.read_market_reference(forged, REGISTRY, store)
 
 
-def test_collection_storage_budget_failure_blocks_the_market_panel(saved, monkeypatch):
+def test_collection_storage_budget_failure_stops_the_room(saved, monkeypatch):
     store, _, original = saved
     missing = original["collection"]["units"][END + ":daily"]["query"]
     read, attempts = store.read_source, []
+    failure = StoreUnavailable("REMOTE_REQUEST_LIMIT")
 
     def fail(reference):
         attempts.append(reference)
         if encoded(asdict(reference)) == encoded(missing):
-            raise StoreUnavailable("REMOTE_REQUEST_LIMIT")
+            raise failure
         return read(reference)
 
     monkeypatch.setattr(store, "read_source", fail)
-    result = room(store, original["reference"])
-    assert result["market"]["status"] == "unavailable" and "view" not in result["market"]
-    assert result["status"] == "partial"
+    with pytest.raises(StoreUnavailable, match="^REMOTE_REQUEST_LIMIT$") as error:
+        room(store, original["reference"])
+    assert error.value is failure
     assert encoded(asdict(attempts[-1])) == encoded(missing)
 
 

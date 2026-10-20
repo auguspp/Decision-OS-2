@@ -22,6 +22,11 @@ FATAL = {"PRIVATE_BINDING_MISMATCH", "PUBLIC_BINDING_MISMATCH", "PRIVATE_UPGRADE
          "OPERATING_SOURCE_SCOPE_BOUND", "PARTICIPANT_READING_BOUND"}
 
 
+def operation_failure(error):
+    """Keep the reader's access and budget failures terminal in composing consumers."""
+    return isinstance(error, StoreUnavailable) or str(error) in FATAL
+
+
 def _shape(value, fields):
     require(isinstance(value, dict) and set(value) == set(fields), "PARTICIPANT_PACKET_SHAPE")
 
@@ -201,7 +206,7 @@ def read_participants(reference, store, *, company_id=None, participant_id=None,
                     try:
                         view = scoped.read_source(source_ref)
                     except RecordError as exc:
-                        if isinstance(exc, StoreUnavailable) or str(exc) in FATAL:
+                        if operation_failure(exc):
                             fatal_error = exc
                         raise
                     total_bytes += len(encoded(view))

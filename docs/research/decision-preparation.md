@@ -52,7 +52,7 @@
 
 原估值日、概率判断时刻、价格时刻及原计算评价时刻不得晚于 `prepared_at`，保留各自原精度。价格只来自原 Odds 结果；`price_context` 保留原价格、币种、证券、时刻、原行情及概率资格。`declared-reference` 或早期未取得市场资格的结果继续标明 `qualified-market-not-established`，不升级成合格行情；原有合格结果的资格也只适用于原评价时刻。本次准备不刷新、不重新认证准备时点行情，更不显示当前可执行价格。没有独立事前保管证明时，ArtifactRef 仍只固定所读版本，不给作者日期补签历史可用性。
 
-原注册表仍由现役 Odds 接口使用。保留市场证据的结果必须使用匹配 `RelayRegistry`；底层概率 Reader 要求明确的受信注册表，不能从来源内容选择目录或降级成“未建立”后继续成功。正常命令及宿主默认加载所检代码的 `docs/sources/relay-registry.json`，主 CLI 也可通过 `--registry` 指定明确的受信本地目录；保存与独立读回使用同一注册表。直接调用底层服务时仍须提供匹配目录。整个过程中不请求任何新行情来源；来源或 artifact 拒绝、损坏、预算耗尽仍是操作失败，不能伪装成正常空值。
+原注册表仍由现役 Odds 接口使用。保留市场证据的结果必须使用匹配 `RelayRegistry`；底层概率 Reader 要求明确的受信注册表，不能从来源内容选择目录或降级成“未建立”后继续成功。主 CLI 的默认目录固定为入口工作目录下的 `docs/sources/relay-registry.json`，仅在确实恢复某版非 null Odds 时加载；当前准备和所有前驱都没有 Odds 时，空数值上下文或仅有估值引用均不需要读取该目录，已安装 CLI 可在源码仓库外准备、保存和读回。当前稿删除 Odds 不解除原前驱的匹配目录要求。主 CLI 也可通过 `--registry` 指定明确的受信本地目录；显式指定即沿原校验打开，缺件或损坏不会被 null Odds 隐去。源码仓库外恢复 Odds 仍须提供真实匹配目录，不搜索其他 checkout 或降级为空注册表。主 CLI 保存与独立读回使用同一次操作已经验证的同一注册表对象。原生宿主继续在所检代码目录沿原接线读取注册表；直接调用底层 Odds 服务时仍须提供匹配目录。整个过程中不请求任何新行情来源；来源或 artifact 拒绝、损坏、预算耗尽仍是操作失败，不能伪装成正常空值。
 
 ## 多期限状态与前驱历史
 
@@ -95,7 +95,7 @@ Reading Room 使用可选 `decision_preparation: {reference, at}` 计划，读�
 
 页面只读取结果并提供原引用、历史和读取请求，没有“确认”“批准”“下单”按钮。暂未读取的研究、外部原文和剩余限制仍显示。保存准备包不等于发布研究、触发通知或启动长期监控。
 
-共享接线使用 `decision_preparation_commands.READS / WRITES / RECONCILES`，分别是 `prepare-decision, read-decision-preparation`、`save-decision-preparation` 和只读对账 `reconcile-decision-preparation`。`DecisionPreparation(store, registry=None, *, clock=None)`、`perform(store, operation, payload, submission_id="", registry=None)` 和 `verify_fresh(receipt, reader_factory, registry=None)` 接受原 store/registry，不新建数据或来源客户端。页面导出 `CSS`、`JS`，`renderDecisionPreparation()` 消费 `D.decision_preparation` 中 `{status,view,open_request}`，由共享页面提供 `decision-preparation-content` 容器与原安全文本辅助函数。
+共享接线使用 `decision_preparation_commands.READS / WRITES / RECONCILES`，分别是 `prepare-decision, read-decision-preparation`、`save-decision-preparation` 和只读对账 `reconcile-decision-preparation`。`DecisionPreparation(store, registry=None, *, clock=None, registry_loader=None)`、`perform(store, operation, payload, submission_id="", registry=None, *, registry_loader=None)` 和 `verify_fresh(receipt, reader_factory, registry=None)` 接受原 store/registry，不新建数据或来源客户端。可选 `registry_loader` 只在实际重建非 null Odds 且未直接提供 registry 时返回受信注册表；命令入口负责保留该真实对象供独立读回，不能由来源内容选择 loader。页面导出 `CSS`、`JS`，`renderDecisionPreparation()` 消费 `D.decision_preparation` 中 `{status,view,open_request}`，由共享页面提供 `decision-preparation-content` 容器与原安全文本辅助函数。
 
 ## 复用、验证与退出
 

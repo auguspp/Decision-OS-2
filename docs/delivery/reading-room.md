@@ -20,11 +20,13 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 已保管 A 股原价/复权使用可选 `market` 计划，见[市场双视图](reading-market.md)。既有证券 reading 根和持续 collection 根都沿各自原读取器恢复；计数回执不是行情输入。分页固定原根，公开输出单独确认来源权利，工程成功不代签真实行情保管或采用。当前 partial 集合、窗口缺口及旧完整版本的 freshness 继续显示，不将可读状态改成行情全覆盖。
 
+已保管美股指数与 Shibor 使用可选 `global_context` 的 `us_indices` / `shibor` 两槽，见[全球背景阅读](reading-global.md)。两族原完整模型、源日期、单位、分母和版本分别保留，页面分页不隐藏未选中项缺口。沿原来源公开确认及可信 Public 部署授权；不改变 A 股 guard、不采集新数据，也不代签六族覆盖或自然更新。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。
 
-本仓已整体 private，原同仓 `records`、repository_id、store_id、anchor 及公开建仓标记保持。下例按已有获准范围在原生核验 private 后读取，不声明公开权利；这些布尔值不会选择或证明私有模式。
+当前部署沿[公开运行合同](../engineering/public-runtime.md)核可信授权和原生可见性；原同仓 `records`、repository_id、store_id、anchor 及建仓标记保持。下例中的布尔值不选择或证明 private，也不是公开权利来源；原生 public 时须有适用可信部署授权或原逐次确认，原生已核 private 时按已有获准范围读取。
 
 ```json
 {
@@ -62,7 +64,7 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 只读宿主对原绑定启用的同仓单向私有化，先通过 GitHub 原生元数据核当前可见性，再选择输出路径；不相信配置里的历史 `visibility=public` 是实时状态，也不接受来源或 payload 自报 private。核验 private 后，在原授权的阅读范围内可以不填写公开确认；输入形状、精确引用、原读权限及容量检查继续生效。同一受信后端在全部读取后、释放输入引用/结果正文/HTML 前再次核验可见性，已观测 private 后反转 public 则失败，不能把本次私有读取降级成公开输出。
 
-若原生核验为 public，研究公开确认继续在目录、records 内容访问及输入产物生成前检查；各 `public_*_custody_confirmed` 只是已有权利的调用声明，不做人类认证。显式 `agenda` 须单独确认反馈公开，`materials` / `review` 以及 `industry` / `market` 仍分别按原材料/来源确认。指定 Brief 在读取后若发现既存选择或议程关联而未确认反馈导出，整个简报面板返回 `permission-required`，不把其正文/笔记带入输出；其他合格研究仍可读。元数据权利不自动包含私人笔记、受限原文或正式 Decision。
+若原生核验为 public，研究公开确认继续在目录、records 内容访问及输入产物生成前检查；各 `public_*_custody_confirmed` 只是已有权利的调用声明，不做人类认证，可信部署授权按原合同填写既有字段。显式 `agenda` 须单独确认反馈公开，`materials` / `review` 以及 `industry` / `market` / `global_context` 仍分别按原材料/来源确认。指定 Brief 在读取后若发现既存选择或议程关联而未确认反馈导出，整个简报面板返回 `permission-required`，不把其正文/笔记带入输出；其他合格研究仍可读。元数据权利不自动包含私人笔记、受限原文或正式 Decision。
 
 上述私有适配只改变 `reading-room` 的受控只读输出，不增加来源访问、资料保管、研究委托或研究写权限；`deliver`、资料/研究写入、其他宿主及正式 Decision 继续原门禁。源资料仍须在原有许可下使用，不因为仓库私有化取得任意用途或公开再分发权。
 
@@ -80,7 +82,7 @@ decision-os store --path /tmp/existing-synthetic.git research-room \
 
 目录权限/快照错误沿原owner失败，不能返回空目录冒称成功；单份研究、议程或简报失败显示missing/unavailable/invalid，只限制相依面板。读取正文不刷新来源资格或研究经济质量。重要未决项、挑战、来源分页和原读取请求保留；源缺失时可保留研究正文，但无法重建的简报不获得采用认证。
 
-原 Catalogue 卡片和 Reader 源页限额不变。本页单研究正文 1MiB、正文总展示 2MiB；议程/简报面板 768KiB、可选材料面板 2MiB、可选产业结果 2MiB、可选市场结果 2MiB、完整模型 6MiB、HTML 8MiB。超限对象整项显示 not-included 并保留原引用/读取通路，不截断、改写或删除原研究。过大整页或无法再次验证访问则明确失败。市场旧 reading 根沿原 32-query 边界；持续 collection 根沿原按日集合与原生快照合同，不套用旧 reading 根的查询总数限制，也不扩大每份 query 的原页限额。原 8MiB 结果、60KiB 输入、512 存储请求均不提高、不重置；Brief 来源复用原 `_SourceReads`，统计仅代表新闻部分。全局请求预算耗尽可能阻止最终权限复核，不能伪称局部成功。
+原 Catalogue 卡片和 Reader 源页限额不变。本页单研究正文 1MiB、正文总展示 2MiB；议程/简报面板 768KiB、可选材料面板 2MiB、可选产业结果 2MiB、可选市场结果 2MiB、可选全球背景结果 2MiB、完整模型 6MiB、HTML 8MiB。超限对象整项显示 not-included 并保留原引用/读取通路，不截断、改写或删除原研究。过大整页或无法再次验证访问则明确失败。市场旧 reading 根沿原 32-query 边界；持续 collection 根沿原按日集合与原生快照合同，不套用旧 reading 根的查询总数限制，也不扩大每份 query 的原页限额。原 8MiB 结果、60KiB 输入、512 存储请求均不提高、不重置；Brief 来源复用原 `_SourceReads`，统计仅代表新闻部分。全局请求预算耗尽可能阻止最终权限复核，不能伪称局部成功。
 
 远端组合读取由 `infrastructure/github_reading.py` 在原 `GitHubStore` 上建立一次有界只读作用域：进入时核原生仓库、分支及绑定，固定该次准入快照；研究、材料、Brief 与产业读取复用同一 API 和原不可变树/正文/祖先证据。精确引用仍须位于 anchor 与准入快照之间，并逐项核原摘要；不把当前指针或权限永久缓存。读取中合法追加的新 records 不混入本页，原 catalogue cursor 仍决定目录版本。
 

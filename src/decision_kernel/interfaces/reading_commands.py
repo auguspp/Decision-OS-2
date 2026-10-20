@@ -33,6 +33,8 @@ def preflight(operation, payload, *, public=True):
 
     require(not plan.get("market") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
+    require(not plan.get("global_context") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_GLOBAL_NOT_CONFIRMED")
     require(not plan.get("discovery") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
     require(not plan.get("participants") or payload.get("public_sources_custody_confirmed") is True,
@@ -97,7 +99,7 @@ def configure(actions):
     room.add_argument("--input", required=True, type=Path, help="reading-room plan JSON; not executable instructions")
     room.add_argument("--out", required=True, type=Path, help="NEW offline HTML path; existing files are never overwritten")
 
-    room.add_argument("--market-registry", type=Path, help="trusted local Relay registry for a market root; never source-provided")
+    room.add_argument("--market-registry", type=Path, help="trusted local Relay registry for market/global roots; never source-provided")
 
 
 def execute(args, store, load):

@@ -15,6 +15,7 @@ from decision_kernel.domain.research_artifacts import artifact_reference
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_reading import reading_scope
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.runtime_publication import checked_output_visibility
 from decision_kernel.interfaces.store_cli import _load
 from decision_kernel.observations.market_daily import MarketInputError
 
@@ -62,13 +63,13 @@ def main(argv=None):
             else:
                 binding = replace(binding, write_enabled=False)
             backend = GitHubStore(binding, GitHubAPI.from_environment())
-            require(backend.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
+            checked_output_visibility(backend, "market", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
             store = VersionedStore(backend)
         result = execute(args.operation, payload, store, registry=RelayRegistry(args.registry),
                          submission_id=args.submission_id, custody_authorized=args.custody_authorized,
                          rights_confirmed=args.public_rights_confirmed)
         if args.binding is not None:
-            require(store.backend.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
+            checked_output_visibility(store.backend, "market", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
         print(encoded(result).decode(), end="")
         return 0
     except (RecordError, MarketInputError) as error:

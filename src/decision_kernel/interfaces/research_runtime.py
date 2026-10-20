@@ -28,6 +28,9 @@ from decision_kernel.domain.records import (
 )
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.runtime_publication import (
+    checked_output_visibility, publication_basis, publication_payload, publication_scope,
+)
 from decision_kernel.methods.research import research_method
 from decision_kernel.interfaces.research_payload import (
     MAX_PAYLOAD_BYTES, decode_payload, json_object as _object,
@@ -183,6 +186,17 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     require(command["code_sha"] == code_sha, "RUNTIME_CODE_CHANGED")
     require(binding.visibility == "public" and not binding.write_enabled,
             "PUBLIC_READ_ONLY_CONFIG_REQUIRED")
+    original_payload_sha256 = digest(encoded(command["payload"]))
+    scope = publication_scope(command["operation"])
+    authority, backend = None, None
+    # The trusted deployment grant fills only publication fields. It cannot
+    # change the source, frozen research, write intent, or formal acceptance.
+    # Authenticate the actual repository before applying it or exporting input.
+    if publication_basis(binding, scope) is not None:
+        backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
+        if backend.live_visibility() == "public":
+            authority = publication_basis(binding, scope)
+            command = {**command, "payload": publication_payload(command["operation"], command["payload"], binding)}
     # Reject unconfirmed publication before saving inputs into public job artifacts.
     if command["operation"] in ("deliver", "reconcile-delivery"):
         validate_delivery(command["payload"])
@@ -200,18 +214,21 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     odds_commands.preflight(command["operation"], command["payload"])
     if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
         decision_preparation_commands.preflight(command["operation"], command["payload"])
-    backend, room_public = None, True
+    room_public = True
     if command["operation"] in hosted_handoff.OPERATIONS:
-        backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
-        require(backend.live_visibility() == "private", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+        if backend is None:
+            backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
+        checked_output_visibility(backend, "handoff", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
     if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
-        backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
-        require(backend.live_visibility() == "private", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+        if backend is None:
+            backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
+        checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
     if private_room_allowed:
         # A public-origin marker/opt-in is not evidence of today's visibility.
         # Keep this checked adapter for the entire read, including its one-way
         # private latch, rather than recreating it after deciding export rights.
-        backend = _CommandStore(binding, api, command)
+        if backend is None:
+            backend = _CommandStore(binding, api, command)
         room_public = backend.live_visibility() == "public"
         reading_commands.preflight(command["operation"], command["payload"], public=room_public)
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -220,11 +237,15 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
               "code_sha": code_sha, "run_id": run_id, "run_attempt": attempt,
               "repository": binding.repository, "branch": binding.branch,
               "submission_id": command["submission_id"], "expected_head": command["expected_head"],
-              "payload_sha256": digest(encoded(command["payload"])),
+              "payload_sha256": original_payload_sha256,
               "started_at": datetime.now(timezone.utc).isoformat(),
               "status": "started", "write": "not-attempted" if operation in WRITE_OPERATIONS else "not-requested",
               "research_executed": False, "research_assessment": "not-performed",
               "human_acceptance": "not-confirmed", "execution_authority": "not-granted-by-command"}
+
+    if authority is not None:
+        report["publication_authorization"] = authority
+        report["effective_payload_sha256"] = digest(encoded(command["payload"]))
 
     def persist():
         raw = encoded(report)
@@ -249,6 +270,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             # Components may use independent source-only GitMarketReader snapshots.
             # Recheck the original adapter after all components and before release.
             report["repository_visibility"] = backend.live_visibility()
+            if authority is not None:
+                checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")
             reading_commands.write_page(output / "reading-room.html", result)
             if not room_public:
                 (output / "inputs.json").write_bytes(encoded(inputs))
@@ -262,12 +285,15 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             result = decision_preparation_commands.verify_fresh(
                 result, lambda: decision_preparation_commands.private_reader(binding, api), registry)
         if operation in PRIVATE_PREPARATION_OPERATIONS:
-            require(backend.live_visibility() == "private", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+            visibility = checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
             if private_preparation_read:
                 (output / "inputs.json").write_bytes(encoded(inputs))
-            report["repository_visibility"] = "private"
+            report["repository_visibility"] = visibility
         if operation in hosted_handoff.OPERATIONS:
-            require(backend.live_visibility() == "private", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+            report["repository_visibility"] = checked_output_visibility(backend, "handoff", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+        if authority is not None:
+            # Revocation cannot turn into a successful public body/attachment.
+            checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")
         report.update(result=result, status="completed")
         if operation == industry_commands.OPERATION and result["status"] == "partial":
             report["status"] = "industry-reading-partial"  # Keep good branches, but exit nonzero.

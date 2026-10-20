@@ -74,9 +74,22 @@ def settings(event, env):
 
 
 def check_private(api, selected):
+    # Historical studies remain private-only; normal hosts may use #164 authority.
+    from decision_kernel.infrastructure.runtime_publication import native_publication_basis
     meta = api.request('GET', PREFIX)
+    authorization_selection = selected
+    if meta.get('private') is False and set(selected) == {'code_sha'} \
+            and os.environ.get('GITHUB_WORKFLOW_REF') == REPO + '/.github/workflows/daily-market.yml@refs/heads/main':
+        # The existing release command supplies only the code SHA. Recover its
+        # normal operation from the SAME native event, never from source text.
+        from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, settings as daily_settings
+        event = _json(_regular(Path(os.environ['GITHUB_EVENT_PATH']), 1024 * 1024))
+        approved = _json(_regular(POLICY_FILE, 8192))
+        authorization_selection = daily_settings(event, os.environ, approved)
     require(meta.get('id') == 1420041744 and meta.get('full_name') == REPO
-        and meta.get('private') is True and meta.get('archived') is False
+        and (meta.get('private') is True or meta.get('private') is False
+             and native_publication_basis(authorization_selection) is not None)
+        and meta.get('archived') is False
         and meta.get('default_branch') == 'main', 'FTSHARE_PRIVATE_REPOSITORY_REQUIRED')
     main = api.request('GET', PREFIX + '/git/ref/heads/main')
     require(main.get('object', {}).get('sha') == selected['code_sha'], 'FTSHARE_MAIN_MOVED')

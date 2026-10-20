@@ -5,6 +5,7 @@ from decision_kernel.application.decision_preparation import DecisionPreparation
 from decision_kernel.domain.decision_preparation import moment, shape, validate_preparation
 from decision_kernel.domain.records import require
 from decision_kernel.domain.research_artifacts import artifact_reference
+from decision_kernel.infrastructure.runtime_publication import checked_output_visibility, publication_basis, publication_payload
 
 READS = ("prepare-decision", "read-decision-preparation")
 WRITES = ("save-decision-preparation",)
@@ -34,6 +35,9 @@ def preflight(operation, payload):
 
 
 def perform(store, operation, payload, submission_id="", registry=None):
+    binding = getattr(store.backend, "binding", None)
+    if publication_basis(binding, "decision-preparation") is not None and store.backend.live_visibility() == "public":
+        payload = publication_payload(operation, payload, binding)
     preflight(operation, payload)
     if registry is None:
         from decision_kernel.application.relay_registry import RelayRegistry
@@ -60,5 +64,5 @@ def private_reader(binding, api):
     from decision_kernel.application.versioned_store import VersionedStore
     from decision_kernel.infrastructure.github_store import GitHubStore
     backend = GitHubStore(replace(binding, write_enabled=False), api)
-    require(backend.live_visibility() == "private", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+    checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
     return VersionedStore(backend)

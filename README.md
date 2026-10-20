@@ -6,9 +6,9 @@
 
 ## 日常阅读
 
-打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，手动选择 `status` 并填写当前 `main` 的确切代码版本。**现仓 Public 时，Summary 返回可见性和运行限制的元数据诊断，不读取 records，不生成完整阅读页，也不把旧内容说成今日更新。** 公开模式及限制见[运行适配](docs/engineering/public-runtime.md)。
+打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，手动选择 `status` 并填写当前 `main` 的确切代码版本。现仓已按用户明确确认配置[公开运行授权](config/public-runtime.json)：通过原生准入后正常读取已存行情、研究、发现状态和最新已存 Brief，在本次运行的 Summary 看内容日期，下载产物中的 `reading-room.html` 阅读全文。新生成页面不等于今天有新行情或 Brief。
 
-原生核验 Private 并通过既有准入时，原 status/daily 作业仍可读取已存 Brief、研究与行情，生成 `reading-room.html`。原六股周期保持北京时间工作日18:35、每周期至多2个日历请求和12个价格请求；真实交易日、延迟补更、失败/hold及额度规则不变。Public 下的更新/补更/定时在缺少公开数据授权时明确拒绝，不以全作业 skipped 充成功。已有明确公开权利的手动资料入口仍见[统一阅读室](docs/delivery/reading-room.md)，原日更规则见[日常更新合同](docs/architecture/daily-market.md)。
+原六股周期仍为北京时间工作日18:35，每周期至多2个日历请求和12个价格请求；真实交易日、延迟补更、失败/hold及预算不变。正常 Public 更新、补更和定时采用已登记授权，不再停在仅元数据诊断。撤销授权时停止相应公开业务，保留明确原因；源码/CI公开不公开密钥，也不重开耗尽任务。现役原件/研究/Brief和备份仍走同一 records，具体见[公开运行合同](docs/engineering/public-runtime.md)、[统一阅读室](docs/delivery/reading-room.md)及[日常更新规则](docs/architecture/daily-market.md)。
 
 ## 从这里开始
 
@@ -52,4 +52,4 @@ decision-os info --json
 
 首个代码责任是完整 CI 与可安装骨架；共同保管的必要合同可用后，直接 Full/Quick 与市场雷达、产业商品、披露资料及日常交付按依赖并行。首发可用不等于全部雷达或500+覆盖完成，未完成责任须明确接续。文档/规则已落地、CI已配置、产品已使用分别成立，实际结果读对应任务。
 
-用户于2026-10-20将现仓切回 Public，沿[#164](https://github.com/auguspp/Decision-OS-2/issues/164)直接适配现仓；`main` 仍只提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，同仓独立 `records` 分支保管原范围获准资料与研究，默认[只读绑定](config/store-binding.json)；保留原 repository_id、store_id、anchor 和历史公开建仓标记，运行时另核真实可见性。可见性变化不增加来源、研究、公开再分发或人工 Decision 权限；同仓 records 与历史产物不会因代码检查重新隐藏，数据分支不是隐私或角色隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。
+用户于2026-10-20将现仓切回 Public，沿[#164](https://github.com/auguspp/Decision-OS-2/issues/164)直接适配现仓；`main` 仍只提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，同仓独立 `records` 分支保管原范围获准资料与研究，默认[只读绑定](config/store-binding.json)；保留原 repository_id、store_id、anchor 和历史公开建仓标记，运行时另核真实可见性。公开许可采用#164记录的用户确认；可见性变化和这项公开确认都不增加来源执行预算、新研究委托或人工 Decision 权限；同仓 records 与历史产物不会因代码检查重新隐藏，数据分支不是隐私或角色隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。

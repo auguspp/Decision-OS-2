@@ -237,17 +237,18 @@ def test_workflow_native_preflight_does_not_depend_on_missing_schedule_repositor
     job = workflow["jobs"]["visibility"]
     assert job["permissions"] == {"contents": "read", "actions": "read"}
     assert "repository.private" not in job["if"] and "schedule" in job["if"]
-    assert job["outputs"] == {"visibility": "${{ steps.visibility.outputs.visibility }}"}
+    assert job["outputs"] == {"visibility": "${{ steps.visibility.outputs.visibility }}",
+                              "runtime_authorized": "${{ steps.visibility.outputs.runtime_authorized }}"}
     commands = [step for step in job["steps"] if "run" in step]
     assert len(commands) == 1 and commands[0]["id"] == "visibility"
-    assert shlex.split(commands[0]["run"]) == ["python", "-m", cli.__name__]
+    assert shlex.split(commands[0]["run"]) == ["python", "-m", cli.__name__, "--use-runtime-authorization"]
     env = {**workflow.get("env", {}), **job.get("env", {}), **commands[0].get("env", {})}
     assert env == {"DECISION_OS_STORE_TOKEN": "${{ github.token }}"}
     assert "secrets." not in json.dumps(job) and "upload-artifact" not in json.dumps(job)
     for name in ("status", "daily"):
         child = workflow["jobs"][name]
         assert child["needs"] == "visibility"
-        assert child["if"].startswith("needs.visibility.outputs.visibility == 'private' && ")
+        assert child["if"].startswith("needs.visibility.outputs.runtime_authorized == 'true' && ")
         assert "always()" not in child["if"] and "github.event.repository.private" not in child["if"]
         # Do not remove the original last native check guarding full outputs.
         assert any(step.get("id") == "release" for step in child["steps"])

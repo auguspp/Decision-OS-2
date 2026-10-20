@@ -9,7 +9,7 @@ on:
         type: string
         required: true
       capture_confirmed:
-        description: Authorize bounded public directory metadata capture into private records
+        description: Authorize bounded public directory metadata capture into authorized records
         type: boolean
         required: true
         default: false
@@ -37,12 +37,13 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Require native private repository and independent exact main CI before collection
+      - name: Require native publication authority and independent exact main CI before collection
         env:
           GH_TOKEN: ${{ github.token }}
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true
+          python -m decision_kernel.infrastructure.runtime_publication check sources
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
           gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 > "$RUNNER_TEMP/discovery-ci.json"
           python - <<'PY'
@@ -55,8 +56,14 @@ jobs:
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.announcement_discovery_cli --out "$RUNNER_TEMP/dos2-announcements"
-      - name: Retain input, source coverage and original confirmed or unknown write receipt
+      - name: Recheck native publication before releasing source and receipt
+        id: release
         if: always()
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.infrastructure.runtime_publication check sources
+      - name: Retain input, source coverage and original confirmed or unknown write receipt
+        if: always() && steps.release.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: dos2-announcements-${{ github.run_id }}-${{ github.run_attempt }}

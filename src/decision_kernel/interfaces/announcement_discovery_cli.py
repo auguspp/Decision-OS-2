@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from decision_kernel.domain.records import MissingObject, RecordError, SourceInput, SourceRef, encoded, require
+from decision_kernel.infrastructure.runtime_publication import checked_output_visibility
 
 
 def execute(*, binding, api, output, code_sha, day=None, source_capture=None):
@@ -22,7 +23,7 @@ def execute(*, binding, api, output, code_sha, day=None, source_capture=None):
     require(end <= today and (today-end).days <= 7, "DISCOVERY_EXECUTION_DATE_BOUND")
     start = end-timedelta(days=3)
     backend = GitHubStore(binding, api)
-    require(backend.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
+    checked_output_visibility(backend, "sources", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
     head = backend.head()
     intent_id = "announcement-discovery-" + end.strftime("%Y%m%d")
     output.mkdir(parents=False, exist_ok=False)
@@ -58,7 +59,7 @@ def execute(*, binding, api, output, code_sha, day=None, source_capture=None):
             "Original PDF not fetched; partial pages, refused queries and stale dates remain visible."))
     payload = asdict(source)
     (output/"source-input.json").write_bytes(encoded(payload))
-    require(backend.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
+    checked_output_visibility(backend, "sources", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
     command = {"operation": "put-source", "expected_head": head}
     writer = _CommandStore(replace(binding, write_enabled=True), api, command)
     # Reuse the existing source transaction directly: directory metadata can be
@@ -73,7 +74,7 @@ def execute(*, binding, api, output, code_sha, day=None, source_capture=None):
             "write": "reconcile-original-intent" if writer.commit_started else "not-attempted",
             "submission_id": intent_id, "expected_head": head}))
         raise
-    require(writer.live_visibility() == "private", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
+    checked_output_visibility(writer, "sources", "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
     (output/"receipt.json").write_bytes(encoded({"status": "saved-and-read", "reference": asdict(ref),
         "all_declared_queries_complete": doc["all_declared_queries_complete"], "unique_versions": doc["unique_versions"],
         "source_requests_bound": 28, "complete_market_coverage": False}))

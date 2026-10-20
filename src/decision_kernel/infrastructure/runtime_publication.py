@@ -111,7 +111,7 @@ def native_publication_basis(selected, *, env=None, scope="market"):
     grant = authorization()
     required = {scope}
     if name == "daily-market.yml":
-        required.update({"market", "reading", "brief", "research"})
+        required.update({"market", "sources", "reading", "brief", "research"})
         if selected["operation"] != "status":
             required.add("sources")
     return grant["authorization_ref"] if grant is not None and required <= set(grant["scopes"]) else None
@@ -126,6 +126,8 @@ def checked_output_visibility(backend, scope, error):
 
 
 def publication_scope(operation):
+    if operation in {"put-source", "reconcile-source", "read-source"}:
+        return "sources"
     if operation == "agenda" or isinstance(operation, str) and "watch" in operation:
         return "watch"
     if operation in {"reading-room", "industry-read"}:
@@ -148,6 +150,11 @@ def publication_payload(operation, payload, binding):
         return payload
     scope = publication_scope(operation)
     if publication_basis(binding, scope) is None:
+        return payload
+    if operation == "reading-room" and any(publication_basis(binding, part) is None
+            for part in ("sources", "research", "brief", "watch")):
+        return payload
+    if operation == "industry-read" and publication_basis(binding, "sources") is None:
         return payload
     fields = ()
     rights_envelopes = {
@@ -173,7 +180,10 @@ def publication_payload(operation, payload, binding):
         return payload
     result = deepcopy(payload)
     for field in fields:
+        require(field not in result or type(result[field]) is bool, "PUBLIC_RUNTIME_PERMISSION_FIELD_INVALID")
         result[field] = True
+    if operation in rights_envelopes:
+        require("rights_basis" not in result or isinstance(result["rights_basis"], str), "PUBLIC_RUNTIME_PERMISSION_FIELD_INVALID")
     if operation in rights_envelopes and not result.get("rights_basis"):
         result["rights_basis"] = publication_basis(binding, scope)
     return result

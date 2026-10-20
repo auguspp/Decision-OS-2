@@ -1,37 +1,35 @@
-# 现仓 Public 运行适配
+# 已授权的现仓 Public 运行
 
-责任 [#164](https://github.com/auguspp/Decision-OS-2/issues/164)。用户2026-10-20选择直接公开原仓，再改代码；这取代原“另建干净代码仓”施工路线。这里不新建仓库、迁移 records、重写历史、修改来源许可或引入第二运行平台。
+责任：#164。用户于2026-10-20先直接公开现仓，随后明确“视同已经许可，可以按全面公开改造”；[原生授权回执](https://github.com/auguspp/Decision-OS-2/issues/164#issuecomment-6282012674)是本次适配依据。PR171的metadata-only拒绝模式是缺少公开确认时的前序行为，不再作为本部署正常模式。
 
-## 日常入口
+## 原架构与授权
 
-仍使用原 `daily-market.yml`，手动选择 `status` 并填写当前 main 的确切代码 SHA。
+仍使用 auguspp/Decision-OS-2，main 放工程，records 保管来源与研究。原repository_id/store_id/anchor/marker、旧精确引用与完整历史不改，无拆仓、迁移或清理。config/public-runtime.json 是受审部署配置，不是来源JSON、业务输入或凭据；严格绑定同一既有数据目标和具名范围。enabled=false撤销部署授权，缺失配置不自动授权，格式错误、目标错误、未知范围或符号链接拒绝。
 
-| 原生仓库可见性及请求 | 本组实际行为 | 不能据此声称 |
-|---|---|---|
-| Public / status | `metadata-only`，成功返回仓库/运行元数据及限制；不读 records、不取源、不生成研究阅读页 | 行情可读、新鲜、研究已采用或数据保管安全 |
-| Public / update、recover-late、schedule | `blocked / PUBLIC_DAILY_RUNTIME_NOT_AUTHORIZED`，exit 2；不注入来源 Secret、不进入原业务 job | 无新交易日、完成零变化或更新成功 |
-| Private / 原有请求 | `private-runtime-pending`；路由至原 status/daily 作业，后者继续核实际代码资格、来源许可、预算、CAS、只读恢复及最终输出权限 | 预检本身完成了任何资料读写或验收 |
+这记录用户的公开确认，不是代码对版权/法律的独立鉴定。密钥、账号凭据、私人识别信息和正式人工Decision排除；已有401/403/429、source_hold、耗尽试验和单次维修终态仍遵守原停止条件。授权公开不等于授权新研究、扩股票池、交易、通知、增加来源预算或补造数据。
 
-预检属于原工作流、共用原串行组，只有 `contents:read` 与 `actions:read`。它复用 GitHubAPI，先核当前仓库身份和真实 private 布尔值，核本次 run 的仓库、代码、分支、事件、workflow、attempt，再重新核可见性；只执行三个原生元数据 GET。旧绑定、SourceRef、股池、日历、调度时刻及来源额度不改变。
+## 现役入口
 
-**不依赖 `github.event.repository.private` 路由。** schedule 载荷可能没有 repository 对象；伪造、缺失或陈旧的载荷私有标记也不能替代原生 API。失败或可见性变化时不输出可用路由，依赖作业不能在 `always()` 下获得业务凭据。通过预检不是原子隐私锁，后续原宿主/reader/writer/发布步骤的实时复核仍保留。
+| 入口 | 已授权Public行为 |
+| --- | --- |
+| daily-market status | 原生预检之后正常读取已存行情、发现状态、研究与最新已存Brief，输出完整HTML/JSON/Summary；不是仅元数据诊断。 |
+| daily-market update / recover-late / schedule | 原6股、工作日18:35、每周期2日历+12价格与迟到24小时界限不变；先无来源凭据预检，再原采集、保管、独立读回、发现状态与阅读。 |
+| ashare-data ftshare-status / ftshare-sync | 原可信有限配置及单股整段路线，明确access_and_custody_confirmed仍是本次采集/保管操作授权；固定部署公开确认不冒充新请求。历史public_rights_confirmed传输位保持原默认false，由部署配置提供公开授权；非法组合明确拒绝，不全skipped。 |
+| market-custody / discovery | 正常原件保管和build/save/read接同一发布授权；原custody或rights操作确认、确切提交、原始分母/失败和CAS保持。 |
+| announcement-discovery | 原目录元数据计划、日期窗口、幂等及来源暂停继续；采集前与附件发布前核实际目标和授权。 |
+| research-runtime / Reading Room | 已公开的正常材料、研究、议程、Brief、Watch、经营准备/兑现可以读取和保管；仅补已知权限字段，原输入与有效载荷摘要分别保留。正式Decision仍不启用。 |
+| store-runtime backup / health | 复用已支持Public的现役Git bundle、配套阅读代码、固定expected_head与空库恢复；不新增备份平台、调度或删除规则。 |
 
-## 已有公开能力与仍受限能力
+历史ftshare-check/continue/kernel、calendar one-shot、adopt及原repair不因这项授权重开；曾经成功的来源和研究不重跑。相依实际新日、源可用、读取新鲜度和经济质量仍各自验收。
 
-工程 `ci.yml`、安装和合成测试不改，不增加业务来源密钥。原研究/资料宿主中已有的合格公开手动入口继续按其原合同、内容选择及独立公开权利确认运行；本组不统一停用它们，也不替它们填写确认。
+## 原生验证与密钥边界
 
-自动私有日更会读取组合研究/Brief及供应商来源，并可能生成完整 HTML/JSON。公开仓不等于这些资料已可再分发，因此不能通过删除 check_private、将确认常量改成 true、伪报事件为 private 或只隐藏日志来恢复该模式。本组没有实现公开整包阅读或公开供应商日更；对应来源许可和受控保管需在真实适用责任组落实，不因 CI 通过代签。
+公开CI继续使用合成输入和原完整测试策略，无供应商Secret。日更元数据预检核原仓库ID/全名、main、真实run/attempt/代码/事件及前后可见性，只返回授权路由；Public不能被填成Private。缺授权时status回原诊断、更新明确blocked；原生信息错误不会放行来源。
 
-## 历史与恢复边界
+正常业务作业仍核实际main/完整CI与原运行身份；只在原获准源步骤注入相应Secret，只读消费者没有源密钥。公开PR/fork不获得业务凭据。原后端可见性反转保护、读取作用域、来源/结果上限、唯一writer/CAS/未知写对账保留，错误日志不输出凭据或任意上游正文。
 
-records 分支、历史提交、旧 Issue/PR、日志与附件不会因本次代码改造重新隐藏。没有执行历史删除、force push、数据迁移、凭据轮换或可见性设置；也没有认证旧资料都具备公开权利。不要将此预检称为历史隐私修复或数据隔离。
+## 接续与退出
 
-原 public 建仓 marker、anchor 和引用保留；历史 private 成功只证明当时版本与目标。回退工程不能撤销已发生的公开、采集或写入。未来如另行授权迁移或处置历史，须保留真实旧引用、单 writer 与独立恢复，不默认启用旧拆仓路线。
+实施结果读#164和关联PR/原生运行，本文件不是验收回执。合并与CI不代表发生过正常status、产生新日行情或恢复了长期连续运行。若实际工作流派发能力缺失，保留具体运行待验，不靠重跑耗尽旧run、换触发器或伪造时钟代签。
 
-## 维护与证据
-
-`daily_visibility_cli` 与其专属回归保护元数据身份、无仓库载荷的 schedule、真假值、前后可见性变化、错误不泄露、Public 拒绝以及 Secret 前路由；退出该能力时同组退出预检 job、CLI、测试和本文。共享 CI、Store、最终发布门与历史引用继续保留。
-
-本组工程测试不签全系统数据安全、公开来源权利、当天行情、自然连续运行或用户接受。原生 PR/main 检查与实际运行证据在 #164 记录。
-
-参考：[GITHUB_TOKEN 的仓库权限范围](https://docs.github.com/en/actions/concepts/security/github_token)、[Secrets 的显式注入与脱敏限制](https://docs.github.com/en/actions/concepts/security/secrets)。令牌掩码不是资料公开许可，也不是私有数据存放边界。
+停用时关闭固定部署授权，按实际在途动作对账；不删除已保管来源、不覆盖旧失败或撤销历史公开副本。代码回退不收回已经公开的Git/Issue/PR/日志/附件。本授权模块退役时同步处理专属预检、入口接线与测试，共享Store/CI及原引用继续维护。

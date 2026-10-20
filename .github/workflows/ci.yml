@@ -78,7 +78,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: dos2-part-contracts-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-contracts/
+          path: |
+            ${{ runner.temp }}/dos2-contracts/
+            !${{ runner.temp }}/dos2-contracts/plan.json
+            !${{ runner.temp }}/dos2-contracts/durations-hint.json
           retention-days: 30
           if-no-files-found: warn
   remaining:
@@ -113,7 +116,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: dos2-part-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-part/
+          path: |
+            ${{ runner.temp }}/dos2-part/
+            !${{ runner.temp }}/dos2-part/plan.json
+            !${{ runner.temp }}/dos2-part/durations-hint.json
           retention-days: 30
           if-no-files-found: warn
   gate:
@@ -128,6 +134,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/ci-python
+        if: needs.prepare.outputs.scope != 'content'
         timeout-minutes: 10
         with:
           profile: contracts

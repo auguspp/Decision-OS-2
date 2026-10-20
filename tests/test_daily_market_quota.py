@@ -44,7 +44,6 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     counts, apis, fetches, progress, trace = {}, [], [], [], []
     immutable_responses, cache_hits = {}, Counter()
     blob_sizes, size_queries, native_size_queries = {}, Counter(), Counter()
-    native_size_batches = []
     immutable_path = re.compile(re.escape(cli.PREFIX) +
         r"/git/(?:(?:commits|blobs)/[a-f0-9]{40}|trees/[a-f0-9]{40}(?:\?recursive=1)?)")
 
@@ -76,8 +75,9 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
             elif "/actions/workflows/ci.yml/runs?" in path:
                 value = deepcopy(native_model.ci)
             elif cacheable and path.startswith(cli.PREFIX + "/git/trees/"):
-                # Keep native tree expansion and immutable size reuse. Resolve
-                # this tree's new blobs in one child process, not one per SHA.
+                # Keep the original server's native tree expansion. Blob size
+                # belongs to its exact object SHA, so later trees can reuse the
+                # first successful native size without another child process.
                 model.requests.append((request.method, path, deepcopy(payload)))
                 sha = path.rsplit("/", 1)[1].split("?", 1)[0]
                 rows = []
@@ -86,26 +86,15 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
                         continue
                     meta, name = raw.split(b"\t")
                     mode, kind, blob = meta.decode().split()
-                    rows.append(dict(path=name.decode(), mode=mode, type=kind, sha=blob))
-                missing = sorted({row["sha"] for row in rows if row["type"] == "blob"
-                    and re.fullmatch(r"[a-f0-9]{40}", row["sha"]) and row["sha"] not in blob_sizes})
-                if missing:
-                    batch = model.git._run("cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)",
-                        data=("\n".join(missing) + "\n").encode("ascii")).stdout
-                    for expected, line in zip(missing, batch.decode("ascii").splitlines(), strict=True):
-                        blob, kind, size = line.split()
-                        assert blob == expected and kind == "blob" and re.fullmatch(r"[0-9]+", size)
-                        blob_sizes[blob] = int(size)
-                        native_size_queries[blob] += 1
-                    native_size_batches.append(len(missing))
-                for row in rows:
-                    blob, kind = row["sha"], row["type"]
                     if kind == "blob" and re.fullmatch(r"[a-f0-9]{40}", blob):
                         size_queries[blob] += 1
+                        if blob not in blob_sizes:
+                            blob_sizes[blob] = int(model.git._run("cat-file", "-s", blob).stdout)
+                            native_size_queries[blob] += 1
                         size = blob_sizes[blob]
                     else:
                         size = int(model.git._run("cat-file", "-s", blob).stdout)
-                    row["size"] = size
+                    rows.append(dict(path=name.decode(), mode=mode, type=kind, sha=blob, size=size))
                 value = dict(sha=sha, truncated=False, tree=rows)
                 if model.corrupt_response:
                     value = model.corrupt_response(path, value)
@@ -160,8 +149,6 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     assert len(trace) == sum(api._requests for api in apis) == sum(sum(row.values()) for row in counts.values())
     assert native_size_queries == Counter({sha: 1 for sha in blob_sizes})
     assert set(size_queries) == set(blob_sizes) and sum(size_queries.values()) > len(blob_sizes)
-    assert sum(native_size_batches) == len(blob_sizes)
-    assert len(native_size_batches) < len(blob_sizes)
     # An independent native batch read verifies every reused size and object
     # type once, without changing any client/server wire or quota accounting.
     batch = model.git._run("cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)",
@@ -178,7 +165,6 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
         "synthetic_immutable_response_cache": {"paths": len(immutable_responses),
             "hits": sum(cache_hits.values()), "wire_requests": sum(immutable_requests.values()),
             "blob_size_queries": sum(size_queries.values()), "native_blob_size_queries": sum(native_size_queries.values()),
-            "native_blob_size_processes": len(native_size_batches), "native_blob_size_batch_max": max(native_size_batches),
             "blob_size_cache_hits": sum(size_queries.values()) - sum(native_size_queries.values()),
             "independent_native_sizes_verified": len(verified_sizes)},
         "max_unit_requests": max(api._requests for api in apis), "progress": progress,
@@ -187,7 +173,6 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     (tmp_path / "daily-quota-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     (tmp_path / "daily-quota-trace.json").write_text(json.dumps(trace, indent=2) + "\n")
     record_property("daily_quota_windows", json.dumps(evidence["windows"]))
-    record_property("daily_quota_native_sizes", json.dumps(evidence["synthetic_immutable_response_cache"]))
     assert receipt["status"] == "complete", evidence
     assert (receipt["calendar_source_requests"], receipt["price_source_requests"], receipt["source_requests"]) == (2, 12, 14)
     assert receipt["cycle_status"] == "complete" and receipt["cycle_date"] == "20261020"

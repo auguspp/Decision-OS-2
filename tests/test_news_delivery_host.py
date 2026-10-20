@@ -160,6 +160,8 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
 
     from test_auction_room import exercise_installed_auction_room
     exercise_installed_auction_room(outside, python, env, store)
+    from test_auction_minute_room import exercise_installed_auction_minute_room
+    exercise_installed_auction_minute_room(outside, python, env, store)
 
     from test_global_public_room import exercise_installed_global_public_room
     exercise_installed_global_public_room(outside, python, env, store)

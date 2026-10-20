@@ -77,12 +77,15 @@ class GitAPI:
         elif route.startswith("git/trees/"):
             sha = route.rsplit("/", 1)[1]
             rows = []
-            for raw in self.git._run("ls-tree", "-r", "-z", sha).stdout.split(b"\0"):
+            for raw in self.git._run("ls-tree", "-r", "-l", "-z", sha).stdout.split(b"\0"):
                 if not raw:
                     continue
                 meta, name = raw.split(b"\t")
-                mode, kind, blob = meta.decode().split()
-                size = int(self.git._run("cat-file", "-s", blob).stdout)
+                mode, kind, blob, listed_size = meta.decode().split()
+                size = (
+                    int(listed_size) if kind == "blob" and listed_size.isdecimal()
+                    else int(self.git._run("cat-file", "-s", blob).stdout)
+                )
                 rows.append(dict(path=name.decode(), mode=mode, type=kind, sha=blob, size=size))
             value = dict(sha=sha, truncated=False, tree=rows)
         elif route.startswith("git/blobs/"):

@@ -24,6 +24,8 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 原池竞价观察使用可选 `auction` 计划，见[竞价原池与同日接续](opening-auction.md)。完整 U/D/Z 原行和独立 U 五组先恢复再分页；同日原值可读与原请求/接收均达到 T 15:30 的完成收盘分别显示。原分母、条件和 cohort 版本不随 close、筛选或翻页改写，缺旧时钟/截断证据保持未知；沿同一来源权限、原整次预算和终态输出门，不新增采集或交易职责。
 
+原竞价名单的给定分钟原件使用可选 `auction_minute`，见[09:40 分钟观察](opening-auction-minute.md)。确切 seed、完整五组/BJ/未知和未尝试成员先恢复再分页；只接唯一 09:39–09:40 点，保留原取得时钟，跨来源收益不计算。沿原来源确认、整次终态与 2 MiB 展示上限；不增加分钟采集或实际来源额度。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。

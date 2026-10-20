@@ -44,6 +44,13 @@ interface and this restored-reading consumer. The original raw, security, THS
 and three-surface schemas remain accepted. Business qualification, calendars,
 raw/qfq arithmetic, member time limits and pagination stay with their owners.
 
+The finite [opening-auction consumer](../delivery/opening-auction.md) also uses
+this exact root/query/page chain. Its `relay-auction-reading-v1` recipe keeps the
+full prior pool, the separate original U cohort and an optional same-session
+close. Finite page-coverage metadata and successful request/receive clocks remain
+in the existing page excerpt; old shapes stay readable with missing evidence
+unknown. No custody schema, budget, source getter or historical fallback is added.
+
 ## Saved representation, not reconstructed originals
 
 `retain_market_reading(payload, registry, store, fresh_reader=...,

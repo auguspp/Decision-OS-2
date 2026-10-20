@@ -4,7 +4,6 @@ The original custody and family readers own all qualification and arithmetic.
 This consumer restores their complete bounded models once, then projects a
 separate navigation page. It has no collector, clock substitution or writer.
 """
-from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 import json
@@ -17,7 +16,7 @@ from decision_kernel.application.market_custody import (
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.shibor_inputs import SHIBOR_READING_SCHEMA, SHIBOR_TENORS
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, Selection, SourceRef, StoreUnavailable, encoded, require
+from decision_kernel.domain.records import RecordError, Selection, SourceRef, encoded, require
 from decision_kernel.observations.market_daily import MarketInputError
 
 MAX_GLOBAL_BYTES = 2 * 1024 * 1024
@@ -49,57 +48,7 @@ def global_plan(value):
     return result
 
 
-def operation_failure(error):
-    """Original access, scope and transport limits terminate the whole room."""
-    code = str(error)
-    return isinstance(error, StoreUnavailable) or code in {
-        "PRIVATE_BINDING_MISMATCH", "PUBLIC_BINDING_MISMATCH", "PRIVATE_UPGRADE_REVERSED",
-        "COMMIT_OUTSIDE_BINDING", "COMMIT_NOT_REACHABLE", "FOREIGN_REPOSITORY",
-        "STORE_MARKER_MISMATCH", "STORE_BINDING_REQUIRED", "COMPLETE_SNAPSHOT_REQUIRED",
-        "EXTERNAL_OBJECTS_FORBIDDEN", "DEDICATED_BARE_STORE_REQUIRED", "INVALID_SNAPSHOT",
-        "INVALID_SNAPSHOT_TREE", "MARKET_CUSTODY_READ_SCOPE_REQUIRED",
-        "MARKET_CUSTODY_READ_SCOPE_REPOSITORY_CHANGED",
-    } or code.startswith(("REMOTE_", "MARKET_SNAPSHOT_", "SNAPSHOT_", "READING_SCOPE_", "SOURCE_SCAN_"))
-
-
-class _SourceReads:
-    """Latch the original failure around an already pinned original backend.
-
-    Like the existing close-structure consumer, nested market scopes retain this
-    read-only facade. The enclosing market_read_scope owns admission and its
-    final native check. This consumer preserves the original exception object.
-    """
-    def __init__(self, backend):
-        self.owner, self.failure, self.active = backend, None, True
-        self.repository = backend.repository
-
-    def check(self):
-        if self.failure is not None:
-            raise self.failure
-        require(self.active, "READING_SCOPE_CLOSED")
-
-    @contextmanager
-    def market_read_scope(self):
-        self.check()
-        yield self
-        self.check()
-
-    def __getattr__(self, name):
-        if name not in ("head", "check_commit", "read", "paths", "reference", "resolve", "last_change"):
-            raise AttributeError(name)
-        return lambda *args, **kwargs: self._read(name, *args, **kwargs)
-
-    def _read(self, name, *args, **kwargs):
-        self.check()
-        try:
-            return getattr(self.owner, name)(*args, **kwargs)
-        except RecordError as error:
-            if operation_failure(error):
-                self.failure = error
-            raise
-
-    def commit(self, files, *, expected):
-        raise RecordError("READING_SCOPE_READ_ONLY")
+from decision_kernel.application.market_reading_scope import SourceReads as _SourceReads, operation_failure
 
 
 def _partial(name, restored):

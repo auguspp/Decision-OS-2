@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -56,6 +56,9 @@ def plan_input(value):
     if value.get("global_context") is not None:
         from decision_kernel.application.reading_global import global_plan
         result["global_context"] = global_plan(value["global_context"])
+    if value.get("auction") is not None:
+        from decision_kernel.application.reading_auction import auction_plan
+        result["auction"] = auction_plan(value["auction"])
     if value.get("discovery") is not None:
         from decision_kernel.application.reading_discovery import discovery_plan
         result["discovery"] = discovery_plan(value["discovery"])
@@ -162,6 +165,7 @@ class ReadingRoom:
         require(not plan.get("industry") or industry_export, "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED")
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         require(not plan.get("global_context") or market_export is True, "ROOM_PUBLIC_GLOBAL_NOT_CONFIRMED")
+        require(not plan.get("auction") or market_export is True, "ROOM_PUBLIC_AUCTION_NOT_CONFIRMED")
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
         require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
@@ -312,6 +316,13 @@ class ReadingRoom:
             context = open_global(self.store, plan["global_context"], registry=self.market_registry)
             result["global_context"] = context
             partial = partial or context["status"] != "readable"
+        if plan.get("auction"):
+            from decision_kernel.application.reading_auction import open_auction
+            # Ordinary missing inputs are local inside the source consumer;
+            # original access/scope/budget failures stop this entire Room.
+            auction = open_auction(self.store, plan["auction"], registry=self.market_registry)
+            result["auction"] = auction
+            partial = partial or auction["status"] != "readable"
         if plan.get("discovery"):
             from decision_kernel.application.reading_discovery import open_discovery
             from decision_kernel.observations.market_daily import MarketInputError

@@ -215,7 +215,7 @@ class WatchActivity:
                     if last and action == "resume":
                         # A pause is an unobserved interval, not a false or an erased trigger.
                         state["last_result"]["gap_since_decisive"] = True
-                        if last["schema"] == "odds-watch-check-v2":
+                        if last["schema"] in ("odds-watch-check-v2", "odds-watch-check-v3"):
                             for condition in state["last_result"]["condition_results"]:
                                 condition["gap_since_decisive"] = True
                 elif action == "retire": state["state"] = "retired"
@@ -293,6 +293,9 @@ class WatchActivity:
         require(timestamp(at) <= self.clock(), "WATCH_ACTIVITY_FUTURE_EVENT")
         if kind == "check" and p["records_snapshot"] != head: raise Conflict("WATCH_ACTIVITY_SNAPSHOT_NOT_CURRENT")
         reader = _Sources(self.store.backend)
+        if kind == "check" or p["action"] in ("register", "resume", "migrate"):
+            from decision_kernel.application.full_watch import require_full
+            require_full(self._watch(p["watch_ref"], reader), reader)
         event, segment = self._prepare_plan(command, head, reader)
         artifact = record_artifact(ACTIVITY_RECORD, event, payload["rights_basis"])
         path = artifact.path()
@@ -314,11 +317,14 @@ class WatchActivity:
     def save_check(self, payload, *, submission_id, reconcile=False): return self._apply(payload, "check", submission_id, reconcile)
 
     def preview(self, payload):
+        from decision_kernel.application.full_watch import require_full
         p = validate_check(payload)
         require(timestamp(p["checked_at"]) <= self.clock(), "WATCH_ACTIVITY_FUTURE_EVENT")
         head = self.store.backend.head()
         if p["records_snapshot"] != head: raise Conflict("WATCH_ACTIVITY_SNAPSHOT_NOT_CURRENT")
-        event = self._prepare({"kind": "check", "input": p}, head, _Sources(self.store.backend))
+        reader = _Sources(self.store.backend)
+        require_full(self._watch(p["watch_ref"], reader), reader)
+        event = self._prepare({"kind": "check", "input": p}, head, reader)
         if self.store.backend.head() != head: raise Conflict("WATCH_ACTIVITY_SNAPSHOT_CHANGED")
         return {"event": event, "write": "not-requested", "snapshot": head}
 

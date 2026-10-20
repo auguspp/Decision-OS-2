@@ -33,7 +33,7 @@ def scalar_condition(condition):
 
 
 def scalar_watch(watch, condition=None):
-    result = {k: deepcopy(v) for k, v in watch.items() if k not in ("conditions", "combination")}
+    result = {k: deepcopy(v) for k, v in watch.items() if k not in ("conditions", "combination", "tracking")}
     result["schema"] = "odds-watch-v1"
     if watch["basis"]["kind"] == "research":
         result["condition"] = {"metric": "research_version", "world_id": None, "comparison": "changed",
@@ -182,7 +182,8 @@ def project(watch, request, observation, previous, scalar_project):
                      **{key: state[key] for key in control}, "value": observed["value"],
                      "reason": observed["reason"], "evidence": observed.get("evidence")})
     result = scalar_project(watch, request, observation, previous)
-    return {**result, "schema": CHECK_SCHEMA, "combination": watch["combination"],
+    schema = "odds-watch-check-v3" if watch["schema"] == "odds-watch-v3" else CHECK_SCHEMA
+    return {**result, "schema": schema, "combination": watch["combination"],
             "condition_results": rows, "next_boundaries": boundaries(watch["conditions"], rows),
             "condition_order": "frozen-declaration-order-not-investment-priority",
             "limitations": result["limitations"] + [

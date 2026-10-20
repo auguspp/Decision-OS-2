@@ -55,9 +55,13 @@ def export_required(value):
     """
     if not isinstance(value, dict):
         return False
+    if value.get("kind") in ("quick", "brief") and isinstance(value.get("items"), list):
+        return any(export_required(item) for item in value["items"])
     document = value.get("document", value)
     if not isinstance(document, dict):
         return False
+    if document.get("schema") == "hosted-ai-handoff-v2" and bool(document.get("watch_adoptions")):
+        return True
     plan = document.get("plan", document)
     if isinstance(plan, dict) and bool(plan.get("watch_evidence")):
         return True
@@ -112,6 +116,8 @@ def _read(store, selected, as_of):
         watch = frozen["watch"]
         definition = {k: deepcopy(watch[k]) for k in (
             "schema", "condition", "conditions", "combination") if k in watch}
+        if watch["schema"] == "odds-watch-v3":
+            definition["tracking"] = deepcopy(watch["tracking"])
         row.update(status="readable", watch_ref=deepcopy(watch_ref), watch_id=watch["watch_id"],
                    watch_sha256=frozen["watch_sha256"], definition=definition, recorded_at=at,
                    result=deepcopy(result), activity=activity, recalculation="matches",

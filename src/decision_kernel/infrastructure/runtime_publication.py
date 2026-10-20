@@ -125,6 +125,23 @@ def checked_output_visibility(backend, scope, error):
     return visibility
 
 
+def checked_handoff_visibility(backend, *, watch_required=False):
+    """A composed Watch Brief needs each original publication scope.
+
+    The caller derives ``watch_required`` from validated Hosted documents and
+    their exact retained baseline, never from a source's permission claim.
+    Native private custody and legacy handoffs keep their existing behavior.
+    """
+    require(type(watch_required) is bool, "HOSTED_PUBLICATION_REQUIREMENT_INVALID")
+    scopes = ("handoff", "watch", "sources", "research", "brief") if watch_required else ("handoff",)
+    visibility = backend.live_visibility()
+    require(visibility == "private" or visibility == "public" and all(
+        publication_basis(getattr(backend, "binding", None), scope) is not None
+        for scope in scopes),
+        "HOSTED_WATCH_PUBLICATION_NOT_CONFIRMED" if watch_required else "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+    return visibility
+
+
 def publication_scope(operation):
     if operation in {"put-source", "reconcile-source", "read-source"}:
         return "sources"

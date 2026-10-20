@@ -1,10 +1,14 @@
 """Finite participant semantics and physical-response custody; all rows synthetic."""
 from copy import deepcopy
+import base64
+from dataclasses import asdict
+import gzip
 import json
+import zlib
 
 import pytest
 
-from decision_kernel.domain.records import RecordError, encoded
+from decision_kernel.domain.records import RecordError, digest, encoded
 from decision_kernel.observations import participant_observations as observations
 from decision_kernel.observations import relay_participants
 from test_relay_participants import capture as legacy_capture
@@ -190,3 +194,211 @@ def test_registered_capture_parts_cannot_lose_controls_attempts_or_bytes(change)
     if change == 'byte-edited': parts[0]['data'] = 'eA==' + parts[0]['data'][4:]
     if change == 'size-edited': parts[0]['byte_size'] += 1
     with pytest.raises(RecordError): observations.join_registered_capture(parts)
+
+
+def large_gzip_page(count=1600):
+    rows = [{'ts_code': '600000.SH' if index % 2 else '510300.SH', 'holding_date': '20260930',
+             'channel': 'synthetic-sh-connect', 'holding': index,
+             'name': '合成证券 ' + digest(str(index).encode())} for index in range(count)]
+    return page('hkex_shareholding', rows, offset=125, reported_total=count + 125,
+                request_complete=False, error='RELAY_HTTP_UNAVAILABLE', wire_sha256='1' * 64)
+
+
+def gzip_sources(original):
+    return observations.gzip_page_sources(original, source_id='synthetic-gzip-page',
+        origin='synthetic:retained-page', title='Synthetic compressed structured page')
+
+
+def sealed_gzip_parts(raw, *, packed=None, page_byte_size=None):
+    """Seal arbitrary test bytes, so inner corruption is not hidden by an outer digest error."""
+    packed = gzip.compress(raw, mtime=0) if packed is None else packed
+    chunks = [packed[start:start + observations.GZIP_PART_BYTES]
+              for start in range(0, len(packed), observations.GZIP_PART_BYTES)]
+    return [{'schema': observations.GZIP_PART_SCHEMA, 'page_sha256': digest(raw),
+        'page_byte_size': len(raw) if page_byte_size is None else page_byte_size,
+        'gzip_sha256': digest(packed), 'gzip_byte_size': len(packed),
+        'part_index': index, 'part_count': len(chunks),
+        'byte_start': index * observations.GZIP_PART_BYTES,
+        'data': base64.b64encode(chunk).decode('ascii')} for index, chunk in enumerate(chunks)]
+
+
+def test_gzip_whole_page_preserves_rows_controls_and_real_host_payload():
+    from decision_kernel.interfaces.research_payload import decode_payload, MAX_PAYLOAD_BYTES
+    original = large_gzip_page(3000)
+    before = deepcopy(original)
+    sources = gzip_sources(original)
+    old_sources = observations.page_sources(original, source_id='synthetic-old-page',
+        origin='synthetic:retained-page', title='Synthetic uncompressed structured page')
+    assert 1 < len(sources) < len(old_sources) <= observations.MAX_PARTS
+    parts = []
+    for source in sources:
+        payload = encoded(asdict(source))
+        assert len(payload) <= MAX_PAYLOAD_BYTES == observations.HOST_PAYLOAD_BYTES
+        assert decode_payload(payload.decode()) == json.loads(payload)
+        assert source.acquired_at == original['captured_at']
+        assert 'STRUCTURED_REPRESENTATION_NOT_ORIGINAL_HTTP_BYTES' in source.limitations
+        assert 'NO_PUBLICATION_RIGHTS_PIT_OR_RESEARCH_CERTIFICATION' in source.limitations
+        parts.append(json.loads(source.text))
+    joined = observations.join_page(parts)
+    assert joined == original == before
+    assert observations.join_page([json.loads(s.text) for s in old_sources]) == before
+    assert all(json.loads(s.text)['schema'] == observations.PART_SCHEMA for s in old_sources)
+    result = observations.normalize_rows(joined)
+    assert result == observations.normalize_rows(before)
+    assert result['raw_row_count'] == 3000 and result['accepted_row_count'] == 1500
+    assert len(result['rejected_rows']) == 1500 and result['rejected_rows'][0]['source_row'] == 125
+    assert result['physical_page'] == before['physical_page'] and result['source_requests'] == 0
+
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_gzip_empty_page_keeps_original_completion_and_failure(failed):
+    original = page(rows=[], reported_total=None, request_complete=not failed,
+                    error='RELAY_HTTP_UNAVAILABLE' if failed else None)
+    sources = gzip_sources(original)
+    assert len(sources) == 1
+    assert observations.join_page([json.loads(sources[0].text)]) == original
+
+
+@pytest.fixture
+def gzip_parts():
+    parts = [json.loads(source.text) for source in gzip_sources(large_gzip_page())]
+    assert len(parts) > 1
+    return parts
+
+
+@pytest.mark.parametrize('change', [
+    'missing', 'duplicate', 'reordered', 'byte-gap', 'bool-index', 'bool-count', 'bool-offset',
+    'page-identity', 'gzip-identity', 'byte-edited', 'invalid-base64', 'empty-base64',
+    'noncanonical-base64', 'stale-page-digest', 'stale-gzip-digest',
+    'mixed-old-first', 'mixed-old-last', 'extra-field',
+])
+def test_gzip_parts_cannot_drop_reorder_mix_or_rewrite_whole_page(gzip_parts, change):
+    if change == 'missing': gzip_parts.pop()
+    if change == 'duplicate': gzip_parts.append(deepcopy(gzip_parts[-1]))
+    if change == 'reordered': gzip_parts.reverse()
+    if change == 'byte-gap': gzip_parts[-1]['byte_start'] += 1
+    if change == 'bool-index': gzip_parts[0]['part_index'] = False
+    if change == 'bool-count': gzip_parts[0]['part_count'] = True
+    if change == 'bool-offset': gzip_parts[0]['byte_start'] = False
+    if change == 'page-identity': gzip_parts[-1]['page_sha256'] = 'f' * 64
+    if change == 'gzip-identity': gzip_parts[-1]['gzip_sha256'] = 'f' * 64
+    if change == 'byte-edited': gzip_parts[0]['data'] = 'eA==' + gzip_parts[0]['data'][4:]
+    if change == 'invalid-base64': gzip_parts[0]['data'] = '合成!'
+    if change == 'empty-base64': gzip_parts[0]['data'] = ''
+    if change == 'noncanonical-base64': gzip_parts[-1]['data'] += '='
+    if change == 'stale-page-digest':
+        for part in gzip_parts: part['page_sha256'] = 'f' * 64
+    if change == 'stale-gzip-digest':
+        for part in gzip_parts: part['gzip_sha256'] = 'f' * 64
+    if change.startswith('mixed-old-'):
+        old = json.loads(observations.page_sources(page(), source_id='synthetic-old-mixed',
+            origin='synthetic:old', title='Synthetic old page')[0].text)
+        gzip_parts[0 if change == 'mixed-old-first' else -1] = old
+    if change == 'extra-field': gzip_parts[0]['original_http_retained'] = True
+    with pytest.raises(RecordError): observations.join_page(gzip_parts)
+
+
+@pytest.mark.parametrize('change', ['truncated', 'crc', 'multiple-members', 'trailing-zero',
+    'trailing-text', 'zlib-format', 'smaller-declaration', 'larger-declaration'])
+def test_gzip_stream_must_be_one_complete_member_with_exact_size(change):
+    raw = encoded(page())
+    packed, declared = gzip.compress(raw, mtime=0), len(raw)
+    if change == 'truncated': packed = packed[:-1]
+    if change == 'crc': packed = packed[:-8] + bytes([packed[-8] ^ 1]) + packed[-7:]
+    if change == 'multiple-members': packed += gzip.compress(b'', mtime=0)
+    if change == 'trailing-zero': packed += b'\0'
+    if change == 'trailing-text': packed += b'synthetic trailing bytes'
+    if change == 'zlib-format': packed = zlib.compress(raw)
+    if change == 'smaller-declaration': declared -= 1
+    if change == 'larger-declaration': declared += 1
+    parts = sealed_gzip_parts(raw, packed=packed, page_byte_size=declared)
+    with pytest.raises(RecordError): observations.join_page(parts)
+
+
+def test_gzip_bomb_is_bounded_before_parsing_or_unbounded_flush(monkeypatch):
+    declared = observations.MAX_PAGE_BYTES
+    raw = b'x' * (declared + 1)
+    parts = sealed_gzip_parts(raw, page_byte_size=declared)
+    decompressor = zlib.decompressobj
+    limits = []
+
+    class BoundedDecoder:
+        def __init__(self, *args): self.decoder = decompressor(*args)
+        def decompress(self, packed, maximum):
+            limits.append(maximum)
+            return self.decoder.decompress(packed, maximum)
+        def __getattr__(self, key):
+            assert key != 'flush', 'No unbounded decompression flush is permitted'
+            return getattr(self.decoder, key)
+
+    monkeypatch.setattr(observations.zlib, 'decompressobj', BoundedDecoder)
+    with pytest.raises(RecordError, match='DECOMPRESSION_BOUND'):
+        observations.join_page(parts)
+    assert limits == [declared + 1]
+
+
+@pytest.mark.parametrize('raw', [
+    b' ' + encoded(page()), encoded(page()) + b'\n', encoded(page())[:-1],
+    b'{"rows":[],"rows":[]}\n', b'{"rows":[{"value":NaN}]}\n',
+    b'\xff\n', b'\xef\xbb\xbf' + encoded(page()),
+], ids=['leading-space', 'extra-newline', 'missing-newline', 'duplicate-key', 'nan', 'invalid-utf8', 'bom'])
+def test_gzip_decoded_json_must_be_canonical_utf8_without_duplicate_keys(raw):
+    with pytest.raises(RecordError, match='GZIP_JSON'):
+        observations.join_page(sealed_gzip_parts(raw))
+
+
+def test_gzip_excessive_json_nesting_is_a_public_record_error():
+    raw = b'[' * 10000 + b']' * 10000 + b'\n'
+    with pytest.raises(RecordError): observations.join_page(sealed_gzip_parts(raw))
+
+
+@pytest.mark.parametrize('change', ['wrong-shape', 'wrong-row-type', 'wrong-physical-count', 'invalid-field'])
+def test_gzip_canonical_json_still_rechecks_page_contract(change):
+    original = page()
+    if change == 'wrong-shape': original = [original]
+    if change == 'wrong-row-type': original['rows'] = 1
+    if change == 'wrong-physical-count': original['physical_page']['row_count'] += 1
+    if change == 'invalid-field': original['rows'][0]['unqualified-field'] = 'Synthetic'
+    with pytest.raises(RecordError): observations.join_page(sealed_gzip_parts(encoded(original)))
+
+
+@pytest.mark.parametrize('field,value', [
+    ('page_byte_size', 0), ('page_byte_size', True), ('page_byte_size', observations.MAX_PAGE_BYTES + 1),
+    ('gzip_byte_size', observations.MAX_GZIP_BYTES + 1), ('gzip_byte_size', False),
+    ('page_sha256', 'F' * 64), ('gzip_sha256', 'synthetic-invalid-hash'),
+])
+def test_gzip_declared_limits_reject_before_allocating_or_decoding(field, value, monkeypatch):
+    parts = sealed_gzip_parts(encoded(page()))
+    parts[0][field] = value
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Invalid declared limits must stop before byte decoding')
+
+    monkeypatch.setattr(observations.base64, 'b64decode', forbidden)
+    with pytest.raises(RecordError, match='GZIP_IDENTITY'): observations.join_page(parts)
+
+
+def test_gzip_part_and_aggregate_limits_are_not_bypassed(gzip_parts):
+    parts = deepcopy(gzip_parts)
+    parts[0]['data'] += 'AAAA'
+    with pytest.raises(RecordError, match='GZIP_PART_BOUND'): observations.join_page(parts)
+    parts = deepcopy(gzip_parts)
+    for part in parts: part['gzip_byte_size'] = 1
+    with pytest.raises(RecordError, match='GZIP_BYTES_BOUND'): observations.join_page(parts)
+    with pytest.raises(RecordError, match='PART_BOUND'):
+        observations.join_page([gzip_parts[0]] * (observations.MAX_PARTS + 1))
+
+
+def test_gzip_producer_counts_whole_page_and_full_source_metadata(monkeypatch):
+    original = page()
+    with monkeypatch.context() as patch:
+        patch.setattr(observations, 'MAX_PAGE_BYTES', len(encoded(original)) - 1)
+        with pytest.raises(RecordError, match='PAGE_BOUND'): gzip_sources(original)
+    with monkeypatch.context() as patch:
+        patch.setattr(observations, 'MAX_GZIP_BYTES', 1)
+        with pytest.raises(RecordError, match='GZIP_BYTES_BOUND'): gzip_sources(original)
+    original = large_gzip_page()
+    original['coverage'] = 'c' * 4096
+    with pytest.raises(RecordError, match='HOST_PAYLOAD_BOUND'):
+        observations.gzip_page_sources(original, source_id='synthetic-large-metadata',
+            origin='synthetic:' + 'x' * 4086, title='t' * 4096)

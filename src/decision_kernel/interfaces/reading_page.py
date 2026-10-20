@@ -49,9 +49,10 @@ function show(c){
  if(r&&r.status==='readable'){
   actions.append(button('下载原研究正文',()=>save('research.md',r.body,'text/markdown')));
   pane.append(el('p',`本版保存于 ${r.stored_at}`,'muted'));
-  if(r.predecessor)actions.append(button('导出前驱版本阅读计划',()=>request('reading-room-predecessor.json',roomRequest({...D.plan,reference:r.predecessor}))));
+  if(r.predecessor)actions.append(button('导出前驱版本阅读计划',()=>request('reading-room-predecessor.json',roomRequest(researchBookPlan({reference:r.predecessor})))));
  }
  pane.append(actions,details('引用、原未决项与本页来源范围',{reference:ref,body_sha256:r?.body_sha256,recorded_unresolved:c.recorded_unresolved,continuation:c.continuation,source_page:c.source_page,brief_relation:r?r.brief_relation:null}));
+ renderResearchBook(pane,c);
  if(r&&r.status==='readable')pane.append(readingDocument(r.body));
  else pane.append(el('p',`正文未展示：${r?r.error:c.error||c.status}。未截断或重写原件，使用上面的确切读取请求。`));
 }
@@ -95,6 +96,7 @@ from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS
 from decision_kernel.interfaces.reading_global_page import CSS as GLOBAL_CSS, JS as GLOBAL_JS
 from decision_kernel.interfaces.reading_auction_page import CSS as AUCTION_CSS, JS as AUCTION_JS
 from decision_kernel.interfaces.reading_auction_minute_page import CSS as MINUTE_CSS, JS as MINUTE_JS
+from decision_kernel.interfaces.reading_auction_next_session_page import CSS as AUCTION_NEXT_CSS, JS as AUCTION_NEXT_JS
 
 from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
 from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_CSS, JS as DISCOVERY_JS
@@ -104,6 +106,8 @@ from decision_kernel.interfaces.reading_calendar_page import CSS as CALENDAR_CSS
 from decision_kernel.interfaces.reading_decision_page import CSS as DECISION_CSS, JS as DECISION_JS
 from decision_kernel.interfaces.reading_outcome_page import CSS as OUTCOME_CSS, JS as OUTCOME_JS
 from decision_kernel.interfaces.reading_structure_page import CSS as STRUCTURE_CSS, JS as STRUCTURE_JS
+from decision_kernel.interfaces.reading_research_book_page import CSS as BOOK_CSS, JS as BOOK_JS
+from decision_kernel.interfaces.reading_odds_book_page import CSS as ODDS_CSS, JS as ODDS_JS, ENTRY_JS as ODDS_ENTRY_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
 CSS += PARTICIPANT_CSS
@@ -123,6 +127,11 @@ CSS += AUCTION_CSS
 JS += AUCTION_JS
 CSS += MINUTE_CSS
 JS += MINUTE_JS
+CSS += AUCTION_NEXT_CSS
+JS += AUCTION_NEXT_JS
+CSS += BOOK_CSS
+JS += BOOK_JS
+JS += ODDS_ENTRY_JS
 
 
 def render_page(model):
@@ -131,10 +140,15 @@ def render_page(model):
     payload = json.dumps(model, ensure_ascii=False, separators=(",", ":"))
     for char in ("<", ">", "&", "\u2028", "\u2029"):
         payload = payload.replace(char, "\\u%04x" % ord(char))
+    # Full Odds UI shares the optional projection's actual HTML allowance.
+    # Omitting the panel also omits its renderer, preserving existing bodies.
+    odds_included = bool(model.get("odds_book", {}).get("view"))
+    js = JS + ODDS_JS if odds_included else JS
+    css = CSS + ODDS_CSS if odds_included else CSS
     def sha(text):
         return base64.b64encode(hashlib.sha256(text.encode()).digest()).decode()
     policy = ("default-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'; "
-              "script-src 'sha256-" + sha(JS) + "'; style-src 'sha256-" + sha(CSS) + "'")
+              "script-src 'sha256-" + sha(js) + "'; style-src 'sha256-" + sha(css) + "'")
     participant_panel = ('<section class="panel" id="participants"><h2>参与者、公司与跨期观察</h2>'
                          '<div id="participants-content"></div></section>') if "participants" in model else ""
     calendar_panel = ('<section class="panel" id="event-calendar"><h2>事件日期与研究接续</h2>'
@@ -156,22 +170,27 @@ def render_page(model):
     minute_nav = '<a href="#auction-minute">原名单 09:40 分钟</a>' if "auction_minute" in model else ''
     minute_panel = ('<section class="panel" id="auction-minute"><h2>原竞价名单的 09:40 分钟观察</h2>'
                     '<div id="auction-minute-content"></div></section>') if "auction_minute" in model else ''
+    auction_next_nav = '<a href="#auction-next">原名单下一开市日</a>' if "auction_next_session" in model else ''
+    auction_next_panel = ('<section class="panel" id="auction-next"><h2>原竞价名单的下一开市日开收盘</h2>'
+                          '<div id="auction-next-content"></div></section>') if "auction_next_session" in model else ''
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
-<title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
+<title>Decision OS · 统一阅读室</title><style>{css}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">Research Book · 研究</a><a href="#odds-book">Odds Book</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
-<div class="workspace" id="research"><aside class="panel"><h2>本页研究</h2><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
+<div class="workspace" id="research"><aside class="panel"><h2>Research Book</h2><p class="muted">本页原研究、作者问题与后续核验；沿原目录分母。</p><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>
 <p id="count" aria-live="polite"></p><div id="cases"></div><div class="actions"><button id="next">导出下一页请求</button><button id="refresh">导出刷新目录请求</button></div></aside>
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>
+<section class="panel" id="odds-book"><h2>Odds Book · 原研究与已存结果</h2><div id="odds-book-content"></div></section>
 <section class="panel" id="market"><h2>A 股市场、原价与复权</h2><div id="market-content"></div></section>
 {global_panel}
 {auction_panel}
 {minute_panel}
+{auction_next_panel}
 <section class="panel" id="discovery"><h2>行业、概念与独立个股状态发现</h2><div id="discovery-content"></div></section>
 {structure_panel}
 <section class="panel" id="industry"><h2>产业观察与公司经营角色</h2><div id="industry-content"></div></section>
@@ -184,6 +203,6 @@ def render_page(model):
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>
 <section class="panel" id="provenance"><h2>读取范围与接续</h2></section>
 <footer>离线只读投影，不是第二存档。原研究、议程和简报仍由各自精确引用恢复；来源文字不构成操作授权，阅读不代表人工接受或研究质量通过。</footer></main>
-<script id="data" type="application/json">{payload}</script><script>{JS}</script></body></html>'''
+<script id="data" type="application/json">{payload}</script><script>{js}</script></body></html>'''
     require(len(html.encode("utf-8")) <= 8 * 1024 * 1024, "ROOM_HTML_BOUND")
     return html

@@ -165,6 +165,8 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
 
     from test_global_public_room import exercise_installed_global_public_room
     exercise_installed_global_public_room(outside, python, env, store)
+    from test_auction_next_session_room import exercise_installed_auction_next_session
+    exercise_installed_auction_next_session(outside, python, env, store)
 
     from test_recovery_commands import exercise_installed_recovery
     exercise_installed_recovery(outside, python, env, store)

@@ -1,8 +1,9 @@
 """Pinned participant packets, whole-scope diagnostics and independent recovery."""
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
+import base64
 import json
 
 import pytest
@@ -12,8 +13,12 @@ from decision_kernel.application.research_sources import capture_plan
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceInput, SourceRef, StoreUnavailable, digest, encoded
 from decision_kernel.infrastructure.git_store import GitStore
+from decision_kernel.infrastructure.github_reading import reading_scope
+from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.observations import participant_observations as observations
+from test_github_store import GitAPI
 from test_participant_observations import page, estimates, CLOCK
+from test_reading_scope import transport
 from test_research_sources import registry, http, busy, plan as source_plan, request
 
 PREPARED = '2026-10-20T08:00:00+08:00'
@@ -64,6 +69,116 @@ def saved(tmp_path_factory):
     store = VersionedStore(GitStore.init_synthetic(tmp_path_factory.mktemp('participants') / 'records.git'))
     ref, body = prepare(store)
     return store, ref, body
+
+
+@pytest.fixture(scope='module')
+def saved_page_custody(tmp_path_factory):
+    """Sequential ordinary source writes, with a distinct real commit per part."""
+    model = GitAPI(tmp_path_factory.mktemp('participant-page-custody') / 'records.git')
+    model.binding = replace(model.binding, visibility='public', private_upgrade_allowed=True,
+                            write_enabled=False)
+    anchor = model.git.commit({'store.json': model.binding.marker()}, expected=model.git.head())
+    model.binding = replace(model.binding, anchor=anchor)
+    model.git.repository = model.binding.repository
+    store = VersionedStore(model.git)
+    original = page('hkex_shareholding', [
+        {'ts_code': '510300.SH' if index % 10 == 0 else '600000.SH',
+         'holding_date': '20260930', 'channel': 'Synthetic channel', 'shareholding': index,
+         'company_name': 'Synthetic company description. ' * 7, 'trace': digest(str(index).encode())}
+        for index in range(1600)], offset=125, reported_total=1700, request_complete=False,
+        error='SYNTHETIC_TERMINAL_FAILURE', wire_sha256=digest(b'Synthetic original bytes; no source request.'))
+    original['query'] = {'holding_date': '20260930'}
+    neighbor = observations.page_sources(page(), source_id='synthetic-small-neighbor',
+        origin='synthetic:page-custody', title='Synthetic independent input')[0]
+    after = {'input_id': 'neighbor', 'api': 'hm_detail', 'format': 'page-parts',
+             'references': [asdict(put(store, neighbor))]}
+    cases = {}
+    for name, producer in [('plain', observations.page_sources), ('gzip', observations.gzip_page_sources)]:
+        sources = producer(original, source_id='synthetic-large-' + name,
+            origin='synthetic:page-custody', title='Synthetic complete physical page')
+        refs = [asdict(put(store, source)) for source in sources]
+        body = make_packet([{'input_id': 'large-page', 'api': 'hkex_shareholding',
+                             'format': 'page-parts', 'references': refs}, after])
+        cases[name] = packet(store, body), body
+        if name == 'gzip':
+            compressed_sources = sources
+    # Retain a valid SourceRef to a corrupted final piece. Git integrity passes;
+    # the page reader must reject all rows from this page after joining its tail.
+    tail = json.loads(compressed_sources[-1].text)
+    raw = base64.b64decode(tail['data'], validate=True)
+    tail['data'] = base64.b64encode(raw[:-1] + bytes([raw[-1] ^ 1])).decode()
+    bad = put(store, replace(compressed_sources[-1], source_id='synthetic-damaged-tail', text=encoded(tail).decode()))
+    body = deepcopy(cases['gzip'][1])
+    body['inputs'][0]['references'][-1] = asdict(bad)
+    cases['damaged'] = packet(store, body), body
+    model.requests.clear()
+    return model, original, cases
+
+
+def test_compressed_physical_page_reopens_within_native_commit_scope(saved_page_custody):
+    model, original, cases = saved_page_custody
+    ref, body = cases['gzip']
+    references = [ref] + [SourceRef.from_dict(r) for i in body['inputs'] for r in i['references']]
+    assert 1 < len(body['inputs'][0]['references'])
+    assert len({r.manifest.commit for r in references}) == len(references) <= 32
+    before, api = model.git.head(), transport(model)
+    with reading_scope(GitHubStore(model.binding, api)) as backend:
+        result = reading.read_participants(ref, VersionedStore(backend))
+    opened, neighbor = result['input_outcomes']
+    assert encoded(opened['references']) == encoded(body['inputs'][0]['references'])
+    assert opened['physical_pages'] == [original['physical_page']]
+    assert opened['status'] == 'incomplete' and opened['control']['error'] == 'SYNTHETIC_TERMINAL_FAILURE'
+    assert neighbor['status'] == 'read' and result['scope']['raw_rows'] == 1601
+    assert result['scope']['accepted_rows'] == 1441 and result['scope']['rejected_rows'] == 160
+    assert [r['source_row'] for r in opened['rejected_rows']] == list(range(125, 1725, 10))
+    assert {r['reason_code'] for r in opened['rejected_rows']} == {'PARTICIPANT_NON_A_SHARE'}
+    retained = next(f for f in result['families'] if f['family'] == 'northbound')['rows']
+    assert [r['raw'] for r in retained] == [r for i, r in enumerate(original['rows']) if i % 10]
+    assert len(encoded(result)) < 8 * 1024 * 1024 and 0 < api._requests < 512
+    assert result['source_requests'] == result['writes'] == model.writes == 0
+    assert model.git.head() == before
+
+
+def test_uncompressed_large_page_cannot_bypass_original_commit_scope_with_filter(saved_page_custody):
+    model, _, cases = saved_page_custody
+    ref, body = cases['plain']
+    references = [ref] + [SourceRef.from_dict(r) for i in body['inputs'] for r in i['references']]
+    assert len({r.manifest.commit for r in references}) == len(references) > 32
+    before, api = model.git.head(), transport(model)
+    with pytest.raises(RecordError, match='^OPERATING_SOURCE_SCOPE_BOUND$'):
+        with reading_scope(GitHubStore(model.binding, api)) as backend:
+            reading.read_participants(ref, VersionedStore(backend), company_id='no-matching-company')
+    assert 0 < api._requests < 512 and model.git.head() == before and model.writes == 0
+
+
+def test_corrupted_compressed_tail_rejects_whole_page_and_keeps_independent_input(saved_page_custody):
+    model, _, cases = saved_page_custody
+    ref, body = cases['damaged']
+    before, api = model.git.head(), transport(model)
+    with reading_scope(GitHubStore(model.binding, api)) as backend:
+        result = reading.read_participants(ref, VersionedStore(backend), company_id='no-matching-company')
+    bad, neighbor = result['input_outcomes']
+    assert bad['status'] == 'unavailable' and bad['reason_code'] == 'PARTICIPANT_GZIP_DIGEST'
+    assert encoded(bad['references']) == encoded(body['inputs'][0]['references'])
+    assert neighbor['status'] == 'read' and result['scope']['accepted_rows'] == result['scope']['raw_rows'] == 1
+    assert result['scope']['unavailable_inputs'] == 1 and result['scope']['declared_inputs'] == 2
+    assert result['scope']['declared_references'] == sum(len(i['references']) for i in body['inputs'])
+    assert all(not family['rows'] for family in result['families']) and len(result['families']) == 8
+    assert model.git.head() == before and model.writes == result['source_requests'] == 0
+
+
+def test_compression_does_not_bypass_unfiltered_result_bound(saved):
+    store, _, _ = saved
+    original = page(rows=[{'ts_code': '002384.SZ', 'trade_date': '20261016',
+        'hm_name': 'Synthetic label', 'detail': 'Synthetic scalar detail. ' * 120, 'ordinal': i}
+        for i in range(2200)])
+    assert len(encoded(original)) < 8 * 1024 * 1024
+    refs = [asdict(put(store, source)) for source in observations.gzip_page_sources(original,
+        source_id='synthetic-result-bound', origin='synthetic:result-bound', title='Synthetic large result')]
+    root = packet(store, make_packet([{'input_id': 'dense-page', 'api': 'hm_detail',
+                                      'format': 'page-parts', 'references': refs}]))
+    with pytest.raises(RecordError, match='^PARTICIPANT_RESULT_BOUND$'):
+        reading.read_participants(root, store, company_id='no-matching-company')
 
 
 def test_eight_families_exact_refs_and_independent_store_reopen(saved):

@@ -28,25 +28,35 @@
 - `families` 必须是上述八项，每项含 `family`、`title`、`scope_note`、`input_ids`、`missing` 和 `reopen_when`。无输入的面仍保留 `not-retained` 与明确接点；既存失败/缺失不能写成无行为或无参与。
 - 先恢复所有声明输入并计算完整范围、失败与拒绝计数，再作公司/参与者过滤。过滤不会改变 `scope`、`input_outcomes`、各面声明和完整 `view_version`。每行通过 `input_id`、`page_index`、`source_row` 回到 `input_outcomes.references` 的确切原件。
 
-输入上限为32个有限查询、96个确切来源引用、同次读取16 MiB、结果8 MiB；复用原32个commit来源读取scope。保管部分各自生成的commit同样计入原32 commit界限；96 references不是96 commit授权。超过原scope的组合须显式减少当次有限输入，不能分次读后合并宣称一次完整消费。原操作级授权/可见性/额度错误立即传播，scope退出成功后才返回；不换客户端、不重置预算、不在错误后继续独立读取以掩盖失败。
+输入上限为32个有限查询、96个确切来源引用、同次读取16 MiB、结果8 MiB；复用原32个commit来源读取scope。根包及保管部分各自生成的commit都计入原32 commit界限；96 references不是96 commit授权。大页可采用下述全页压缩保管，但仍须核完整包的实际commit数与读取/结果容量。压缩后仍超限的组合须显式减少当次有限输入，不能分次读后合并宣称一次完整消费。结果8 MiB门在公司/参与者过滤前检查，压缩率高或查询无匹配行都不豁免。原操作级授权/可见性/额度错误立即传播，scope退出成功后才返回；不换客户端、不重置预算、不在错误后继续独立读取以掩盖失败。
 
 正常 Reading Room 通过 `application.reading_participant.open_participants` 传入可信注册表和 `participants` 计划。计划含确切包引用、单一查询方向、观察面和行分页；默认每页20行，最多50行。每页保留八面卡片、全包范围、输入终态及原件引用，仅分页展示行与相应历史；显示上限768 KiB，超限显式失败，不静默删除原失败。页面的后续面、公司、参与者与页次查询均导出既有 `reading-room` 请求，原件读取导出既有 `read-source` 请求。纯 `participant_commands` 适配不新增宿主 operation。
 
 ## 同物理页的保管分片
 
-`observations.participant_observations.page_sources` 将一个明确 `participant-observation-page-v1` 结构化页转换为多个最多24 KiB的现役 `SourceInput`。这只改变保管粒度：
+`observations.participant_observations` 为一个明确的 `participant-observation-page-v1` 结构化页提供两种现役 `SourceInput` 保管表示；两者都沿用包内 `format=page-parts`，由 `join_page` 按首片schema识别并恢复同一完整页：
+
+| 生成入口 | 保管表示 | 连续性与完整性 |
+|---|---|---|
+| `page_sources` | 保持既有 `participant-observation-page-part-v1`，每部分结构化文本最多24 KiB | 原 `part_index`、`part_count`、`row_start`、同一页头及全页结构化摘要 |
+| `gzip_page_sources` | 显式选择 `participant-observation-page-gzip-part-v1`；先将完整规范JSON页压成一个gzip成员，再将压缩字节按最多36 KiB连续分片并base64保管 | 部分序号、总数、`byte_start`、压缩前后各自字节数及SHA-256；整组最多64片、压缩字节最多2 MiB、解压完整页最多8 MiB |
+
+gzip使用Python标准库；它减少顺序保管完整大页需要的独立commit，避免为容量另造Store批量写入或扩大来源读取scope。旧v1生成和读取继续兼容。保管与读取还保持以下约束：
 
 - `physical_page` 始终保存同一原 `page_id`、offset、总行数、原声明总数、原查询完整性、失败与可用的原HTTP摘要。
-- 完整 `asdict(SourceInput)` 普通JSON字节还必须通过原宿主60 KiB门；标题、来源元数据和JSON转义一并核算，不提高宿主上限，也不依赖压缩碰巧过门。原capture字节分片每段最多36 KiB，以base64无损保管；普通页结构化分片每部分最多24 KiB。
-- 每部分另存 `part_index`、`part_count`、`row_start` 和全页结构化摘要；不会把部分编号写成新的来源offset或新的来源请求。
-- 全部原行均保管，包括ETF/其他不合格公司行。读取先验证整组连续性、重复/缺片、全页摘要与原总数，再作资格筛选。原HTTP摘要和结构化摘要分别保留，结构化文本不冒充HTTP原字节。
+- 每份完整 `asdict(SourceInput)` 的普通JSON字节都须通过原宿主60 KiB门；标题、来源元数据、base64及JSON转义一并核算。压缩字节本身小于门限不等于整个输入可提交。原capture字节分片继续按每段最多36 KiB以base64无损保管，不改变原捕获检查器。
+- 部分编号及字节位置只表示保管位置，不写成新的来源offset或新的来源请求。gzip须在有界解压中完整结束，拒绝截断、额外尾字节、多个成员及不符合规范JSON的内容。
+- 全部原行均保管，包括ETF/其他不合格公司行。读取先验证整组连续性、重复/缺片、全页摘要与原总数，再作资格筛选。损坏尾片使该页整体不可用，不能释放前片的部分行或把原失败改成成功。
+- 原HTTP摘要、结构化摘要及gzip摘要分别保留。gzip编码的是规范结构化投影，不能替代HTTP原字节保管；摘要和压缩均不证明来源真实性、公开权利、研究质量或新增执行权限。
 - 分片函数只返回待保管对象，不调用 Store。实际保存沿原获准 `put-source` 顺序和独立读回；未知写仍按原 submission 对账，不能重新分片换键躲避未知效果。
 
-HKEX两份旧全表与东财定增原字节在本次恢复时未取得，分片和投影的合成验证不补造那三份原件。原 Relay `39275529783/1` 的10查询捕获已由宿主原产物恢复，425行可读；完整10条普通JSON SourceInput最大约34 KiB，均在原60 KiB门内，无需为了本次捕获改物理分页；`top_inst` 四次原尝试仍为未完成，读取不会重发。该历史运行的9个完整查询也不自动表示全部八面实际可用。
+HKEX两份旧全表与东财定增原字节已由旧本地body及当时回执恢复，并逐行重提取核对，见[#12原件恢复检查点](https://github.com/auguspp/Decision-OS-2/issues/12#issuecomment-6284882357)。HKEX两页保留原2026-09-30期末日，完整2089/2320行中的268/188条非A股行继续保管，合格A股分别1821/2132行；百分比分母保持原SSE/SZSE上市交易证券数量语义。东财定增保留原67行。三份原GET恢复不借Relay产物证明，gzip仅保管其明确结构化投影；这些原件及完整包的永续records保管、独立读回和现役Room实际消费仍待各自验收，本组代码和合成验证不代签这些事实。
+
+原 Relay [`39275529783/1`](https://github.com/auguspp/Decision-OS-2/actions/runs/39275529783/attempts/1) 的10查询捕获已由宿主原产物恢复，425行可读；完整10条普通JSON SourceInput最大约34 KiB，均在原60 KiB门内，无需为了本次捕获改物理分页；`top_inst` 四次原尝试仍为未完成，读取不会重发。该历史运行的9个完整查询也不自动表示全部八面实际可用。
 
 ## 验证和维护
 
-`test_participant_observations.py` 覆盖同物理页丢片/改行/顺序、原capture字节分片复原及完整SourceInput宿主容量、非A股拒绝保留、匿名身份、基金与证券区别、日期语义、预测同日冲突/跨机构跨目标期反例及旧来源兼容。`test_participant_reading.py` 在现役合成GitStore验证独立复读、全范围不被过滤缩小、失败原件和空页API声明校验、操作级访问失败、完整scope退出和有界读取。`test_reading_participant.py` 验证正常Room组件的分页、单一方向、原范围及确切引用保留和显式显示上限。
+`test_participant_observations.py` 覆盖同物理页丢片/改行/顺序、全页gzip完整性及有界解压、原capture字节分片复原及完整SourceInput宿主容量、非A股拒绝保留、匿名身份、基金与证券区别、日期语义、预测同日冲突/跨机构跨目标期反例及旧来源兼容。`test_participant_reading.py` 保留独立复读、完整声明范围、失败原件及空页API校验，并以顺序 `VersionedStore.put_source` 产生的不同真实Git commit验证大页组合：原未压缩表示超32 commit仍拒绝，压缩后完整恢复原行、拒绝位置与失败，坏尾片仅使整页不可用，过滤不能绕过8 MiB结果门。`test_reading_participant.py` 以现役GitHubAPI和合成Wire验证同一大页经正常Room读取到末行，保留全包计数/原件引用；尾片的首次原生403必须终止读取，不继续邻接输入或导出私有inputs/HTML。合成资料不包含真实第三方正文，也不证明现役records已保管或真实Room已运行。
 
 正常 Room 复用参与者读取器的操作级失败分类，原样抛出授权、可见性及预算错误；不能把一次原生 GET 403/409 降成可导出页面的局部缺口，也不能靠之后成功的权限复查或新客户端覆盖失败。`test_room_consumer_boundaries.py` 用现役 GitHubAPI、合成 Wire 和真实临时 Git 保护这个组合入口：首次失败后不再读取，私有 inputs/HTML 不释放，原 512 请求耗尽时保留首次错误；已验证树内的普通缺件仍保留完整声明范围并显示局部缺口。此参与者消费者退出时同步移除对应回归，共享传输与来源保护继续保留。
 

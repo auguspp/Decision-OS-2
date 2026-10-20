@@ -1,4 +1,5 @@
 """A-share custody reading in the existing room, not a price or capture owner."""
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -39,14 +40,17 @@ def read_market_reference(reference, registry, store, *, offset=0, limit=50,
         from decision_kernel.infrastructure.github_store import GitHubStore
         from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 
-        if isinstance(store.backend, GitHubStore):
-            # Preserve the operation's single API budget and exact binding. The
-            # source-only snapshot pins one native Git view for all day queries.
-            store = VersionedStore(GitMarketReader(replace(store.backend.binding, write_enabled=False),
-                                                   store.backend.api))
-        clock = datetime.now(timezone.utc).isoformat() if read_as_of is None else read_as_of
-        return collection_reader(ref, registry, store, offset=offset, limit=limit,
-                                 entity_id=entity_id, read_as_of=clock)
+        component_scope = getattr(store.backend, "component_read_scope", None)
+        with component_scope() if callable(component_scope) else nullcontext():
+            if isinstance(store.backend, GitHubStore):
+                # Preserve the operation's single API budget and exact binding.
+                # The original source-only snapshot pins all day queries. Check
+                # the surrounding terminal state before this separate reader.
+                store = VersionedStore(GitMarketReader(replace(store.backend.binding, write_enabled=False),
+                                                       store.backend.api))
+            clock = datetime.now(timezone.utc).isoformat() if read_as_of is None else read_as_of
+            return collection_reader(ref, registry, store, offset=offset, limit=limit,
+                                     entity_id=entity_id, read_as_of=clock)
     if ashare_only:
         # Reject other market families before restoring any of their queries.
         _, root = _read_manifest(store, ref, READING_SCHEMA)

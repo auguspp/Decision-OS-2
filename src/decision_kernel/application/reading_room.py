@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure", "odds_book"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -62,6 +62,9 @@ def plan_input(value):
     if value.get("auction_minute") is not None:
         from decision_kernel.application.reading_auction_minute import minute_plan_input
         result["auction_minute"] = minute_plan_input(value["auction_minute"])
+    if value.get("auction_next_session") is not None:
+        from decision_kernel.application.reading_auction_next_session import next_session_plan
+        result["auction_next_session"] = next_session_plan(value["auction_next_session"])
     if value.get("discovery") is not None:
         from decision_kernel.application.reading_discovery import discovery_plan
         result["discovery"] = discovery_plan(value["discovery"])
@@ -82,6 +85,9 @@ def plan_input(value):
         from decision_kernel.application.close_structure import plan_input as structure_plan
         result["structure"] = structure_plan(value["structure"])
         require(clock(result["structure"]["as_of"]) <= clock(value["as_of"]), "ROOM_STRUCTURE_CLOCK_AFTER_READING")
+    if value.get("odds_book") is not None:
+        from decision_kernel.application.odds_book import validate_plan
+        result["odds_book"] = validate_plan(value["odds_book"])
     return result
 
 
@@ -152,13 +158,15 @@ class ReadingRoom:
         return discover_latest(self.store, snapshot=snapshot, as_of=as_of)
 
     def _research(self, reference):
+        from decision_kernel.application.research_book import project_research
         research = self.store.read_revision(BlobRef(**reference))
         require(research["reference"] == reference, "ROOM_RESEARCH_REFERENCE_MISMATCH")
         payload = research["record"]["input"]
         body = research["body"]
         return {"case_id": payload["case_id"], "revision_id": payload["revision_id"],
                 "kind": payload["kind"], "body": body, "body_sha256": digest(body.encode("utf-8")),
-                "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
+                "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"],
+                "book_projection": project_research(research, max_bytes=MAX_PANEL_BYTES)}
 
     def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
               watch_export=True, participant_export=True, decision_export=True, outcome_export=True):
@@ -170,6 +178,7 @@ class ReadingRoom:
         require(not plan.get("global_context") or market_export is True, "ROOM_PUBLIC_GLOBAL_NOT_CONFIRMED")
         require(not plan.get("auction") or market_export is True, "ROOM_PUBLIC_AUCTION_NOT_CONFIRMED")
         require(not plan.get("auction_minute") or market_export is True, "ROOM_PUBLIC_MINUTE_NOT_CONFIRMED")
+        require(not plan.get("auction_next_session") or market_export is True, "ROOM_PUBLIC_AUCTION_NEXT_NOT_CONFIRMED")
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
         require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
@@ -178,8 +187,14 @@ class ReadingRoom:
         require(not plan.get("structure") or market_export is True, "ROOM_PUBLIC_STRUCTURE_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
+        if "odds_book" in plan:
+            from decision_kernel.application.reading_odds_book import bind_query
+            bind_query(plan, catalogue)
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
         refresh_plan = {**deepcopy(plan), "catalogue": {"limit": plan["catalogue"]["limit"]}}
+        if "odds_book" in plan:
+            from decision_kernel.application.reading_odds_book import refresh_query
+            refresh_plan["odds_book"] = refresh_query(plan["odds_book"])
         discovery = None
         if latest_selector(plan["brief"]):
             try:
@@ -220,7 +235,7 @@ class ReadingRoom:
                 if not watch_export and export_required(doc.get("research") or {}):
                     brief = {"reference": plan["brief"], "status": "sources-permission-required",
                              "error": "ROOM_PUBLIC_WATCH_EVIDENCE_NOT_CONFIRMED"}
-        readings, used = [], 0
+        readings, projections, used = [], [], 0
         for ref in refs:
             row = {"reference": deepcopy(ref),
                    "origin": "catalogue-page" if any(c.get("reference") == ref for c in catalogue["items"])
@@ -228,12 +243,15 @@ class ReadingRoom:
                    "open_request": {"operation": "resume", "payload": {"reference": deepcopy(ref)}}}
             try:
                 detail = self._research(ref)
+                projection = detail.pop("book_projection", None)
                 size = len(encoded(detail))
                 if len(detail["body"].encode("utf-8")) > MAX_BODY_BYTES or used + size > MAX_BODIES_BYTES:
                     row.update(status="not-included", error="ROOM_BODY_BOUND_USE_EXACT_READER")
                 else:
                     row.update(status="readable", **detail)
                     used += size
+                    if projection is not None:
+                        projections.append(projection)
             except (RecordError, KeyError, TypeError) as error:
                 row.update(_failure(error))
             row["brief_relation"] = brief_relation(ref, brief)
@@ -332,6 +350,11 @@ class ReadingRoom:
             minute = open_auction_minute(self.store, plan["auction_minute"], registry=self.market_registry)
             result["auction_minute"] = minute
             partial = partial or minute["status"] != "readable"
+        if plan.get("auction_next_session"):
+            from decision_kernel.application.reading_auction_next_session import open_next_session
+            context = open_next_session(self.store, plan["auction_next_session"], registry=self.market_registry)
+            result["auction_next_session"] = context
+            partial = partial or context["status"] != "readable"
         if plan.get("discovery"):
             from decision_kernel.application.reading_discovery import open_discovery
             from decision_kernel.observations.market_daily import MarketInputError
@@ -419,6 +442,22 @@ class ReadingRoom:
             result["structure"] = structure
             partial = partial or structure["status"] != "readable" or structure.get("partial", False)
         result["status"] = "partial" if partial else "readable"
+        if "odds_book" in plan and callable(getattr(self.source_reader, "usage", None)):
+            # The command adds this original news-only counter to the final model.
+            # Include those same bytes before admitting the optional Odds display.
+            result["news_source_reads"] = self.source_reader.usage()
+        # Validate the original view first. Book has no I/O and a separate
+        # display budget; its duplicate structured fields cannot evict bodies.
+        require(len(encoded(result)) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
+        from decision_kernel.application.research_book import attach_book
+        from decision_kernel.interfaces.reading_page import render_page
+        attach_book(result, projections, max_panel_bytes=MAX_PANEL_BYTES,
+                    max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
+        if "odds_book" in plan:
+            from decision_kernel.application.reading_odds_book import attach_panel, read_page
+            page = read_page(self.store, plan["odds_book"])
+            attach_panel(result, page, max_panel_bytes=MAX_PANEL_BYTES,
+                         max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
         # Final mutable access check after every component and before any export.

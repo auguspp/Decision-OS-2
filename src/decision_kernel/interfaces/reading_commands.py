@@ -39,6 +39,8 @@ def preflight(operation, payload, *, public=True):
             "ROOM_PUBLIC_AUCTION_NOT_CONFIRMED")
     require(not plan.get("auction_minute") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_MINUTE_NOT_CONFIRMED")
+    require(not plan.get("auction_next_session") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_AUCTION_NEXT_NOT_CONFIRMED")
     require(not plan.get("discovery") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
     require(not plan.get("participants") or payload.get("public_sources_custody_confirmed") is True,
@@ -54,8 +56,16 @@ def preflight(operation, payload, *, public=True):
 
 
 def perform(store, payload, *, public=True, market_registry=None):
-    from decision_kernel.infrastructure.runtime_publication import checked_output_visibility, publication_basis, publication_payload
+    from decision_kernel.application.reading_odds_book import selected
+    from decision_kernel.infrastructure.github_store import GitHubStore
+    from decision_kernel.infrastructure.runtime_publication import (
+        checked_odds_book_visibility, checked_output_visibility, publication_basis, publication_payload,
+    )
     original_backend = store.backend
+    preflight(OPERATION, payload, public=False)
+    native_book = selected(payload["plan"]) and isinstance(original_backend, GitHubStore)
+    if native_book:
+        checked_odds_book_visibility(original_backend)
     adopted_publication = False
     binding = getattr(original_backend, "binding", None)
     if publication_basis(binding, "reading") is not None:
@@ -69,7 +79,7 @@ def perform(store, payload, *, public=True, market_registry=None):
     preflight(OPERATION, payload, public=public)
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
     # Exit checks run before returning the model to any HTML/report writer.
-    with reading_scope(store.backend) as backend:
+    with reading_scope(store.backend, fail_closed=selected(payload["plan"])) as backend:
         store = VersionedStore(backend)
         reads = _SourceReads(store.read_source)
         result = ReadingRoom(store, source_reader=reads, market_registry=market_registry).build(
@@ -85,12 +95,18 @@ def perform(store, payload, *, public=True, market_registry=None):
     if adopted_publication:
         checked_output_visibility(original_backend, "reading", "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
         require(publication_basis(binding, "reading") is not None, "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
+    if native_book:
+        checked_odds_book_visibility(original_backend)
     return result
 
 
 def write_page(path, result):
     from decision_kernel.interfaces.reading_page import render_page
-    text = render_page(result)
+    write_html(path, render_page(result))
+
+
+def write_html(path, text):
+    """Release already-rendered HTML only after the caller's final native gate."""
     try:
         with path.open("x", encoding="utf-8") as handle:
             handle.write(text)

@@ -26,6 +26,52 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 原竞价名单的给定分钟原件使用可选 `auction_minute`，见[09:40 分钟观察](opening-auction-minute.md)。确切 seed、完整五组/BJ/未知和未尝试成员先恢复再分页；只接唯一 09:39–09:40 点，保留原取得时钟，跨来源收益不计算。沿原来源确认、整次终态与 2 MiB 展示上限；不增加分钟采集或实际来源额度。
 
+## Research Book
+
+原研究区以 `Research Book` 导航进入，仍使用正常 `reading-room` 操作和原 `plan`，不新增宿主参数、运行操作或保存对象。`application/research_book.py` 直接消费 `ReadingRoom._research` 已读到的研究字典，调用原 `domain.research_work.read_workpaper` 校验工作底稿；不再次读取修订或来源，也不遍历完整历史。`interfaces/reading_research_book_page.py` 仅投影原模型。
+
+本页展示原委托、问题、Quick/Full、确切版本、作者 findings、挑战、重要性声明、未完成项的 `remaining_kind` / `next_action`、`stop` / `stop_reason`、限制及 `source_changes`。问题、findings 和挑战分别沿原作者顺序，不按强弱或优先级重排。停止声明和作者结论不是独立 Review、人工接受或正式 Decision；未记录挑战不表示不存在反证。标准公司标识、研究事实截止和“最强反证”排序在原 schema 中未建立，模型返回明确空值，页面标为未建立，不从 case_id、保存时间或阅读时点推断。
+
+旧正文没有规范工作底稿时保留完整原文、原未决项和引用，并明确结构化字段未建立；有工作底稿标记但校验失败时只将 Book 结构化部分标为 invalid，原研究正文仍按原读取结果展示。`stored_at` 仅表示该版保存时钟。原 `as_of` 仍是复核评估时点，Book 不据此声称研究在该时点已经存在、获得事前保管证明或形成事实截止。
+
+Book 继承 Catalogue 的真实 `total_cases`、`snapshot`、`offset`、返回数、剩余数与下一页 cursor。失败卡片保留；额外确切版本单列，不计入当前目录案例分母。本页搜索和类型筛选不覆盖未读页。新导出的材料、前驱和 Review 计划固定本次原 Catalogue 快照与位置，不因重新打开而混入后来追加的案例；指定 Brief 的引用也保持固定。
+
+来源按钮导出原裸 SourceRef 的 `read-source` 请求，材料按钮导出原 `materials` 计划；引用可读状态仅使用本页已读的来源状态，不重试来源正文或升级资格。具名 Brief 按原 `read-desk` 请求重开，采用关系只适用于该确切 Brief，不声称完整采用历史。原研究读取、原正文下载和原议程入口继续保留。所有按钮只导出请求或在已读页面内导航，明确尚未执行；实际调用仍由原宿主核代码、来源及公开权利。
+
+逐题 Review 仅在本页已经打开同案例的直接前驱和当前版、两版工作底稿均有效时提供。用户可选前驱原问题及两版原文行段；预填各版首个合规非空行，只是可操作的字面起点，不判断段落重要性或语义对应。导出采用原 `review` 合同和 80 行边界，原宿主再核确切前驱、原文、8192 字节行段及材料权限。缺任一原件时保留前驱请求，不自动追读历史或伪造比较结果。
+
+Book 不重复放入研究完整正文，不占原 1MiB 单正文与 2MiB 正文总预算；其投影另受原 768KiB 面板边界限制，按完整卡片保留或标为 `not-included`。原模型先通过 6MiB 校验，再尝试增加 Book，并调用原页面的纯渲染器核实际转义后完整 HTML 的 8MiB 容量；不另估算转义膨胀或提高边界。Book 导致 JSON 或 HTML 空间不足时只保留相应省略标记。若连标记也无法容纳，原模型保持原样，页面明确 Book 未包含，原文和确切读取通路仍保留。最终报告 JSON 与 HTML 内嵌数据采用同一模型，渲染器不修改模型或截断正文；已有原页本身超过 HTML 边界时仍按原规则拒绝。Book 的局部缺口单独显示，不改写原研究/来源读取状态。容量准入只有纯渲染，没有额外读取，随后仍执行原最终权限复核。
+
+有限合成验证覆盖正常/旧正文/坏工作底稿/缺源、前后版精确关系、固定分页分母、评估钟不冒充 PIT、局部容量省略及无额外读取；原主 CLI 和原生 public/private 宿主消费者覆盖完整 HTML/JSON、CSP 与 Node 实际按钮请求重入。转义密集的两版原正文可正常呈现而 Book 会超过 8MiB 的反例，沿原生宿主验证只省略 Book、原正文/引用/目录分母不变，最终 JSON 与 HTML 完整一致。撤权、private 反转及最终原生 403 继续阻断结果和私有输入释放。唯一既有 wheel consumer 读取原已保存的合成混合研究验证 Book，不增加第二次安装或 cold gate。上述工程验证不证明实际公开资料使用、浏览器/移动端体验或用户接受。
+
+稳定入口当前仍是现役 Actions / store CLI 生成的同一离线阅读室；完全免填宿主参数、长期在线 Book、真实研究消费及浏览器体验仍须各自实际验收。Odds Book 属于原 #60 领域，本组不修改 Research/Odds schema、当前指针、来源保管或写入权限。退役 Book 时移除纯投影与页面调用，原 Reader、Catalogue、正文和准确引用继续可用。
+
+## Odds Book
+
+正常 `reading-room` 的可选 `plan.odds_book` 直接使用[原 Odds Book](../research/odds-book.md)查询合同：仅 `snapshot`、`cursor`、`limit`、`scan_limit`、`research_ref`；默认返回限额 4、扫描限额 16，上限分别 8、32。缺省或 null 不读取，`{}` 明确请求一页。页面导航可导出同快照首页请求，不要求手工抄写内部引用；导出仍未执行，不形成自动循环或后台订阅。
+
+```json
+{"plan":{"as_of":"2026-10-20T08:00:00Z","catalogue":{"limit":4},"odds_book":{}}}
+```
+
+`application/reading_odds_book.py` 只调用一次原 `odds_book.read_book`，不重做候选发现、规格计算、研究归属或全历史回放。默认使用本页真实 Catalogue snapshot；明确传入的 Odds snapshot/cursor 与它不同时拒绝，不能悄悄改写游标。研究目录与 Odds 页各保留原分母：Catalogue 的案例数/offset/returned 不因额外旧研究或 Odds 行增加；Odds 显示原 scanned start/end/total_candidates、原 status 和 `this-page-only`。坏项、未知过滤匹配和原 oversized 卡片不因筛选消失。尾页或 next cursor 为空不证明此前页面已读，也不证明全库无结果。
+
+Odds 下一页、原研究过滤与 Research Book 精确版本入口都保留实际 Catalogue cursor；Odds 翻页只推进原扫描 offset。换精确 `research_ref` 过滤时重新从该快照的候选首位读取，不按名称猜公司或自动换 current。明确刷新同时释放 Catalogue 与 Odds 的游标/快照，保留原限额与精确过滤选择；新页面生成日期不刷新原资料或已存结果日期。
+
+页面直接保留领域返回的研究关系及同 spec 多份已存价格结果，展示原 kind/revision、mandate、未决项、at-snapshot current/historical/unknown，以及估值、资本结构、目标、价格、计算和检查各自时钟。计算时钟直接取原 `calculation_input.evaluated_at`，缺字段仍标未记录；stored_at 仅是保存时钟，不填研究截止日期。原数值保持字符串，不经页面浮点重算；当前公允价值的估值距离不改称未来收益，未来退出回报不新增年化/折现。条件 Odds 的未建立概率不补等权，保留原 `weighted_aggregate: null`；概率输出按原 `aggregate` 字段显示，仍是原研究声明，不称经验概率已核验。
+
+保管 verified、semantic replay not-requested、current validity not-certified、人工接受与执行授权分别显示。原行的 `open_operation/open_payload` 可重入现役宿主；原活动指针的 current 查询明确标为“执行时重新选择”，不能当成本快照历史回放。页面不写研究、Odds、Watch 或正式 Decision，不增加来源请求。
+
+含 Odds 的 native Room 复用 `checked_odds_book_visibility`：原生 private 或 public 且具 `reading/research/sources/watch/market` 五个原可信 scope。调用者公开布尔值不能代替这五项资格。准入在 inputs/records 正文读取前；同一 backend 在读后和最终释放前再核。该组合的公共与私有 inputs、完整 HTML 和成功 result 均延后到完整模型/HTML 大小门及最后原生复核之后。缺权限、撤销、可见性反转、存储/请求预算终态不能被局部缺项或旧绿结果洗掉。
+
+此明确组合仅在原 `_ReadingScope` 上启用默认关闭的 `fail_closed`，保留原类、owner、API 和行业逐 commit 的 `source_read_scope` / 32 个上限。首个原访问、范围或传输终态锁存原异常；后续缓存、读取和作用域退出先抛同一对象，不再请求。委托原 `source_read_scope` 取得的短寿命 `_SourceReadScope` 实例也在同一 opt-in 下检查其公开读取/校验入口，接住尚未进入 owner 的错误仓库引用及子范围拒绝；原实例类型、owner、snapshot、关闭状态和原退出检查保留。原 `operation_failure` 分类在实际失败时窄复用，不另立研究策略；附加的 `PATH_OUTSIDE_STORE` 是原 GitHubStore 读路径白名单拒绝，普通 `MissingObject` 和内容缺项仍可局部显示。原 Odds reader 与 collection 的 `GitMarketReader` 通过同一终态检查点进入；后者仍使用原 source-only 快照和同一 API。未选择 Odds 的旧 Room 与其他默认 scope 不启用该终态保护，也不更换 backend 类型或预算 owner。
+
+行业 `OPERATING_SOURCE_SCOPE_BOUND` 仍是原领域容量边界：第 33 个独立来源 commit 不读取，对应观察保留 unavailable，已在原 32 个 scope 内的观察继续按原合同读取。它不属于原操作级终态分类，不因新增 Odds 被升级为整页失败。
+
+领域原 8192 候选、128KiB 卡片、4MiB Book 结果和同一 API512 请求预算不变。新增展示另守 768KiB panel、6MiB 完整模型及实际转义后 8MiB HTML；先保留已准入的正文与 Research Book，再加入 Odds。新增面板装不下时整项 not-included，留下实际 snapshot/scan 和精确原 `read-odds-book` 请求，不截正文、丢失败行、暗改查询限额或只修改 HTML 嵌入 JSON。连标记也放不下时保留原模型，由页面明确说明可选投影未包括；原模型本身不合格仍按原错误失败。
+
+专属有限验证使用合成 Git 与原主 CLI/native host、完整 HTML/JavaScript 请求重入、固定快照/缺项/容量/权限反例。原唯一安装消费者仅扩 `exercise_installed_room`，消费同一安装先前 Odds helper 已保存的合成原件，不另建 cold 门。真实多公司消费、稳定在线托管、浏览器/窄屏采用和经济实质验收仍须各自原生证据。退出此面板时移除它的适配、页面接线、宿主 opt-in 与专属消费者，保留原 Odds Book、Research Book、Catalogue 和原精确读取操作。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。

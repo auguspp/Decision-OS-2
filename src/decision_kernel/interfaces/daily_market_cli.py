@@ -250,6 +250,12 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         if item is not None and item["cycle"].get("calendar_repair") is not None:
             report.update(calendar_original_source_budget=2, calendar_additional_source_budget=1,
                 calendar_source_budget=3, calendar_repair=deepcopy(item["cycle"]["calendar_repair"]))
+        elif item is not None:
+            # A new ordinary cycle must not inherit its predecessor's display
+            # authority. The actual request owner already uses the normal cap.
+            report["calendar_source_budget"] = approved["max_calendar_requests"]
+            for key in ("calendar_original_source_budget", "calendar_additional_source_budget", "calendar_repair"):
+                report.pop(key, None)
         if progress is not None:
             progress(deepcopy(report), deepcopy(control))
     def save(state, store, fresh):

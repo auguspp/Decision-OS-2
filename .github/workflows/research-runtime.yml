@@ -5,11 +5,11 @@ on:
       operation:
         description: 'Explicit research I/O; reading-room verifies live privacy; never execute AI or a source URL'
         type: choice
-        options: [save-hosted-handoff, reconcile-hosted-handoff, read-hosted-handoff, latest-hosted-handoff, industry-read, reading-room, agenda, read-agenda, change-odds-watch-activity, save-odds-watch-activity-check, reconcile-odds-watch-activity, reconcile-odds-watch-activity-check, current-odds-watch-activity, list-odds-watch-activities, read-odds-watch-activity, read-odds-watch-activity-segment, check-odds-watch-activity, freeze-odds-watch, reconcile-odds-watch, read-odds-watch, check-odds-watch, save-odds-watch-check, reconcile-odds-watch-check, read-odds-watch-check, freeze-odds-assessment, reconcile-odds-assessment, read-odds-assessment, calculate-probability-odds, save-probability-odds, reconcile-probability-odds, read-probability-odds, freeze-valuation, reconcile-valuation, read-valuation, calculate-odds, save-odds, reconcile-odds, read-odds, prepare, resume, read-source, catalogue, audit-numbers, audit-source-use, put-source, checkpoint, reconcile-source, reconcile-checkpoint, deliver, reconcile-delivery, verify-delivery, open-delivery, put-artifact, reconcile-artifact, read-artifact]
+        options: [prepare-decision, read-decision-preparation, save-decision-preparation, reconcile-decision-preparation, save-hosted-handoff, reconcile-hosted-handoff, read-hosted-handoff, latest-hosted-handoff, industry-read, reading-room, agenda, read-agenda, change-odds-watch-activity, save-odds-watch-activity-check, reconcile-odds-watch-activity, reconcile-odds-watch-activity-check, current-odds-watch-activity, list-odds-watch-activities, read-odds-watch-activity, read-odds-watch-activity-segment, check-odds-watch-activity, freeze-odds-watch, reconcile-odds-watch, read-odds-watch, check-odds-watch, save-odds-watch-check, reconcile-odds-watch-check, read-odds-watch-check, freeze-odds-assessment, reconcile-odds-assessment, read-odds-assessment, calculate-probability-odds, save-probability-odds, reconcile-probability-odds, read-probability-odds, freeze-valuation, reconcile-valuation, read-valuation, calculate-odds, save-odds, reconcile-odds, read-odds, prepare, resume, read-source, catalogue, audit-numbers, audit-source-use, put-source, checkpoint, reconcile-source, reconcile-checkpoint, deliver, reconcile-delivery, verify-delivery, open-delivery, put-artifact, reconcile-artifact, read-artifact]
         default: prepare
         required: true
       payload:
-        description: 'Public-authorized UTF-8 JSON only, at most 60 KiB; no tokens or private material'
+        description: 'Visibility-authorized UTF-8 JSON, at most 60 KiB; preparation requires native-private custody; no tokens'
         type: string
         required: true
       code_sha:
@@ -27,7 +27,7 @@ on:
 permissions: {}
 jobs:
   read:
-    if: github.ref == 'refs/heads/main' && inputs.operation != 'save-hosted-handoff' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint' && inputs.operation != 'deliver' && inputs.operation != 'put-artifact' && inputs.operation != 'freeze-valuation' && inputs.operation != 'save-odds' && inputs.operation != 'freeze-odds-assessment' && inputs.operation != 'save-probability-odds' && inputs.operation != 'freeze-odds-watch' && inputs.operation != 'save-odds-watch-check' && inputs.operation != 'change-odds-watch-activity' && inputs.operation != 'save-odds-watch-activity-check'
+    if: github.ref == 'refs/heads/main' && inputs.operation != 'save-decision-preparation' && inputs.operation != 'save-hosted-handoff' && inputs.operation != 'put-source' && inputs.operation != 'checkpoint' && inputs.operation != 'deliver' && inputs.operation != 'put-artifact' && inputs.operation != 'freeze-valuation' && inputs.operation != 'save-odds' && inputs.operation != 'freeze-odds-assessment' && inputs.operation != 'save-probability-odds' && inputs.operation != 'freeze-odds-watch' && inputs.operation != 'save-odds-watch-check' && inputs.operation != 'change-odds-watch-activity' && inputs.operation != 'save-odds-watch-activity-check'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -55,7 +55,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   write:
-    if: github.ref == 'refs/heads/main' && (inputs.operation == 'save-hosted-handoff' || inputs.operation == 'put-source' || inputs.operation == 'checkpoint' || inputs.operation == 'deliver' || inputs.operation == 'put-artifact' || inputs.operation == 'freeze-valuation' || inputs.operation == 'save-odds' || inputs.operation == 'freeze-odds-assessment' || inputs.operation == 'save-probability-odds' || inputs.operation == 'freeze-odds-watch' || inputs.operation == 'save-odds-watch-check' || inputs.operation == 'change-odds-watch-activity' || inputs.operation == 'save-odds-watch-activity-check')
+    if: github.ref == 'refs/heads/main' && (inputs.operation == 'save-decision-preparation' || inputs.operation == 'save-hosted-handoff' || inputs.operation == 'put-source' || inputs.operation == 'checkpoint' || inputs.operation == 'deliver' || inputs.operation == 'put-artifact' || inputs.operation == 'freeze-valuation' || inputs.operation == 'save-odds' || inputs.operation == 'freeze-odds-assessment' || inputs.operation == 'save-probability-odds' || inputs.operation == 'freeze-odds-watch' || inputs.operation == 'save-odds-watch-check' || inputs.operation == 'change-odds-watch-activity' || inputs.operation == 'save-odds-watch-activity-check')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

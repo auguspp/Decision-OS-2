@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "decision_preparation"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -59,6 +59,13 @@ def plan_input(value):
     if value.get("participants") is not None:
         from decision_kernel.application.reading_participant import participant_plan
         result["participants"] = participant_plan(value["participants"])
+    if value.get("event_calendar") is not None:
+        from decision_kernel.application.event_calendar import calendar_plan
+        result["event_calendar"] = calendar_plan(value["event_calendar"])
+    if value.get("decision_preparation") is not None:
+        from decision_kernel.interfaces.decision_preparation_commands import preflight
+        preflight("read-decision-preparation", value["decision_preparation"])
+        result["decision_preparation"] = deepcopy(value["decision_preparation"])
     return result
 
 
@@ -138,7 +145,7 @@ class ReadingRoom:
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
     def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
-              watch_export=True, participant_export=True):
+              watch_export=True, participant_export=True, decision_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
@@ -146,6 +153,8 @@ class ReadingRoom:
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
+        require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
+        require(not plan.get("decision_preparation") or decision_export is True, "ROOM_PUBLIC_DECISION_PREPARATION_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
@@ -295,6 +304,36 @@ class ReadingRoom:
                                 "plan": plan["participants"], **failure}
             result["participants"] = participants
             partial = partial or participants["status"] != "readable" or participants.get("partial", False)
+        if plan.get("event_calendar"):
+            from decision_kernel.application.event_calendar import open_calendar, operation_failure
+            try:
+                calendar = open_calendar(self.store, plan["event_calendar"])
+            except (RecordError, KeyError, TypeError) as error:
+                if operation_failure(error):
+                    raise
+                calendar = {"reference": plan["event_calendar"]["reference"],
+                            "plan": plan["event_calendar"], **_failure(error)}
+            result["event_calendar"] = calendar
+            partial = partial or calendar["status"] != "readable" or calendar.get("view", {}).get("status") == "partial"
+        if plan.get("decision_preparation"):
+            from decision_kernel.interfaces.decision_preparation_commands import perform
+            request = {"operation": "read-decision-preparation", "payload": deepcopy(plan["decision_preparation"])}
+            reference = plan["decision_preparation"]["reference"]
+            try:
+                view = perform(self.store, request["operation"], request["payload"], registry=self.market_registry)
+                require(len(encoded(view)) <= MAX_PANEL_BYTES, "ROOM_PANEL_BOUND")
+                prepared = {"reference": reference, "status": "readable", "view": view}
+            except (MissingObject, IntegrityError, KeyError, TypeError) as error:
+                # Ordinary missing/corrupt objects remain a visible panel error.
+                # Store, privacy, scope and budget RecordErrors escape immediately;
+                # transport refusal/size bounds are not ordinary corrupt objects.
+                if isinstance(error, IntegrityError) and str(error) in {
+                        "UNEXPECTED_REMOTE_RESPONSE", "REMOTE_RESPONSE_TOO_LARGE"}:
+                    raise
+                prepared = {"reference": reference, **_failure(error)}
+            prepared["open_request"] = request
+            result["decision_preparation"] = prepared
+            partial = partial or prepared["status"] != "readable" or prepared.get("view", {}).get("document", {}).get("status") == "partial"
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

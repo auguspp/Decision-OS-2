@@ -37,6 +37,8 @@ def preflight(operation, payload, *, public=True):
             "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
     require(not plan.get("participants") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
+    require(not plan.get("event_calendar") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
 
 
 def perform(store, payload, *, public=True, market_registry=None):

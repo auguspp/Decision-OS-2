@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -59,6 +59,9 @@ def plan_input(value):
     if value.get("participants") is not None:
         from decision_kernel.application.reading_participant import participant_plan
         result["participants"] = participant_plan(value["participants"])
+    if value.get("event_calendar") is not None:
+        from decision_kernel.application.event_calendar import calendar_plan
+        result["event_calendar"] = calendar_plan(value["event_calendar"])
     return result
 
 
@@ -146,6 +149,7 @@ class ReadingRoom:
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
+        require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
@@ -295,6 +299,17 @@ class ReadingRoom:
                                 "plan": plan["participants"], **failure}
             result["participants"] = participants
             partial = partial or participants["status"] != "readable" or participants.get("partial", False)
+        if plan.get("event_calendar"):
+            from decision_kernel.application.event_calendar import open_calendar, operation_failure
+            try:
+                calendar = open_calendar(self.store, plan["event_calendar"])
+            except (RecordError, KeyError, TypeError) as error:
+                if operation_failure(error):
+                    raise
+                calendar = {"reference": plan["event_calendar"]["reference"],
+                            "plan": plan["event_calendar"], **_failure(error)}
+            result["event_calendar"] = calendar
+            partial = partial or calendar["status"] != "readable" or calendar.get("view", {}).get("status") == "partial"
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

@@ -332,7 +332,7 @@ def execute(out, group):
     selected = E["nodes"](text)
     require(code == (0 if selected else 5), "COLLECTION_EXIT")
     (out / "collection.txt").write_text("\n".join(selected) + ("\n" if selected else ""))
-    test_args = args + (["-n", "2", "--dist=loadfile", "--no-loadscope-reorder", "--max-worker-restart=0"] if group != "contracts" and selected else [])
+    test_args = args + (["-n", "auto", "--maxprocesses=4", "--dist=loadfile", "--no-loadscope-reorder", "--max-worker-restart=0", "-v"] if group != "contracts" and selected else [])
     code, _ = pytest_run(out, "junit", test_args)
     count = E["passed_tests"](selected, (out / "junit.xml").read_bytes())
     require(code == (0 if selected else 5), "TEST_EXIT")

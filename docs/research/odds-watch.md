@@ -2,6 +2,8 @@
 
 责任 #60，落实[设计§14.2、15.2–15.3](../decision-os-2.0-design.md#chapter-15)。复用[条件Odds](conditional-odds.md)、[概率Odds](probability-odds.md)、原版本保管与显式研究宿主。**本入口只在调用时检查并按要求保存，不是定时服务、通知订阅或投资决定。** 不自动迁移旧Watch名单，不给已有报告补价格阈值或概率。
 
+默认产品用途按[Full 后持续 Watch](full-watch.md)：跟踪 Full 已存 Odds 对应的价格条件，以及原 Full 尚未解决、会影响 Odds 的关键问题。新 `odds-watch-v3` 在原多条件能力上核验这些绑定；Quick 的发现线索仍归研究议程。以下 v1 与所链接 v2 是保留的通用执行和历史合同，不据此将任意 Quick 自动列入默认 Watch。
+
 新交付的[活动管理入口](watch-activity.md)负责跨会话选择、暂停/恢复、原子采纳与历史摘要。以下是原独立v1合同；其历史投影和回执仍保持。已登记Watch的新执行必须使用活动入口，不能绕过登记状态。
 
 显式新版[有序条件与经营证据](watch-conditions.md)复用这些入口，支持同一Watch多个价格/区间、逐条件历史与上下最近边界，以及确切已读来源支持的经营判读和议程/Brief消费。旧v1不自动升级，以下原历史合同保持。
@@ -31,6 +33,8 @@
 指标为`research_version`、`price`、`value_to_price_distance`、`undiscounted_holding_period_return`、`expected_holding_period_return`、`positive_return_scenario_probability`。研究版本用`comparison:"changed"`且world_id/threshold为null；其他为`lte`或`gte`和有限十进制**字符串**阈值。世界指标必须选原world_id，其余world_id为null。收益小数0.2表示20%，不是0.2%；正收益概率不是经验胜率。
 
 同一冻结Watch的启用、窗口、条件或依据不能静默修改。改变这些定义仍须保存新Watch并明确采用，旧引用保留历史；只暂停或恢复同一Watch时使用[活动管理入口](watch-activity.md)，不必复制定义。原独立接口不选择全局活动状态，也不会自动接纳新Watch替换旧Watch。
+
+Full 后持续 Watch 要求 `end_after_trigger=false`。首次触价、单期 Brief 采用或用户暂缓回应均不等于退出观察；原有限窗口、固定价值期限和数据资格继续适用。有限执行批次结束与产品关注结束分别记录，不能换新定义清零已知触发历史。v1/v2 原来显式选择的触发后结束行为仍按原字节重演。
 
 ## 3. 一次检查的输入与结果
 

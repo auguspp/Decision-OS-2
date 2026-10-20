@@ -29,7 +29,8 @@ from decision_kernel.domain.records import (
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.infrastructure.runtime_publication import (
-    checked_output_visibility, publication_basis, publication_payload, publication_scope,
+    checked_handoff_visibility, checked_output_visibility,
+    publication_basis, publication_payload, publication_scope,
 )
 from decision_kernel.methods.research import research_method
 from decision_kernel.interfaces.research_payload import (
@@ -215,10 +216,21 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
         decision_preparation_commands.preflight(command["operation"], command["payload"])
     room_public = True
+    hosted_watch_publication = False
     if command["operation"] in hosted_handoff.OPERATIONS:
         if backend is None:
             backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
-        checked_output_visibility(backend, "handoff", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+        checked_handoff_visibility(backend)
+        if command["operation"] in {"save-hosted-handoff", "reconcile-hosted-handoff"}:
+            payload = command["payload"]
+            require(set(payload) == {"document", "rights_confirmed"}
+                    and payload["rights_confirmed"] is True, "HOSTED_RIGHTS_REQUIRED")
+            hosted_handoff.validate(payload["document"])
+            # Input artifacts are an export too. Resolve an exact baseline's
+            # hidden Watch selections before releasing the author document.
+            hosted_watch_publication = hosted_handoff.publication_required(
+                VersionedStore(backend), payload["document"])
+            checked_handoff_visibility(backend, watch_required=hosted_watch_publication)
     if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
         if backend is None:
             backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
@@ -290,7 +302,13 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
                 (output / "inputs.json").write_bytes(encoded(inputs))
             report["repository_visibility"] = visibility
         if operation in hosted_handoff.OPERATIONS:
-            report["repository_visibility"] = checked_output_visibility(backend, "handoff", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+            if operation not in {"save-hosted-handoff", "reconcile-hosted-handoff"}:
+                hosted_watch_publication = hosted_handoff.publication_required(VersionedStore(backend), result)
+            # Read/latest may reveal adopted results only after restoring the
+            # exact document. Recheck all scopes after every dependency read;
+            # a handoff-only grant cannot release Watch/source judgments.
+            report["repository_visibility"] = checked_handoff_visibility(
+                backend, watch_required=hosted_watch_publication)
         if authority is not None:
             # Revocation cannot turn into a successful public body/attachment.
             checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")

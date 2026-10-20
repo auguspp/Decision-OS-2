@@ -79,3 +79,5 @@ python -m decision_kernel.methods.research --kind full
 ## 7. 将研究中的条件价值接到 Odds
 
 已有冻结研究的受支持价值/未来现金产出，可以按[条件Odds入口](conditional-odds.md)保存可选`valuation-spec-v1`，再使用`freeze-valuation → calculate-odds → save-odds → read-odds`。保留确切研究、股类/币种/股数、价值与目标日期以及原条件，价格单变不改研究。当前公允价值只给估值距离；未来退出/分配现金才给名义累计回报。本首组不提供概率/风险政策、合格Market、自动价格订阅或人工Decision，无概率不补等权，算术通过不代签Full质量。完整原文模型仍可自由研究与按原合同保管，不能为调用计算器倒调模型。
+
+Full 后的持续跟踪沿 [Full 后 Watch](full-watch.md)：核对实际已存 Odds 对应的价格条件，以及原 Full 重大未决问题对价值输入／情景的影响，先由既有 Brief 交付实际变化。没有可用 Odds 时可保留有依据的问题跟踪；Quick 线索沿原研究议程。该入口不把 `checkpoint`／`deliver` 成功宣称为已自动登记或开始长期执行。

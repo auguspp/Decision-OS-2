@@ -103,7 +103,7 @@ class OddsWatch:
                 spec_ref = basis["reference"]
             spec = ConditionalOdds(reader).read_spec(spec_ref)
             ref = BlobRef(**spec["spec"]["research_ref"])
-            conditions = watch["conditions"] if watch["schema"] == "odds-watch-v2" else [watch["condition"]]
+            conditions = watch["conditions"] if watch["schema"] in ("odds-watch-v2", "odds-watch-v3") else [watch["condition"]]
             for condition in conditions:
                 if condition["metric"] in WORLD_METRICS:
                     require(condition["world_id"] in {w["id"] for w in spec["spec"]["worlds"]}, "WATCH_WORLD_NOT_IN_SPEC")
@@ -115,24 +115,46 @@ class OddsWatch:
         if assessment:
             require(timestamp(assessment["assessment"]["as_of"]) <= timestamp(watch["activation"]["as_of"]),
                     "WATCH_ACTIVATION_PRECEDES_ASSESSMENT")
-        return {"schema": "frozen-odds-watch-v2" if watch["schema"] == "odds-watch-v2" else "frozen-odds-watch-v1",
+        frozen = {"schema": "frozen-" + watch["schema"],
             "watch": watch, "watch_sha256": digest(encoded(watch)),
             "research_ref": asdict(ref), "case_id": research["record"]["input"]["case_id"],
             "research_body_sha256": research["record"]["body"]["sha256"],
             "research_unresolved": research["record"]["input"]["unresolved"],
             "spec_sha256": spec["spec_sha256"] if spec else None,
             "assessment_sha256": assessment["assessment_sha256"] if assessment else None}
+        if watch["schema"] == "odds-watch-v3":
+            from decision_kernel.application.full_watch import qualify_tracking
+            qualify_tracking(frozen, reader, spec=spec, assessment=assessment,
+                             registry=self._registry() if assessment else self.registry, clock=self.clock)
+        return frozen
 
     def freeze(self, payload, *, submission_id):
-        frozen = self._frozen(publication(payload, "watch"), self.store)
+        from decision_kernel.application.full_watch import require_full
+        watch = publication(payload, "watch")
+        scoped = isinstance(watch, dict) and watch.get("schema") == "odds-watch-v3"
+        reader = _Sources(self.store.backend) if scoped else self.store
+        if scoped: reader.backend.head()
+        frozen = self._frozen(watch, reader)
+        if scoped: reader.backend.head()
         require(timestamp(frozen["watch"]["activation"]["as_of"]) <= self.clock(), "WATCH_ACTIVATION_IN_FUTURE")
-        ref = self.custody._put(submission_id, WATCH_RECORD, frozen, payload["rights_basis"])
+        ref = self.custody._put(submission_id, WATCH_RECORD, frozen, payload["rights_basis"],
+            before_new_write=lambda head: require_full(frozen, reader))
         return {"reference": asdict(ref), "watch_sha256": frozen["watch_sha256"], "research_ref": frozen["research_ref"]}
 
     def read_watch(self, reference, *, reader=None):
-        frozen = ConditionalOdds(reader or self.store)._open(reference, WATCH_RECORD)
+        reader = reader or self.store
+        frozen = ConditionalOdds(reader)._open(reference, WATCH_RECORD)
         require(isinstance(frozen, dict) and "watch" in frozen, "WATCH_RECORD_INVALID")
-        require(encoded(self._frozen(frozen["watch"], reader or self.store)) == encoded(frozen), "WATCH_RECORD_CHANGED")
+        # v3 restores both the frozen spec and its actual Odds. Reuse the
+        # existing operation-local memo for those shared immutable inputs;
+        # the original backend still owns its budget and live authority.
+        scoped = (isinstance(frozen["watch"], dict) and frozen["watch"].get("schema") == "odds-watch-v3"
+                  and not isinstance(reader, _Sources))
+        if scoped:
+            reader = _Sources(reader.backend)
+            reader.backend.head()
+        require(encoded(self._frozen(frozen["watch"], reader)) == encoded(frozen), "WATCH_RECORD_CHANGED")
+        if scoped: reader.backend.head()
         return frozen
 
     def _registry(self):
@@ -166,7 +188,7 @@ class OddsWatch:
                     "value": None, "reason": code}
 
     def _observe_supported(self, frozen, request, previous, reader, *, known_dates_first=False):
-        if frozen["watch"]["schema"] == "odds-watch-v2":
+        if frozen["watch"]["schema"] in ("odds-watch-v2", "odds-watch-v3"):
             from decision_kernel.application.watch_conditions import observe
             return observe(self, frozen, request, previous, reader)
         watch = frozen["watch"]
@@ -235,10 +257,13 @@ class OddsWatch:
         matched = Decimal(value) <= number(c["threshold"]) if c["comparison"] == "lte" else Decimal(value) >= number(c["threshold"])
         return {**out, "status": "evaluated", "condition_met": matched, "calculation": calculation, "value": value}
 
-    def _replay(self, request, reader=None):
+    def _replay(self, request, reader=None, new_check=False):
         """Iterative bounded predecessor replay. No user-supplied state is trusted."""
         reader = reader or _Sources(self.store.backend)
         frozen = self.read_watch(request["watch_ref"], reader=reader)
+        if new_check:
+            from decision_kernel.application.full_watch import require_full
+            require_full(frozen, reader)
         custody = ConditionalOdds(reader)
         records, seen = [], set()
         ref = request["previous_check"]
@@ -261,21 +286,30 @@ class OddsWatch:
         observation = self._observe(frozen, request, previous, reader)
         return project(frozen["watch"], request, observation, previous)
 
-    def check(self, payload, *, reader=None):
+    def _check(self, payload, *, reader=None, new_check=False):
         request = validate_request(payload)
         require(timestamp(request["checked_at"]) <= self.clock(), "WATCH_CHECK_IN_FUTURE")
         # Recheck mutable visibility/binding even when exact sources were memoized.
         self.store.backend.head()
-        result = self._replay(request, reader)
+        result = self._replay(request, reader, new_check)
         self.store.backend.head()
         return json.loads(encoded(result))
 
+    def check(self, payload, *, reader=None):
+        return self._check(payload, reader=reader, new_check=True)
+
     def save(self, payload, *, submission_id):
+        from decision_kernel.application.full_watch import require_full
         from decision_kernel.application.watch_activity import assert_unmanaged
         reader = _Sources(self.store.backend)
-        result = self.check(publication(payload, "check"), reader=reader)
+        # Exact historical input is reconstructed before the original journal
+        # reconciles; only a genuinely new save runs the admission callback.
+        result = self._check(publication(payload, "check"), reader=reader)
+        def precondition(head):
+            require_full(self.read_watch(result["request"]["watch_ref"], reader=reader), reader)
+            assert_unmanaged(reader, result["request"]["watch_ref"], snapshot=head)
         ref = self.custody._put(submission_id, CHECK_RECORD, result, payload["rights_basis"],
-            before_new_write=lambda head: assert_unmanaged(reader, result["request"]["watch_ref"], snapshot=head))
+            before_new_write=precondition)
         return {"reference": asdict(ref), "check_sha256": digest(encoded(result)), "status": result["status"],
                 "watch_ref": result["request"]["watch_ref"]}
 
@@ -283,7 +317,7 @@ class OddsWatch:
         reader = _Sources(self.store.backend)
         result = ConditionalOdds(reader)._open(reference, CHECK_RECORD)
         require(isinstance(result, dict) and "request" in result, "WATCH_CHECK_RECORD_INVALID")
-        require(encoded(self.check(result["request"], reader=reader)) == encoded(result), "WATCH_CHECK_RECALCULATION_MISMATCH")
+        require(encoded(self._check(result["request"], reader=reader)) == encoded(result), "WATCH_CHECK_RECALCULATION_MISMATCH")
         output = {"reference": asdict(artifact_reference(reference)), "result": result, "recalculation": "matches"}
         if include_current_use:
             frozen = self.read_watch(result["request"]["watch_ref"], reader=reader)

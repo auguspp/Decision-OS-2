@@ -13,6 +13,9 @@ MAX_HISTORY = 32  # Explicit bounded replay, not a permanent monitoring service.
 
 
 def validate_watch(payload):
+    if isinstance(payload, dict) and payload.get("schema") == "odds-watch-v3":
+        from decision_kernel.domain.full_watch import validate_watch as validate_full
+        return validate_full(payload, validate_watch)
     if isinstance(payload, dict) and payload.get("schema") == "odds-watch-v2":
         from decision_kernel.domain.watch_conditions import validate_watch as validate_conditions
         return validate_conditions(payload, validate_watch)
@@ -108,7 +111,7 @@ def gate(watch, request, previous):
 
 
 def project(watch, request, observation, previous):
-    if watch["schema"] == "odds-watch-v2":
+    if watch["schema"] in ("odds-watch-v2", "odds-watch-v3"):
         from decision_kernel.domain.watch_conditions import project as project_conditions
         return project_conditions(watch, request, observation, previous, _project_single)
     return _project_single(watch, request, observation, previous)

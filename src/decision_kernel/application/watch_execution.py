@@ -207,8 +207,13 @@ class WatchExecution:
                 "watch_key": frozen["watch_sha256"], "effects": effects()}
 
     def freeze(self, payload, *, submission_id, reconcile=False):
+        from decision_kernel.application.full_watch import require_full
         record = self._plan(publication(payload, "plan"))
-        ref = self.records.put(record, payload["rights_basis"], submission_id, reconcile=reconcile)
+        def precondition(head):
+            frozen = OddsWatch(self.store, self.registry, clock=self.clock).read_watch(record["plan"]["watch_ref"])
+            require_full(frozen, self.store)
+        ref = self.records.put(record, payload["rights_basis"], submission_id,
+                               before_new_write=precondition, reconcile=reconcile)
         return {"reference": ref, "plan_sha256": record["plan_sha256"], "effects": effects()}
 
     @_native_read
@@ -220,9 +225,11 @@ class WatchExecution:
 
     @_native_read
     def preview(self, payload):
+        from decision_kernel.application.full_watch import require_full
         query = validate_query(payload)
         require(timestamp(query["at"]) <= timestamp(self._now()), "WATCH_EXECUTION_FUTURE_SELECTION")
         plan = self.read_plan(query["plan_ref"])["record"]["plan"]
+        require_full(OddsWatch(self.store, self.registry, clock=self.clock).read_watch(plan["watch_ref"]), self.store)
         selection = select_slot(plan, query["at"])
         head = self.store.backend.head()
         current = self.activity.current(plan["watch_ref"], snapshot=head)
@@ -247,6 +254,7 @@ class WatchExecution:
         return out
 
     def reserve(self, payload, *, submission_id=None, reconcile=False):
+        from decision_kernel.application.full_watch import require_full
         query = validate_query(publication(payload, "execution"))
         plan_record = self.read_plan(query["plan_ref"])["record"]
         plan = plan_record["plan"]
@@ -277,6 +285,8 @@ class WatchExecution:
         def precondition(at):
             if at != head:
                 raise Conflict("WATCH_EXECUTION_RESERVATION_SNAPSHOT_CHANGED")
+            frozen = OddsWatch(self.store, self.registry, clock=self.clock).read_watch(plan["watch_ref"])
+            require_full(frozen, self.store)
         ref = self.records.put(record, payload["rights_basis"], submission_id, before_new_write=precondition)
         return self._slot_receipt(ref, record)
 

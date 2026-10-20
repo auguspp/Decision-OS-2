@@ -2,6 +2,8 @@
 
 责任 #60；复用[原 Watch](odds-watch.md)、[活动管理](watch-activity.md)、原 Odds 算术与来源/Artifact 保管。`odds-watch-v2` 在同一冻结研究、同一窗口和同一政策下检查多个条件。原 `odds-watch-v1` 的定义、独立结果和活动历史继续按原语义重演；不自动升级任何已存 Watch。
 
+新默认用途由[Full 后持续 Watch](full-watch.md)的 `odds-watch-v3` 约束：数值条件绑定实际保存的 Odds 结果，经营条件绑定原 Full 重大未决问题及其对 Odds 的影响。本页说明 v3 复用的条件比较、证据与连续性语义；v1/v2 历史仍独立可读。
+
 ## 1. 同一 Watch 中保留每个条件的真值
 
 v2 沿原 `watch_id/basis/activation/window/data_policy/effect/limitations`，将单个 `condition` 改为 `conditions` 数组，并必须提供 `combination: "any" | "all"`。数组限 1—16 项，各有唯一 `condition_id`；顺序是冻结时的声明顺序，不表示投资优先级。
@@ -9,6 +11,8 @@ v2 沿原 `watch_id/basis/activation/window/data_policy/effect/limitations`，�
 同一次合格价格/概率恢复只计算一次，随后比较各条件。`any` 在有一项明确 true 时为 true，全部明确 false 时为 false，否则未知；`all` 在有一项明确 false 时为 false，全部明确 true 时为 true，否则未知。任一前提须复核时，组合转为 `review-required`。逐行未知仍显示，不能由组合的 true/false 抹掉。
 
 原 `window.end_after_trigger` 的 true 在 v2 指**组合曾明确满足后结束**，按显式 `combination` 决定。它不自动变成最后一个层级、通知一次或完成经营事件。原启用、窗口、最小间隔、固定目标日、现金日期及暂停/退役规则继续适用；修改定义需要新 Watch。
+
+Full 后持续 Watch 将该值固定为 false，避免任一浅层价格条件成立后丢失更深层价格和关键问题的后续检查。每条件首次触发的交付策略与整条 Watch 的结束条件是两个对象。
 
 ## 2. 数字条件和下一道边界
 
@@ -28,6 +32,8 @@ v2 沿原 `watch_id/basis/activation/window/data_policy/effect/limitations`，�
 `comparison` 为 `lte/gte`，阈值保持有限十进制字符串。原世界指标必须绑定同一冻结世界；当前公允价值仍不能作为未来回报。概率/回报使用原小数单位，`0.2` 表示20%，不自动年化。
 
 区间使用 `comparison: "between"`，以 `lower/upper/lower_inclusive/upper_inclusive` 替代 `threshold`。端点均明确，不默认为开区间或闭区间；上下反向、空区间、重复ID和非法数值拒绝。不同条件允许重叠，它们各自检查。
+
+真正的区间条件在跌出下沿时为 false。若原 Odds 的价带表达“到达上沿及更低价格都需复核”，应使用 `lte` 上沿并保留原价带的说明和更深层条件；不能直接改成 `between`，导致跌得更深反而变成未触及。这里不自动生成或修改研究价格边界。
 
 结果 `next_boundaries` 按同一个 `metric/world_id` 分组，分别给出当前值以下、正好相等及以上的最近**已声明**边界，含原条件ID、端点角色、是否包含及精确距离。价格、各世界回报和概率不混排；未取得可用值时边界为未知，不沿用上一次的当前值。没有声明的方向返回 null，不编造下一档，也不据此给出买卖指令。
 

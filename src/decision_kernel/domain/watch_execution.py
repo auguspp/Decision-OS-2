@@ -117,7 +117,7 @@ def effects():
 
 def notice_intents(plan, check_ref, event):
     result = event["result"]
-    if result["schema"] == "odds-watch-check-v2":
+    if result["schema"] in ("odds-watch-check-v2", "odds-watch-check-v3"):
         candidates = [row for row in result["condition_results"] if row["status"] == "first-trigger"]
     else:
         candidates = [{"condition_id": None, "status": result["status"]}] if result["status"] == "first-trigger" else []

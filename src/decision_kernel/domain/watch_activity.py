@@ -63,7 +63,7 @@ def summarize(before, result):
         if key: summary[key] += 1
         summary["last_check_at"] = result["request"]["checked_at"]
         summary["last_check_status"] = result["status"]
-        if result["schema"] == "odds-watch-check-v2":
+        if result["schema"] in ("odds-watch-check-v2", "odds-watch-check-v3"):
             # Group truth and each declared condition have distinct histories.
             # Seeded standalone checks carry control state, never these counts.
             previous = {row["condition_id"]: row for row in summary.get("condition_summaries", [])}

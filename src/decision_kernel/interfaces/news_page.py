@@ -124,7 +124,7 @@ NAVIGATION_JS = r"""
  }
  const h=N.history;root.append(el('h3','历史版本与完整候选范围'),el('p',`完整候选 ${h.total_candidates}；扫描 ${h.scanned_candidates}；已列出 ${h.listed_candidates}；无效 ${h.invalid_candidates}。本页 offset ${h.offset}，返回 ${h.returned}，仅本页覆盖。`),el('p',`固定 records 快照 ${h.snapshot}。历史候选尚未经全部依赖回放，列表存在不证明可读。`,'muted'));
  for(const row of h.items){const box=el('div',undefined,'card');box.append(el('p',`${row.kind==='window'?'观察窗口':'已存发行版'} · ${fmt(row.original_time)} · ${row.status}`));
-  if(row.open_request)box.append(request('导出精确历史读取请求',row.open_request));else box.append(el('p',row.error||'候选不可读','banner'));
+  if(row.open_request)box.append(request('导出精确历史读取请求',row.open_request));else box.append(el('p',row.read_status==='legacy-offline-reader-only'?'旧内联窗口已核保管表示与原日期；原离线入口可读，但本工作台未重放全部来源依赖，不导出不可执行的请求。':row.error||'候选不可读','banner'));
   const d=el('details');d.append(el('summary','原引用'),el('pre',JSON.stringify(row.reference||row.path,null,2)));box.append(d);root.append(box);}
  const bar=el('div',undefined,'bar');if(N.next_plan)bar.append(request('导出下一历史页请求',{operation:'latest-desk',plan:N.next_plan}));bar.append(request('导出显式刷新请求',{operation:'latest-desk',plan:N.refresh_plan}));root.append(bar);
  root.append(el('p','历史翻页保持原快照。刷新才重新发现；没有自动打开、更新来源或保存选择。','muted'));

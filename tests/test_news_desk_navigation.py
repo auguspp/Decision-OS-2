@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from decision_kernel.application import news_desk_navigation as nav, brief_delivery, brief_discovery
+from decision_kernel.application import news_desk_navigation as nav, brief_delivery, brief_discovery, news_rolling
 from decision_kernel.application.news_rolling_index import rolling_index
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.domain.records import MissingObject, RecordError, digest, encoded
@@ -30,6 +30,13 @@ def retained_window(store, name="one", *, as_of=OLD, observed="2026-10-16T10:00:
     index = rolling_index(store.read_source, [batch], as_of=as_of)
     ref = save(store, "news-roll-" + name, index)
     return ref, batch, index
+
+
+def retained_legacy_window(store, name="legacy", *, as_of=OLD,
+                           observed="2026-10-16T10:00:00Z", predecessor=None):
+    batch = save(store, "legacy-batch-" + name, window(observed, failed=True))
+    value = news_rolling.rolling_news(store.read_source, [batch], as_of=as_of, predecessor=predecessor)
+    return save(store, "news-roll-" + name, value), batch, value
 
 
 def retained_edition(store, ref, name="one", *, cutoff=OLD, attention=False):
@@ -198,3 +205,78 @@ def test_selected_publication_block_is_not_replaced_with_preview_or_older_editio
     assert model is None and result["latest_saved_edition"]["status"] == "selected-edition-unavailable"
     assert result["latest_saved_edition"]["error"] == "NEWS_EDITION_PUBLICATION_NOT_CONFIRMED"
     assert result["display"]["status"] == "unavailable"
+
+
+def test_valid_inline_history_preserves_denominator_and_newer_index_uses_original_replay(store):
+    first, _, _ = retained_legacy_window(store, "legacy-first")
+    second, _, _ = retained_legacy_window(store, "legacy-successor", as_of="2026-10-16T13:00:00Z",
+        observed="2026-10-16T11:00:00Z", predecessor=first)
+    newest, _, index = retained_window(store, "new-index", as_of="2026-10-19T12:00:00Z",
+                                       observed="2026-10-19T10:00:00Z", capture=True)
+    result, model = read(store)
+    latest, history = result["latest_window"], result["history"]
+    assert latest["complete"] is True and latest["failures"] == []
+    assert latest["total_candidates"] == latest["scanned"] == latest["valid_candidates"] == 3
+    assert latest["reference"]["manifest"]["path"] == newest.manifest.path
+    assert latest["snapshot_schema"] == "dos2-news-rolling-index-v1"
+    assert latest["dependency_replay"] == "verified-exact-selected-batches"
+    assert history["total_candidates"] == history["scanned_candidates"] == history["listed_candidates"] == 3
+    assert history["invalid_candidates"] == 0 and history["inventory_complete"] is True
+    old = [row for row in history["items"] if row.get("snapshot_schema") == news_rolling.SCHEMA]
+    assert {row["reference"]["manifest"]["path"] for row in old} == {first.manifest.path, second.manifest.path}
+    assert {row["original_time"] for row in old} == {"2026-10-16T12:00:00+00:00", "2026-10-16T13:00:00+00:00"}
+    assert all(row["status"] == "candidate-metadata-verified" and row["open_request"] is None
+               and row["read_status"] == "legacy-offline-reader-only" for row in old)
+    assert result["display"]["status"] == "retained-window-preview-not-saved"
+    assert model["saved_reference"] is None and model["edition"]["attention_state"] == []
+    assert model["edition"]["plan"]["baseline"] is None and model["edition"]["plan"]["attention"] == []
+    assert model["edition"]["plan"]["cutoff"] == index["as_of"]
+    assert model["edition"]["window"]["index_sha256"] == index["index_sha256"]
+    assert result["display"]["clocks"]["last_successful_capture_at"] == "2026-10-19T10:00:00+00:00"
+
+
+@pytest.mark.parametrize("damage", ["digest", "unknown-schema"])
+def test_invalid_inline_candidate_still_blocks_complete_discovery_even_when_older(store, damage):
+    _, _, value = retained_legacy_window(store)
+    bad = deepcopy(value)
+    if damage == "digest":
+        bad["rolling_sha256"] = "0" * 64
+    else:
+        bad["schema"] = "dos2-news-rolling-unknown"
+        bad["rolling_sha256"] = digest(encoded({k: v for k, v in bad.items() if k != "rolling_sha256"}))
+    invalid = save(store, "news-roll-damaged-legacy", bad)
+    retained_window(store, "new-index", as_of="2026-10-19T12:00:00Z", observed="2026-10-19T10:00:00Z")
+    result, model = read(store)
+    assert model is None and result["status"] == "partial"
+    latest, history = result["latest_window"], result["history"]
+    assert latest["complete"] is False and latest["reference"] is None
+    assert latest["total_candidates"] == latest["scanned"] == history["listed_candidates"] == 3
+    assert latest["valid_candidates"] == 2 and history["invalid_candidates"] == 1
+    assert latest["failures"][0]["path"] == invalid.manifest.path
+    assert latest["failures"][0]["error"] == "NEWS_WINDOW_CANDIDATE_UNREADABLE"
+    assert history["items"][-1]["open_request"] is None
+
+
+@pytest.mark.parametrize("legacy_as_of", ["2026-10-19T13:00:00Z", "2026-10-19T12:00:00Z"])
+def test_selected_inline_window_is_not_readable_by_desk_and_never_falls_back(store, legacy_as_of):
+    compact, _, _ = retained_window(store, "zzz-index", as_of="2026-10-19T12:00:00Z",
+                                    observed="2026-10-19T10:00:00Z")
+    saved, _ = retained_edition(store, compact, cutoff="2026-10-19T12:00:00Z", attention=True)
+    legacy, _, value = retained_legacy_window(store, "aaa-inline", as_of=legacy_as_of,
+                                            observed="2026-10-19T11:00:00Z")
+    assert news_rolling.read_rolling(value)["selected_count"] > 0  # Existing offline contract remains valid.
+    result, model = read(store)
+    latest = result["latest_window"]
+    assert latest["complete"] is True and latest["valid_candidates"] == latest["total_candidates"] == 2
+    assert latest["reference"]["manifest"]["path"] == legacy.manifest.path
+    assert latest["latest_as_of"] == value["as_of"] and latest["snapshot_schema"] == news_rolling.SCHEMA
+    assert latest["status"] == "selected-not-readable" and "clocks" not in latest
+    assert latest["dependency_replay"] == "not-performed-for-legacy-materialized-window"
+    assert latest["error"] == "NEWS_LEGACY_WINDOW_DESK_REPLAY_UNAVAILABLE"
+    assert latest["same_as_of_count"] == (2 if legacy_as_of.endswith("12:00:00Z") else 1)
+    assert result["latest_saved_edition"]["reference"]["path"] == saved.path
+    assert result["latest_saved_edition"]["dependency_replay"] == "verified-original-edition-and-dependencies"
+    assert model is None and result["status"] == "partial"
+    assert result["display"] == {"status": "unavailable", "reference": None}
+    old = next(row for row in result["history"]["items"] if row.get("snapshot_schema") == news_rolling.SCHEMA)
+    assert old["open_request"] is None and old["read_status"] == "legacy-offline-reader-only"

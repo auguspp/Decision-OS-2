@@ -14,7 +14,7 @@ from decision_kernel.infrastructure import github_store as remote, runtime_publi
 from decision_kernel.interfaces import news_rolling_cli as host, news_delivery_cli as delivery
 from test_github_transport import Response
 from test_news_read_budget import sources, setup, transport
-from test_news_desk_navigation import retained_window, retained_edition
+from test_news_desk_navigation import retained_window, retained_edition, retained_legacy_window
 from test_news_rolling import save
 
 CODE = "a" * 40
@@ -288,3 +288,95 @@ def test_workflow_keeps_original_default_and_advanced_contract_with_readonly_lat
     assert 'test "$GITHUB_SHA" = "$EXPECTED_CODE"' in text
     assert "r['run_attempt']==1" in text and "r['event']=='push'" in text
     assert '"$GITHUB_STEP_SUMMARY"' in text
+
+
+@pytest.mark.parametrize("selected", ["index", "legacy"])
+def test_native_mixed_representations_keep_scope_and_only_export_replayed_index(native, tmp_path, selected):
+    model, store, api, inputs, wire, *_ = native
+    event(tmp_path, {**inputs, "plan": "{}"})
+    first, _, _ = retained_legacy_window(store, "legacy-first", as_of="2026-10-16T11:00:00Z")
+    retained_legacy_window(store, "legacy-second", as_of="2026-10-16T12:00:00Z", predecessor=first)
+    newest, _, index = retained_window(store, "new-index", as_of="2026-10-19T12:00:00Z",
+                                       observed="2026-10-19T10:00:00Z", capture=True)
+    if selected == "legacy":
+        newest, _, _ = retained_legacy_window(store, "newest-inline", as_of="2026-10-19T13:00:00Z",
+                                             observed="2026-10-19T11:00:00Z")
+    before = store.backend.head()
+    out = tmp_path / "mixed-representations"
+    assert host.main(["build", "--out", str(out)]) == 0
+    report = json.loads((out / "desk-report.json").read_bytes())
+    navigation = json.loads((out / "navigation.json").read_bytes())
+    html = (out / "news-desk.html").read_text()
+    embedded = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>', html, re.S).group(1))
+    assert embedded["navigation"] == navigation
+    windows = 4 if selected == "index" else 5
+    assert navigation["latest_window"]["total_candidates"] == navigation["latest_window"]["valid_candidates"] == windows
+    assert navigation["history"]["total_candidates"] == windows + 1 and navigation["history"]["invalid_candidates"] == 0
+    assert navigation["latest_window"]["reference"]["manifest"]["path"] == newest.manifest.path
+    old = [r for r in navigation["history"]["items"] if r.get("read_status") == "legacy-offline-reader-only"]
+    assert len(old) == (2 if selected == "index" else 3) and all(r["open_request"] is None for r in old)
+    assert "原离线入口可读" in html
+    files = {p.name for p in out.iterdir()}
+    base = {"desk-report.json", "plan.json", "navigation.json", "news-desk.html", "news-summary.md"}
+    if selected == "index":
+        assert report["content_status"] == "readable"
+        assert navigation["display"]["status"] == "retained-window-preview-not-saved"
+        assert files == base | {"edition.json", "news-brief.md", "quick-candidates.json"}
+        edition = json.loads((out / "edition.json").read_bytes())
+        assert edition == embedded["edition"] and embedded["saved_reference"] is None
+        assert edition["attention_state"] == edition["plan"]["attention"] == [] and edition["plan"]["baseline"] is None
+        assert edition["plan"]["cutoff"] == index["as_of"] and edition["window"]["index_sha256"] == index["index_sha256"]
+        assert (out / "news-brief.md").read_bytes() == edition["brief_markdown"].encode()
+    else:
+        assert report["content_status"] == "partial" and navigation["latest_window"]["status"] == "selected-not-readable"
+        assert files == base and embedded["edition"] is None and embedded["articles"] == []
+        assert embedded["saved_reference"] is None and navigation["display"]["reference"] is None
+    assert report["write"] == "not-requested" and report["source_http_requests"] == model.writes == 0
+    assert store.backend.head() == before and report["binding_rechecked"] is True
+    assert report["source_reads"]["byte_limit"] == host.MAX_SOURCE_CACHE_BYTES == 8388608
+    assert report["source_reads"]["serialized_bytes"] <= 8388608
+    if selected == "index":
+        assert report["source_reads"]["reused_source_reads"] > 0
+    # A selected legacy window has no Desk replay; zero cache hits is valid.
+    assert report["storage_api_requests"] == api._requests == len(wire.calls) <= remote.MAX_REQUESTS == 512
+
+
+def test_legacy_discovery_native_403_is_terminal_after_prior_verified_cache(native, tmp_path, monkeypatch):
+    model, store, api, _, wire, *_ = native
+    legacy, _, _ = retained_legacy_window(store, "zzz-legacy")
+    blob = model.git._run("rev-parse", legacy.manifest.commit + ":" +
+                         legacy.manifest.path.replace("manifest.json", "content.txt")).stdout.decode().strip()
+    original_open, original_request, original_reader = wire.open, api.request, host._SourceReads
+    failed, after, errors, readers = [], [], [], []
+    def reader(*args, **kwargs):
+        value = original_reader(*args, **kwargs)
+        readers.append(value)
+        return value
+    def once(request, timeout):
+        if failed:
+            after.append(request.full_url)
+        if not failed and request.full_url.endswith("/git/blobs/" + blob):
+            failed.append(request.full_url)
+            raise HTTPError(request.full_url, 403, "Synthetic native denial", {}, None)
+        return original_open(request, timeout)
+    def observed(*args, **kwargs):
+        try:
+            return original_request(*args, **kwargs)
+        except StoreUnavailable as error:
+            errors.append(error)
+            raise
+    monkeypatch.setattr(host, "_SourceReads", reader)
+    wire.open, api.request = once, observed
+    out = tmp_path / "legacy-denied"
+    with pytest.raises(StoreUnavailable, match="REMOTE_NOT_AUTHORIZED") as actual:
+        host.build_on_host(out)
+    assert actual.value is errors[0] and len(errors) == len(readers) == 1
+    reads = readers[0]
+    assert reads.usage()["cached_references"] > 0
+    previous = api._requests
+    cached_ref = json.loads(next(iter(reads._cache)))
+    with pytest.raises(StoreUnavailable) as cached:
+        reads(cached_ref)
+    assert cached.value is actual.value and api._requests == previous
+    assert failed and after == [] and model.writes == 0
+    assert only_failure(out)["error_code"] == "REMOTE_NOT_AUTHORIZED"

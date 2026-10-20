@@ -20,6 +20,8 @@
 
 两次完整主表查询不等于两次HTTP。实际分页或失败尝试按回执单独计数；全部scope来自完整结果，不能用已有六股过滤主表、抹去不合格行或固定原5226分母求绿。新主表不承担BSE、D/P状态或历史时点证券全集资格，现役 current-L 的幸存偏差和隔离规则保持。
 
+完整旧FT与日更证明仍由正常reader逐项恢复。行情reader在原外层读取作用域取得并验证独立GitSnapshot后，使用共享 `infrastructure/native_git_memo.py` 复用同一快照内已成功的完整SHA原生查询；沿用[现役有界缓存规则](../research/watch-history.md#有界原件读取)的8MiB/32,768条目上限，不缓存失败、可变ref或权限。嵌套读取共用该作用域，退出或异常时清空并使视图失活，下一外层重新取得快照。退出仍由原remote owner和同一API完成实时绑定/可达性检查；缓存不替代原路径、内容摘要、历史语义或权限校验，也不增加来源与Store预算。
+
 ## 持久化、分页与停止
 
 v4 仍使用 `daily-market-cycle-YYYYMMDD-rNNN` 的原不可变控制链，最大revision为11，单条仍不超过12KiB。两所主表各持有一个预留行，记录 pending / in-flight / complete / failed、一次完整查询的预留、最终query引用及其完整checkpoint引用。控制只持引用，不复制表格，也不另建当前状态文件。

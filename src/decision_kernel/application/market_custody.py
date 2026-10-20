@@ -32,12 +32,17 @@ from decision_kernel.application.shibor_inputs import SHIBOR_FIELDS, SHIBOR_READ
 from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, SESSION_REQUIRED
 
 from decision_kernel.application.market_suspension_inputs import SUSPENSION_FIELDS
+from decision_kernel.application.auction_inputs import (
+    AUCTION_READING_SCHEMA, AUCTION_REQUIRED, AUCTION_OPTIONAL, POOL_FIELDS, AUCTION_FIELDS,
+)
 
 QUERY_SCHEMA = "market-query-custody-v1"
 READING_SCHEMA = "market-reading-custody-v1"
 MAX_QUERIES = 32
 MAX_PAGES = 100
 MARKET_FIELDS = {
+    "limit_list_d": POOL_FIELDS,
+    "stk_auction": AUCTION_FIELDS,
     "suspend_d": SUSPENSION_FIELDS,
     "shibor": SHIBOR_FIELDS,
     "us_tradecal": US_CALENDAR_FIELDS,
@@ -69,6 +74,8 @@ def _map_results(payload, transform):
             required = SHIBOR_REQUIRED
         if kind == "us-index":
             required = US_INDEX_REQUIRED
+        if kind == "auction":
+            required = AUCTION_REQUIRED
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
@@ -76,11 +83,18 @@ def _map_results(payload, transform):
             extras |= {"suspension_results", "factor_supplements"}
         if kind == "session":
             extras |= {"suspension_result"}
+        if kind == "auction":
+            extras = AUCTION_OPTIONAL
         if kind in ("stock", "sector", "concept", "session"):
             extras |= {"reference_policy"}
         require(isinstance(value, dict) and required <= value.keys() <= required | extras, "MARKET_CUSTODY_SURFACE")
-        for field in ("calendar_result", "catalog_result", "rate_result", "suspension_result"):
+        fields = ("calendar_result", "catalog_result", "rate_result", "suspension_result")
+        if kind == "auction":
+            fields += ("pool_result", "auction_result", "close_result")
+        for field in fields:
             if field in value:
+                if kind == "auction" and value[field] is None:
+                    continue
                 value[field] = transform(value[field], prefix + [field])
         for field in ("stock_results", "master_results", "factor_results", "member_results", "index_results", "calendar_results", "session_results", "suspension_results"):
             if field not in value:
@@ -112,8 +126,9 @@ def _map_results(payload, transform):
             "session" if schema == SESSION_SCHEMA else
             "shibor" if schema == SHIBOR_READING_SCHEMA else
             "us-index" if schema == US_INDEX_READING_SCHEMA else
+            "auction" if schema == AUCTION_READING_SCHEMA else
             "raw" if schema == "relay-stock-reading-v1" else "stock")
-        require(kind in ("raw", "stock", "sector", "concept", "us-index", "shibor", "session"), "MARKET_CUSTODY_KIND")
+        require(kind in ("raw", "stock", "sector", "concept", "us-index", "shibor", "session", "auction"), "MARKET_CUSTODY_KIND")
         one(output, kind, [])
         output["schema"] = schema
         if schema == "relay-ths-group-reading-v1":

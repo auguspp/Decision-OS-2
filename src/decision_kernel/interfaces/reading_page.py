@@ -93,6 +93,7 @@ from decision_kernel.interfaces.reading_industry_page import CSS as INDUSTRY_CSS
 
 from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS as MARKET_JS
 from decision_kernel.interfaces.reading_global_page import CSS as GLOBAL_CSS, JS as GLOBAL_JS
+from decision_kernel.interfaces.reading_auction_page import CSS as AUCTION_CSS, JS as AUCTION_JS
 
 from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
 from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_CSS, JS as DISCOVERY_JS
@@ -117,6 +118,8 @@ CSS += STRUCTURE_CSS
 JS += STRUCTURE_JS
 CSS += GLOBAL_CSS
 JS += GLOBAL_JS
+CSS += AUCTION_CSS
+JS += AUCTION_JS
 
 
 def render_page(model):
@@ -144,11 +147,14 @@ def render_page(model):
     global_nav = '<a href="#global-context">全球背景</a>' if "global_context" in model else ''
     global_panel = ('<section class="panel" id="global-context"><h2>全球背景：美股指数与 Shibor</h2>'
                     '<div id="global-content"></div></section>') if "global_context" in model else ''
+    auction_nav = '<a href="#auction">竞价原池与同日接续</a>' if "auction" in model else ''
+    auction_panel = ('<section class="panel" id="auction"><h2>竞价原池与同日收盘</h2>'
+                     '<div id="auction-content"></div></section>') if "auction" in model else ''
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
@@ -158,6 +164,7 @@ def render_page(model):
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>
 <section class="panel" id="market"><h2>A 股市场、原价与复权</h2><div id="market-content"></div></section>
 {global_panel}
+{auction_panel}
 <section class="panel" id="discovery"><h2>行业、概念与独立个股状态发现</h2><div id="discovery-content"></div></section>
 {structure_panel}
 <section class="panel" id="industry"><h2>产业观察与公司经营角色</h2><div id="industry-content"></div></section>

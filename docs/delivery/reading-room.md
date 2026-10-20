@@ -22,6 +22,8 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 已保管美股指数与 Shibor 使用可选 `global_context` 的 `us_indices` / `shibor` 两槽，见[全球背景阅读](reading-global.md)。两族原完整模型、源日期、单位、分母和版本分别保留，页面分页不隐藏未选中项缺口。沿原来源公开确认及可信 Public 部署授权；不改变 A 股 guard、不采集新数据，也不代签六族覆盖或自然更新。
 
+原池竞价观察使用可选 `auction` 计划，见[竞价原池与同日接续](opening-auction.md)。完整 U/D/Z 原行和独立 U 五组先恢复再分页；同日原值可读与原请求/接收均达到 T 15:30 的完成收盘分别显示。原分母、条件和 cohort 版本不随 close、筛选或翻页改写，缺旧时钟/截断证据保持未知；沿同一来源权限、原整次预算和终态输出门，不新增采集或交易职责。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。

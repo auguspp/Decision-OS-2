@@ -43,6 +43,8 @@ def preflight(operation, payload, *, public=True):
             "ROOM_PUBLIC_DECISION_PREPARATION_NOT_CONFIRMED")
     require(not plan.get("outcome") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_OUTCOME_NOT_CONFIRMED")
+    require(not plan.get("structure") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_STRUCTURE_NOT_CONFIRMED")
 
 
 def perform(store, payload, *, public=True, market_registry=None):

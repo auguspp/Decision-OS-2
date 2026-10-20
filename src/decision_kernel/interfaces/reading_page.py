@@ -100,6 +100,7 @@ from decision_kernel.interfaces.reading_participant_page import CSS as PARTICIPA
 from decision_kernel.interfaces.reading_calendar_page import CSS as CALENDAR_CSS, JS as CALENDAR_JS
 from decision_kernel.interfaces.reading_decision_page import CSS as DECISION_CSS, JS as DECISION_JS
 from decision_kernel.interfaces.reading_outcome_page import CSS as OUTCOME_CSS, JS as OUTCOME_JS
+from decision_kernel.interfaces.reading_structure_page import CSS as STRUCTURE_CSS, JS as STRUCTURE_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
 CSS += PARTICIPANT_CSS
@@ -111,6 +112,8 @@ JS += CALENDAR_JS + '\nrenderCalendar();\n'
 JS += DECISION_JS + '\nrenderDecisionPreparation();\n'
 CSS += OUTCOME_CSS
 JS += OUTCOME_JS
+CSS += STRUCTURE_CSS
+JS += STRUCTURE_JS
 
 
 def render_page(model):
@@ -132,11 +135,14 @@ def render_page(model):
     outcome_nav = '<a href="#outcome">原预测兑现</a>' if "outcome" in model else ""
     outcome_panel = ('<section class="panel" id="outcome"><h2>原预测兑现与固定交易窗口复核</h2>'
                      '<div id="outcome-content"></div></section>') if "outcome" in model else ""
+    structure_nav = '<a href="#structure">收盘价格结构</a>' if model.get("structure") else ''
+    structure_panel = ('<section class="panel" id="structure"><h2>收盘区间与右侧确认</h2>'
+                       '<div id="structure-content"></div></section>') if model.get("structure") else ''
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a><a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
@@ -146,6 +152,7 @@ def render_page(model):
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>
 <section class="panel" id="market"><h2>A 股市场、原价与复权</h2><div id="market-content"></div></section>
 <section class="panel" id="discovery"><h2>行业、概念与独立个股状态发现</h2><div id="discovery-content"></div></section>
+{structure_panel}
 <section class="panel" id="industry"><h2>产业观察与公司经营角色</h2><div id="industry-content"></div></section>
 {participant_panel}
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>

@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "decision_preparation", "outcome"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -69,6 +69,10 @@ def plan_input(value):
     if value.get("outcome") is not None:
         from decision_kernel.application.reading_outcome import outcome_plan
         result["outcome"] = outcome_plan(value["outcome"])
+    if value.get("structure") is not None:
+        from decision_kernel.application.close_structure import plan_input as structure_plan
+        result["structure"] = structure_plan(value["structure"])
+        require(clock(result["structure"]["as_of"]) <= clock(value["as_of"]), "ROOM_STRUCTURE_CLOCK_AFTER_READING")
     return result
 
 
@@ -159,6 +163,7 @@ class ReadingRoom:
         require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
         require(not plan.get("decision_preparation") or decision_export is True, "ROOM_PUBLIC_DECISION_PREPARATION_NOT_CONFIRMED")
         require(not plan.get("outcome") or outcome_export is True, "ROOM_PUBLIC_OUTCOME_NOT_CONFIRMED")
+        require(not plan.get("structure") or market_export is True, "ROOM_PUBLIC_STRUCTURE_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
@@ -354,6 +359,21 @@ class ReadingRoom:
                 outcome = {"plan": plan["outcome"], **failure}
             result["outcome"] = outcome
             partial = partial or outcome["status"] != "readable" or outcome.get("partial", False)
+        if plan.get("structure"):
+            from decision_kernel.application.close_structure import fatal_read_error, open_structure
+            from decision_kernel.observations.market_daily import MarketInputError
+            try:
+                structure = open_structure(self.store, plan["structure"], registry=self.market_registry)
+            except (RecordError, MarketInputError, KeyError, TypeError) as error:
+                if fatal_read_error(error):
+                    raise
+                failure = ({"status": "not-included", "error": "STRUCTURE_DISPLAY_BOUND"}
+                           if str(error) == "STRUCTURE_DISPLAY_BOUND" else _failure(error))
+                structure = {"reference": plan["structure"]["reference"], "plan": plan["structure"],
+                    "open_request": {"operation": "read-source", "payload": deepcopy(plan["structure"]["reference"])},
+                    **failure}
+            result["structure"] = structure
+            partial = partial or structure["status"] != "readable" or structure.get("partial", False)
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

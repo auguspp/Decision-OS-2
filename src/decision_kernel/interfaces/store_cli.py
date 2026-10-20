@@ -10,6 +10,7 @@ import sys
 from decision_kernel.interfaces import research_commands, delivery_commands, odds_commands
 from decision_kernel.interfaces import decision_preparation_commands
 from decision_kernel.interfaces import outcome_review_commands
+from decision_kernel.interfaces import close_structure_commands
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef
@@ -28,6 +29,7 @@ def configure(commands) -> None:
     odds_commands.configure(actions)
     decision_preparation_commands.configure(actions)
     outcome_review_commands.configure(actions)
+    close_structure_commands.configure(actions)
     actions.add_parser("init-synthetic", help="create a NEW synthetic-only store; never a production target")
     for command in ("put-source", "submit-revision"):
         action = actions.add_parser(command)
@@ -109,6 +111,8 @@ def execute(args: argparse.Namespace) -> int:
                 result = research_commands.execute(args, store, _load)
             elif args.store_command == outcome_review_commands.COMMAND:
                 result = outcome_review_commands.execute(args, store, _load)
+            elif args.store_command == close_structure_commands.COMMAND:
+                result = close_structure_commands.execute(args, store, _load)
             elif args.store_command == "put-source":
                 result = asdict(store.put_source(args.submission_id, SourceInput.from_dict(_load(args.input))))
             elif args.store_command == "submit-revision":

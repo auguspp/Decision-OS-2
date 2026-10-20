@@ -82,10 +82,14 @@ GitHub 原生工作流产物可能公开。因此原 `desk` 的非空新选择�
 
 | 对象 | 发现范围与顺序 | 合格读取 |
 |---|---|---|
-| 最新正常宿主保管窗口 | 同一固定 records snapshot 的 `source-views/news-roll-*/<version>/manifest.json`；最多64个候选；按原 index.as_of 取最大 | 路径仅提名；核完整 SourceRef、manifest/body/index摘要，再通过原 `restore_index` 重建全部指定批次 |
+| 最新正常宿主保管窗口 | 同一固定 records snapshot 的 `source-views/news-roll-*/<version>/manifest.json`；最多64个候选；按原表示的 as_of 取最大 | 路径仅提名；核完整 SourceRef、manifest/body，再按实际 schema 调用原 `verify_index` 或 `verify_rolling`；选中的 compact index 仍通过原 `restore_index` 重建全部指定批次 |
 | 最后已保存发行版 | 原 `research/artifacts/news-edition-*`；继承128个候选边界；按原声明 cutoff 取最大 | 沿原 Brief reader 验文档、窗口、必要父版和研究／产业扩展；cutoff 不代表来源新鲜度 |
 
 同一时点的平局明确计数，按路径升序确定展示，不解释为保存先后或经济优先级。任意自定义名称仍能按原确切引用打开，不暗称已进入这个目录。
+
+正常 `news-roll-*` 历史包含紧凑 `dos2-news-rolling-index-v1` 和旧内联 `dos2-news-rolling-v1` 两种真实表示。合法旧内联窗口沿原 `verify_rolling` 核字段、摘要、时钟、观察与缺口，参与完整候选分母、历史和原 as_of 排序；不改称紧凑 index，也不因为年代较旧而忽略。未知 schema、坏摘要或无效内容仍进入 failures 并阻断完整发现，不能通过改格式名称或删除历史修复。
+
+现役 News Desk 的窗口恢复仍只支持紧凑 index 的确切批次回放。若最大 as_of（或原路径平局规则）选中旧内联窗口，保留其真实 Ref/as_of/schema，并明确 `selected-not-readable / NEWS_LEGACY_WINDOW_DESK_REPLAY_UNAVAILABLE`；目录枚举可以完整，但不导出正文、edition 或假 preview，也不回退较旧 index/已存发行版。原 `news_rolling_cli read --window` 可验证并分页读取旧内联文件，未独立回放全部依赖，不能替代 Desk 资格。历史旧行因此只保留精确引用、原时点和离线读取说明，不导出当前 native `desk/read` 会拒绝的请求。较新 compact index 被选中时，原完整回放、公开资格、fatal latch 和预览规则全部保留。
 
 当最新保管窗口已有对应合格发行版，恢复真实正文与 Attention；原 Ref 保留，不因本次目录 snapshot 改写原文。如果较新窗口尚无对应已存 Desk，沿原构建器生成 `retained-window-preview-not-saved`，`cutoff` 固定为该窗口原 `as_of`、无新选择、无伪造 baseline、`saved_reference=null`。旧发行版仍独立具名并可导出原精确读取请求；不会自动承接其选择。
 

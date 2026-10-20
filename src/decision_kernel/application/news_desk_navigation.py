@@ -8,7 +8,7 @@ from __future__ import annotations
 from copy import deepcopy
 import re
 
-from decision_kernel.application import brief_delivery, brief_discovery, news_rolling_index
+from decision_kernel.application import brief_delivery, brief_discovery, news_rolling, news_rolling_index
 from decision_kernel.application.news_rolling import clock, reference
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.domain.records import RecordError, SHA, SourceRef, encoded, digest, require
@@ -55,6 +55,20 @@ def _check_reader(reader, error=None):
         raise error
 
 
+def _window_candidate(reader, ref):
+    """Classify original retained representations, without upgrading their use."""
+    value = news_rolling._load(reader, ref)
+    if isinstance(value, dict) and value.get("schema") == news_rolling.SCHEMA:
+        news_rolling.verify_rolling(value)
+        details = {"rolling_sha256": value["rolling_sha256"], "entry_count": len(value["entries"])}
+    else:
+        # Unknown schemas and damaged indexes remain errors, never legacy fallbacks.
+        news_rolling_index.verify_index(value)
+        details = {"index_sha256": value["index_sha256"], "entry_count": value["entry_count"]}
+    return {"reference": ref, "as_of": value["as_of"], "window_start": value["window_start"],
+            "snapshot_schema": value["schema"], **details}
+
+
 def discover_windows(store, reader, *, snapshot):
     backend = store.backend
     backend.check_commit(snapshot)
@@ -70,10 +84,7 @@ def discover_windows(store, reader, *, snapshot):
         ref = None
         try:
             ref = reference(SourceRef(backend.reference(snapshot, path)))
-            index = news_rolling_index.open_index(reader, ref)
-            result["candidates"].append({"reference": ref, "as_of": index["as_of"],
-                "window_start": index["window_start"], "index_sha256": index["index_sha256"],
-                "entry_count": index["entry_count"]})
+            result["candidates"].append(_window_candidate(reader, ref))
         except (RecordError, KeyError, TypeError) as error:
             _check_reader(reader, error)
             result["failures"].append({"reference": ref, "path": path,
@@ -89,7 +100,7 @@ def discover_windows(store, reader, *, snapshot):
         return {**result, "status": "no-retained-window", "complete": True}
     chosen = candidates[0]
     return {**result, "status": "selected", "complete": True, "reference": chosen["reference"],
-        "latest_as_of": chosen["as_of"],
+        "latest_as_of": chosen["as_of"], "snapshot_schema": chosen["snapshot_schema"],
         "same_as_of_count": sum(clock(row["as_of"]) == clock(chosen["as_of"]) for row in candidates),
         "tie_rule": "manifest-path-ascending-not-storage-order"}
 
@@ -136,6 +147,12 @@ def _history(windows, editions, plan, repository):
             row["open_request"] = ({"operation": "read-desk", "plan": {"reference": item["reference"]}}
                 if kind == "edition" else {"operation": "desk", "save": False, "plan": {
                     "window": item["reference"], "cutoff": item["as_of"], "kind": "adhoc", "attention": []}})
+            if kind == "window" and item["snapshot_schema"] == news_rolling.SCHEMA:
+                # Native desk/read require a compact index and exact batch replay.
+                # The old offline reader validates inline bytes only; do not export
+                # a host request which cannot consume this original representation.
+                row.update(snapshot_schema=item["snapshot_schema"], open_request=None,
+                           read_status="legacy-offline-reader-only")
             rows.append(row)
         rows.extend({"kind": kind, **deepcopy(failure), "original_time": None,
                      "open_request": None} for failure in collection["failures"])
@@ -202,7 +219,11 @@ def build_navigation(store, reader, value, *, now, authorize_document=None):
         _check_reader(reader)
         return found, logical
 
-    if windows["reference"] is not None:
+    if windows["reference"] is not None and windows["snapshot_schema"] == news_rolling.SCHEMA:
+        result["latest_window"].update(status="selected-not-readable",
+            dependency_replay="not-performed-for-legacy-materialized-window",
+            error="NEWS_LEGACY_WINDOW_DESK_REPLAY_UNAVAILABLE")
+    elif windows["reference"] is not None:
         try:
             latest_logical = news_rolling_index.restore_index(reader,
                 news_rolling_index.open_index(reader, windows["reference"]))

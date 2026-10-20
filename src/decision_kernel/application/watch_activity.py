@@ -9,13 +9,18 @@ from datetime import datetime, timezone, timedelta
 import json
 
 from decision_kernel.application.conditional_odds import ConditionalOdds, publication, record_artifact
-from decision_kernel.application.odds_watch import OddsWatch, _Sources
+from decision_kernel.application import watch_history as history_store
+from decision_kernel.application.odds_watch import OddsWatch, _Reads, _Sources
 from decision_kernel.domain.conditional_odds import day, shape, timestamp
 from decision_kernel.domain.odds_watch import project, validate_request
-from decision_kernel.domain.records import BlobRef, Conflict, MissingObject, RecordError, digest, encoded, require
-from decision_kernel.domain.research_artifacts import ARTIFACT_SCHEMA, artifact_reference
+from decision_kernel.domain.records import Conflict, MissingObject, RecordError, digest, encoded, require
+from decision_kernel.domain.research_artifacts import artifact_reference
 from decision_kernel.domain.watch_activity import (
     ACTIVITY_PREFIX, ACTIVITY_RECORD, MAX_EVENTS, blank_summary, summarize, validate_change, validate_check,
+)
+from decision_kernel.domain.watch_history import EVENT_SCHEMA, HISTORY_VERSION, MAX_SEGMENTS, SEGMENT_EVENTS, validate_history
+from decision_kernel.infrastructure.watch_snapshot import (
+    first_parent_change, first_parent_changes, verify_event_parent, watch_read_scope,
 )
 
 
@@ -53,14 +58,61 @@ class WatchActivity:
             if isinstance(exc, RecordError): raise
             raise RecordError("WATCH_ACTIVITY_POINTER_INVALID") from None
 
+    def _history_current(self, key, snapshot, reader, native):
+        """The v2 contract includes the original pointer's selection history."""
+        selected = self._current(key, snapshot, reader)
+        original = first_parent_change(native, snapshot, pointer_path(key))
+        if selected is None:
+            require(original is None, "WATCH_HISTORY_POINTER_MISSING")
+        else:
+            require(original == selected["commit"], "WATCH_HISTORY_SELECTION_LINEAGE_MISMATCH")
+        return selected
+
+    def _current_for_use(self, key, snapshot, reader):
+        """No new use may delete or downgrade an already adopted v2 lineage.
+
+        Exact v1 history reads keep their original replay. Only this current-use
+        gate checks prior pointer originals, without treating their summaries
+        as semantic proof. The one owned memo may expose its original backend;
+        no arbitrary facade or separate permission owner is substituted.
+        """
+        selected = self._current(key, snapshot, reader)
+        event = history_store.event_record(selected, reader) if selected else None
+        backend = self.store.backend
+        if type(backend) is _Reads:
+            backend = backend.original
+        with watch_read_scope(backend, snapshot) as native:
+            local = _Sources(native)
+            require(self._current(key, snapshot, local) == selected, "WATCH_ACTIVITY_HISTORY_BRANCH_MISMATCH")
+            if event is not None and event["schema"] == EVENT_SCHEMA:
+                selected = self._history_current(key, snapshot, local, native)
+                verify_event_parent(native, selected["commit"], event["snapshot"])
+            else:
+                for previous in first_parent_changes(native, snapshot, pointer_path(key),
+                                                     limit=MAX_SEGMENTS * SEGMENT_EVENTS):
+                    prior_ref = self._current(key, previous, local)
+                    if prior_ref is None:  # A native deletion remains in the complete change list.
+                        continue
+                    prior = history_store.event_record(prior_ref, local)
+                    require(prior["schema"] != EVENT_SCHEMA,
+                            "WATCH_HISTORY_POINTER_MISSING" if selected is None else "WATCH_HISTORY_FORMAT_DOWNGRADE")
+            return selected
+
     def current(self, reference, *, snapshot=None):
         reader = _Sources(self.store.backend)
         frozen = self._watch(reference, reader)
         at = snapshot or self.store.backend.head()
-        ref = self._current(frozen["watch_sha256"], at, reader)
+        ref = self._current_for_use(frozen["watch_sha256"], at, reader)
         return {"snapshot": at, "watch_key": frozen["watch_sha256"], "reference": ref}
 
     def _replay(self, tip, reader):
+        event = history_store.event_record(tip, reader)
+        if event["schema"] != EVENT_SCHEMA:
+            return self._replay_v1(tip, reader)
+        with watch_read_scope(self.store.backend) as native:
+            return history_store.replay(self, tip, _Sources(native), native)
+
+    def _replay_v1(self, tip, reader):
         """One linear replay, rather than recursively re-reading each check chain."""
         records, seen = [], set()
         ref = tip
@@ -96,14 +148,31 @@ class WatchActivity:
                             "check_status": event["result"]["status"] if event["result"] else None})
         return frozen, state, history
 
-    def _project(self, frozen, command, snapshot, before, reader):
+    def _project(self, frozen, command, snapshot, before, reader, *, history=None):
         kind, payload = command["kind"], command["input"]
         p = validate_change(payload) if kind == "change" else validate_check(payload)
+        if history is None:
+            require("history_version" not in p and not (before and before.get("history")),
+                    "WATCH_ACTIVITY_HISTORY_REGISTRATION_REQUIRED")
+        else:
+            history = validate_history(history)
+            if before is None:
+                require(kind == "change" and p["action"] == "register" and p.get("history_version") == HISTORY_VERSION,
+                        "WATCH_ACTIVITY_HISTORY_REGISTRATION_REQUIRED")
+            elif before.get("history") is None:
+                require(kind == "change" and p["action"] == "migrate" and p.get("history_version") == HISTORY_VERSION,
+                        "WATCH_ACTIVITY_HISTORY_REGISTRATION_REQUIRED")
+                require(before["summary"]["events"] < MAX_EVENTS - 1, "WATCH_HISTORY_LEGACY_LIMIT")
+            else:
+                require("history_version" not in p, "WATCH_ACTIVITY_HISTORY_ALREADY_REGISTERED")
+            if history["segment_index"] == MAX_SEGMENTS - 1 and history["event_index"] == SEGMENT_EVENTS - 1:
+                require(kind == "change" and p["action"] == "retire", "WATCH_ACTIVITY_LAST_SLOT_RESERVED_FOR_RETIRE")
         require(p["expected_event"] == (before["event_ref"] if before else None), "WATCH_ACTIVITY_PREDECESSOR_MISMATCH")
         at = p["at"] if kind == "change" else p["checked_at"]
         require(timestamp(at) >= timestamp(frozen["watch"]["activation"]["as_of"]), "WATCH_ACTIVITY_PRECEDES_WATCH")
         if before: require(timestamp(at) > timestamp(before["at"]), "WATCH_ACTIVITY_CLOCK_NOT_ADVANCING")
-        state = deepcopy(before) if before else {"state": None, "last_result": None, "last_check_ref": None,
+        state = deepcopy({k: v for k, v in before.items() if not k.startswith("_history_")}) if before else {
+                  "state": None, "last_result": None, "last_check_ref": None,
                   "summary": blank_summary(), "watch_ref": p["watch_ref"], "event_ref": None}
         result = None
         if kind == "change":
@@ -123,8 +192,9 @@ class WatchActivity:
                 if action == "pause":
                     require(state["state"] == "active", "WATCH_ACTIVITY_NOT_ACTIVE")
                     state["state"] = "paused"
-                elif action == "resume":
-                    require(state["state"] == "paused", "WATCH_ACTIVITY_NOT_PAUSED")
+                elif action in ("resume", "migrate"):
+                    if action == "resume":
+                        require(state["state"] == "paused", "WATCH_ACTIVITY_NOT_PAUSED")
                     w, last = frozen["watch"], state["last_result"]
                     require(w["activation"]["enabled"], "WATCH_ACTIVITY_WATCH_DISABLED")
                     require(timestamp(at) < timestamp(w["window"]["ends_at"]) and not
@@ -140,8 +210,9 @@ class WatchActivity:
                         if spec["security"]["code"].endswith((".SH", ".SZ")):
                             local_at = local_at.astimezone(timezone(timedelta(hours=8)))
                         require(not spec["target_date"] or local_at.date() < day(spec["target_date"]), "WATCH_ACTIVITY_FIXED_HORIZON_ENDED")
-                    state["state"] = "active"
-                    if last:
+                    if action == "resume":
+                        state["state"] = "active"
+                    if last and action == "resume":
                         # A pause is an unobserved interval, not a false or an erased trigger.
                         state["last_result"]["gap_since_decisive"] = True
                         if last["schema"] == "odds-watch-check-v2":
@@ -162,19 +233,48 @@ class WatchActivity:
         state["summary"] = summarize(state["summary"], result)
         event = {"schema": "watch-activity-event-v1", "watch_key": frozen["watch_sha256"], "command": command,
                  "snapshot": snapshot, "state": state["state"], "summary": state["summary"], "result": result}
+        if history is not None:
+            state["history"] = history
+            event.update(schema=EVENT_SCHEMA, history=history)
         return json.loads(encoded(event)), state
 
     def _prepare(self, command, snapshot, reader):
+        return self._prepare_plan(command, snapshot, reader)[0]
+
+    def _prepare_plan(self, command, snapshot, reader):
         p = command["input"]
         frozen = self._watch(p["watch_ref"], reader)
         current = self._current(frozen["watch_sha256"], snapshot, reader)
         if current != p["expected_event"]: raise Conflict("WATCH_ACTIVITY_STALE_EVENT")
-        before = self._replay(current, reader)[1] if current else None
+        current_event = history_store.event_record(current, reader) if current else None
+        versioned = p.get("history_version") == HISTORY_VERSION or (current_event and current_event["schema"] == EVENT_SCHEMA)
+        if versioned:
+            with watch_read_scope(self.store.backend, snapshot) as native:
+                local = _Sources(native)
+                frozen = self._watch(p["watch_ref"], local)
+                require(self._history_current(frozen["watch_sha256"], snapshot, local, native) == current,
+                        "WATCH_ACTIVITY_HISTORY_BRANCH_MISMATCH")
+                before = None
+                if current:
+                    replay = history_store.replay if current_event["schema"] == EVENT_SCHEMA else history_store.verify_legacy_prefix
+                    before = replay(self, current, local, native)[1]
+                    require(before["watch_ref"] == p["watch_ref"], "WATCH_ACTIVITY_USE_REGISTERED_REFERENCE")
+                metadata, segment = history_store.next_position(before, command, frozen["watch_sha256"])
+                event = self._project(frozen, command, snapshot, before, local, history=metadata)[0]
+                if segment is not None:
+                    for path in history_store.artifact_files(segment):
+                        try: local.backend.read(snapshot, path)
+                        except MissingObject: continue
+                        raise RecordError("WATCH_HISTORY_SEAL_ALREADY_PRESENT")
+                return event, segment
+        require(self._current_for_use(frozen["watch_sha256"], snapshot, reader) == current,
+                "WATCH_ACTIVITY_HISTORY_BRANCH_MISMATCH")
+        before = self._replay_v1(current, reader)[1] if current else None
         if before: require(before["watch_ref"] == p["watch_ref"], "WATCH_ACTIVITY_USE_REGISTERED_REFERENCE")
         require(not before or before["summary"]["events"] < MAX_EVENTS, "WATCH_ACTIVITY_HISTORY_LIMIT_OR_CYCLE")
         if before and before["summary"]["events"] == MAX_EVENTS - 1:
             require(command["kind"] == "change" and p["action"] == "retire", "WATCH_ACTIVITY_LAST_SLOT_RESERVED_FOR_RETIRE")
-        return self._project(frozen, command, snapshot, before, reader)[0]
+        return self._project(frozen, command, snapshot, before, reader)[0], None
 
     def _apply(self, payload, kind, submission_id, reconcile=False):
         key = "change" if kind == "change" else "check"
@@ -193,12 +293,14 @@ class WatchActivity:
         require(timestamp(at) <= self.clock(), "WATCH_ACTIVITY_FUTURE_EVENT")
         if kind == "check" and p["records_snapshot"] != head: raise Conflict("WATCH_ACTIVITY_SNAPSHOT_NOT_CURRENT")
         reader = _Sources(self.store.backend)
-        event = self._prepare(command, head, reader)
+        event, segment = self._prepare_plan(command, head, reader)
         artifact = record_artifact(ACTIVITY_RECORD, event, payload["rights_basis"])
-        path = artifact.path(); data_path = path.rsplit("/", 1)[0] + "/content.bin"
-        files = {path: encoded({"schema": ARTIFACT_SCHEMA, "input": artifact.metadata(), "data_path": data_path}),
-                 data_path: artifact.raw(), pointer_path(event["watch_key"]): encoded({"schema": "watch-activity-pointer-v1",
-                     "watch_key": event["watch_key"], "event_path": path})}
+        path = artifact.path()
+        files = history_store.artifact_files(artifact)
+        if segment is not None:
+            files.update(history_store.artifact_files(segment))
+        files[pointer_path(event["watch_key"])] = encoded({"schema": "watch-activity-pointer-v1",
+            "watch_key": event["watch_key"], "event_path": path})
         ref = self.store._save(head, submission_id, intent, path, files)
         return self._receipt(ref, event)
 
@@ -230,10 +332,41 @@ class WatchActivity:
                 "summary": state["summary"],
                 "history": list(reversed(history)), "effects": {"mode": "record-only", "scheduler_created": False,
                     "notification_sent": False, "investment_authority": "none"}}
+        if state.get("history"):
+            result.update(history_scope="current-segment-only; sealed-segments-are-exact-readable-artifacts",
+                          sealed_segments=history_store.segment_listing(state),
+                          history_validation=history_store.validation(state))
         if include_current_use:
-            selected = self._current(frozen["watch_sha256"], head, reader)
+            select = self._current_for_use if state.get("history") else self._current
+            selected = select(frozen["watch_sha256"], head, reader)
             result["current_activity"] = {"snapshot": head, "reference": selected,
                                          "same_event": selected == asdict(artifact_reference(reference))}
+        return result
+
+    def read_segment(self, reference):
+        ref = asdict(artifact_reference(reference))
+        with watch_read_scope(self.store.backend) as native:
+            reader = _Sources(native)
+            segment = history_store.open_segment(ref, reader)
+            publication_ref = self._history_current(segment["watch_key"], ref["commit"], reader, native)
+            require(publication_ref is not None, "WATCH_HISTORY_SEAL_NOT_ATOMIC")
+            event = history_store.event_record(publication_ref, reader)
+            require(event["schema"] == EVENT_SCHEMA and event["history"]["segment_index"] == segment["segment_index"] + 1
+                    and event["history"]["event_index"] == 0 and event["history"]["previous_segment"] == {
+                        "kind": "same-commit", "path": ref["path"], "sha256": ref["sha256"]}
+                    and event["command"]["input"]["expected_event"] == segment["events"][-1],
+                    "WATCH_HISTORY_SEAL_NOT_ATOMIC")
+            _, state, rows = history_store.replay(self, publication_ref, reader, native,
+                                                 collect_segment=segment["segment_index"])
+            require(any(item["reference"] == ref for item in state["_history_segments"]),
+                    "WATCH_HISTORY_SEGMENT_NOT_IN_PREFIX")
+            proof = history_store.validation(state)
+            proof["scope"] = "complete-original-prefix-and-seal-publication"
+            result = {"reference": ref, "segment": segment, "history": rows,
+                "summary": state["_history_selected_summary"], "recalculation": "matches",
+                "publication_event_ref": publication_ref, "history_validation": proof,
+                "effects": {"mode": "record-only", "scheduler_created": False,
+                    "notification_sent": False, "investment_authority": "none"}}
         return result
 
     def catalogue(self, payload):
@@ -250,7 +383,7 @@ class WatchActivity:
         rows = []
         reader = _Sources(self.store.backend)
         for key in keys[:payload["limit"]]:
-            ref = self._current(key, head, reader)
+            ref = self._current_for_use(key, head, reader)
             frozen, state, _ = self._replay(ref, reader)
             require(frozen["watch_sha256"] == key, "WATCH_ACTIVITY_POINTER_KEY_MISMATCH")
             require(timestamp(payload["at"]) >= timestamp(state["at"]), "WATCH_ACTIVITY_VIEW_PRECEDES_EVENT")
@@ -275,7 +408,7 @@ def assert_unmanaged(store, reference, *, snapshot=None):
     frozen = ConditionalOdds(store)._open(reference, WATCH_RECORD)
     key = digest(encoded(validate_watch(frozen["watch"])))
     require(frozen["watch_sha256"] == key, "WATCH_RECORD_CHANGED")
-    selected = WatchActivity(store)._current(key, snapshot or store.backend.head(), store)
+    selected = WatchActivity(store)._current_for_use(key, snapshot or store.backend.head(), store)
     require(selected is None, "WATCH_REGISTERED_USE_ACTIVITY_ENTRY")
 
 

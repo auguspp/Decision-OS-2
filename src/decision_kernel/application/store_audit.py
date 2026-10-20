@@ -75,13 +75,15 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
     activity_paths = [p for p in paths if p.startswith("research/watch-activities/") and p.endswith("/current.json")]
     if activity_paths:
         from decision_kernel.application.watch_activity import WatchActivity
-        from decision_kernel.application.conditional_odds import ConditionalOdds
-        from decision_kernel.domain.watch_activity import ACTIVITY_RECORD
+        from decision_kernel.application.watch_history import event_record
         service, selected = WatchActivity(store), {}
         for path in activity_paths:
             key = path.split("/")[2]
-            ref = service._current(key, snapshot, store)
-            event = ConditionalOdds(store)._open(ref, ACTIVITY_RECORD)
+            ref = service._current_for_use(key, snapshot, store)
+            # Accept both inner event contracts through the original envelope.
+            # All native segment artifacts were byte-verified above; this audit
+            # still does not replace complete Watch semantic replay.
+            event = event_record(ref, store)
             require(event.get("watch_key") == key, "WATCH_ACTIVITY_POINTER_KEY_MISMATCH")
             frozen = service._watch(event["command"]["input"]["watch_ref"], store)
             require(frozen["watch_sha256"] == key, "WATCH_ACTIVITY_POINTER_KEY_MISMATCH")

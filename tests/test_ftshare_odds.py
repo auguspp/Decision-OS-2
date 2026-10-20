@@ -446,6 +446,7 @@ def test_ftshare_save_and_independent_readback_share_the_existing_native_budget(
     from test_github_store import GitAPI
     from test_market_snapshot import local_fetch
     from test_news_read_budget import transport
+    from test_odds_watch_runtime import native_watch_fetch
 
     model = GitAPI(tmp_path / "budget.git")
     model.git.repository, model.git.binding = model.binding.repository, model.binding
@@ -460,8 +461,9 @@ def test_ftshare_save_and_independent_readback_share_the_existing_native_budget(
     else:
         operation = "save-odds" if kind == "conditional" else "save-probability-odds"
         payload = authorized("calculation", conditional_input(case) if kind == "conditional" else probability_input(case))
-    api, fetches, readers = transport(model), [], []
+    api, fetches, readers, watch_fetches = transport(model), [], [], []
     monkeypatch.setattr("decision_kernel.infrastructure.market_snapshot._fetch_market_branch", local_fetch(model, fetches))
+    monkeypatch.setattr("decision_kernel.infrastructure.watch_snapshot._fetch_market_branch", native_watch_fetch(model, watch_fetches))
     writer = VersionedStore(GitHubStore(model.binding, api))
 
     def fresh():
@@ -476,5 +478,7 @@ def test_ftshare_save_and_independent_readback_share_the_existing_native_budget(
     assert readers[0].backend.api is writer.backend.api is api
     assert readers[0].backend.binding.write_enabled is False
     assert len(fetches) == 2 and all(call["api"] is api and not call["destination"].exists() for call in fetches)
+    if kind == "watch":
+        assert watch_fetches and all(call["api"] is api and not call["destination"].exists() for call in watch_fetches)
     assert api._requests == len(model.requests) <= MAX_REQUESTS == 512
     assert model.writes == 1

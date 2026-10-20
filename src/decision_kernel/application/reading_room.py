@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure", "odds_book"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -85,6 +85,9 @@ def plan_input(value):
         from decision_kernel.application.close_structure import plan_input as structure_plan
         result["structure"] = structure_plan(value["structure"])
         require(clock(result["structure"]["as_of"]) <= clock(value["as_of"]), "ROOM_STRUCTURE_CLOCK_AFTER_READING")
+    if value.get("odds_book") is not None:
+        from decision_kernel.application.odds_book import validate_plan
+        result["odds_book"] = validate_plan(value["odds_book"])
     return result
 
 
@@ -184,8 +187,14 @@ class ReadingRoom:
         require(not plan.get("structure") or market_export is True, "ROOM_PUBLIC_STRUCTURE_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
+        if "odds_book" in plan:
+            from decision_kernel.application.reading_odds_book import bind_query
+            bind_query(plan, catalogue)
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
         refresh_plan = {**deepcopy(plan), "catalogue": {"limit": plan["catalogue"]["limit"]}}
+        if "odds_book" in plan:
+            from decision_kernel.application.reading_odds_book import refresh_query
+            refresh_plan["odds_book"] = refresh_query(plan["odds_book"])
         discovery = None
         if latest_selector(plan["brief"]):
             try:
@@ -433,6 +442,10 @@ class ReadingRoom:
             result["structure"] = structure
             partial = partial or structure["status"] != "readable" or structure.get("partial", False)
         result["status"] = "partial" if partial else "readable"
+        if "odds_book" in plan and callable(getattr(self.source_reader, "usage", None)):
+            # The command adds this original news-only counter to the final model.
+            # Include those same bytes before admitting the optional Odds display.
+            result["news_source_reads"] = self.source_reader.usage()
         # Validate the original view first. Book has no I/O and a separate
         # display budget; its duplicate structured fields cannot evict bodies.
         require(len(encoded(result)) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
@@ -440,6 +453,11 @@ class ReadingRoom:
         from decision_kernel.interfaces.reading_page import render_page
         attach_book(result, projections, max_panel_bytes=MAX_PANEL_BYTES,
                     max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
+        if "odds_book" in plan:
+            from decision_kernel.application.reading_odds_book import attach_panel, read_page
+            page = read_page(self.store, plan["odds_book"])
+            attach_panel(result, page, max_panel_bytes=MAX_PANEL_BYTES,
+                         max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
         # Final mutable access check after every component and before any export.

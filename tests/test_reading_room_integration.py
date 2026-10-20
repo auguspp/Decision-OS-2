@@ -164,7 +164,8 @@ artifacts.put('installed-discovery-edition',ArtifactInput.from_bytes('news-editi
  'news-edition.json','application/json',base64.b64decode(original['data_base64'])))
 head=s.backend.head()
 plan={'as_of':'2026-10-16T12:00:00Z','catalogue':{'limit':1},
- 'reference':asdict(s.current('mixed-research')),'brief':{'select':'latest-saved'}}
+ 'reference':asdict(s.current('mixed-research')),'brief':{'select':'latest-saved'},
+ 'odds_book':{'research_ref':asdict(s.current('odds-case')),'limit':8,'scan_limit':32}}
 Path('room-plan.json').write_text(json.dumps(plan),encoding='utf-8')
 print(head)
 '''
@@ -195,6 +196,12 @@ print(head)
     assert book['catalogue']['snapshot']==first['catalogue']['snapshot']
     assert book['source_requests']==book['extra_revision_reads']==book['writes']==0
     assert 'Research Book' in (outside/'installed-reading-room.html').read_text()
+    from decision_kernel.application.conditional_odds import RESULT_RECORD
+    odds=first['odds_book']['view']
+    assert odds['snapshot']==first['catalogue']['snapshot'] and odds['coverage']=='this-page-only'
+    assert odds['semantic_replay']=='not-requested' and odds['current_validity']=='not-certified'
+    assert any(row['kind']==RESULT_RECORD and row['status']=='readable' for row in odds['items'])
+    assert 'Odds Book' in (outside/'installed-reading-room.html').read_text()
     assert (outside/'installed-reading-room.html').read_bytes()==(outside/'installed-reading-room-again.html').read_bytes()
 
 

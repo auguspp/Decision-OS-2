@@ -64,6 +64,9 @@ def _route(payload):
 
 def read_market_payload(payload, registry, *, offset=0, limit=50, entity_id=None):
     """One dispatcher for existing local and custody readers; no input mutation."""
+    from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA, read_global_public_payload
+    if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
+        return read_global_public_payload(payload, offset=offset, limit=limit, entity_id=entity_id)
     reader = _route(payload)
     args = {k: v for k, v in payload.items() if k != "schema"}
     if "horizons" in args:

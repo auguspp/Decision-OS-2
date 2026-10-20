@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "outcome"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "decision_preparation", "outcome"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -62,6 +62,10 @@ def plan_input(value):
     if value.get("event_calendar") is not None:
         from decision_kernel.application.event_calendar import calendar_plan
         result["event_calendar"] = calendar_plan(value["event_calendar"])
+    if value.get("decision_preparation") is not None:
+        from decision_kernel.interfaces.decision_preparation_commands import preflight
+        preflight("read-decision-preparation", value["decision_preparation"])
+        result["decision_preparation"] = deepcopy(value["decision_preparation"])
     if value.get("outcome") is not None:
         from decision_kernel.application.reading_outcome import outcome_plan
         result["outcome"] = outcome_plan(value["outcome"])
@@ -144,7 +148,7 @@ class ReadingRoom:
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
     def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
-              watch_export=True, participant_export=True, outcome_export=True):
+              watch_export=True, participant_export=True, decision_export=True, outcome_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
@@ -153,6 +157,7 @@ class ReadingRoom:
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
         require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
+        require(not plan.get("decision_preparation") or decision_export is True, "ROOM_PUBLIC_DECISION_PREPARATION_NOT_CONFIRMED")
         require(not plan.get("outcome") or outcome_export is True, "ROOM_PUBLIC_OUTCOME_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
@@ -314,6 +319,25 @@ class ReadingRoom:
                             "plan": plan["event_calendar"], **_failure(error)}
             result["event_calendar"] = calendar
             partial = partial or calendar["status"] != "readable" or calendar.get("view", {}).get("status") == "partial"
+        if plan.get("decision_preparation"):
+            from decision_kernel.interfaces.decision_preparation_commands import perform
+            request = {"operation": "read-decision-preparation", "payload": deepcopy(plan["decision_preparation"])}
+            reference = plan["decision_preparation"]["reference"]
+            try:
+                view = perform(self.store, request["operation"], request["payload"], registry=self.market_registry)
+                require(len(encoded(view)) <= MAX_PANEL_BYTES, "ROOM_PANEL_BOUND")
+                prepared = {"reference": reference, "status": "readable", "view": view}
+            except (MissingObject, IntegrityError, KeyError, TypeError) as error:
+                # Ordinary missing/corrupt objects remain a visible panel error.
+                # Store, privacy, scope and budget RecordErrors escape immediately;
+                # transport refusal/size bounds are not ordinary corrupt objects.
+                if isinstance(error, IntegrityError) and str(error) in {
+                        "UNEXPECTED_REMOTE_RESPONSE", "REMOTE_RESPONSE_TOO_LARGE"}:
+                    raise
+                prepared = {"reference": reference, **_failure(error)}
+            prepared["open_request"] = request
+            result["decision_preparation"] = prepared
+            partial = partial or prepared["status"] != "readable" or prepared.get("view", {}).get("document", {}).get("status") == "partial"
         if plan.get("outcome"):
             from decision_kernel.application.reading_outcome import open_outcome
             from decision_kernel.application.outcome_review import _fatal

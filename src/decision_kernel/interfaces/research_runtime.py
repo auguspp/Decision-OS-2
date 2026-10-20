@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 
 from decision_kernel.interfaces import odds_commands, agenda_commands, reading_commands, industry_commands
+from decision_kernel.interfaces import decision_preparation_commands
 from decision_kernel.application import hosted_handoff
 from decision_kernel.interfaces.research_use_commands import audit_source_use
 
@@ -33,8 +34,12 @@ from decision_kernel.interfaces.research_payload import (
 )
 
 WRITE_OPERATIONS = {"save-hosted-handoff", "put-source", "checkpoint", "deliver", "put-artifact"} | set(odds_commands.WRITE_COMMANDS)
+WRITE_OPERATIONS |= set(decision_preparation_commands.WRITES)
 RECONCILE_OPERATIONS = {"reconcile-hosted-handoff", "reconcile-source", "reconcile-checkpoint", "reconcile-delivery", "reconcile-artifact"} | set(odds_commands.RECONCILE_COMMANDS)
+RECONCILE_OPERATIONS |= set(decision_preparation_commands.RECONCILES)
 READ_OPERATIONS = {"read-hosted-handoff", "latest-hosted-handoff", industry_commands.OPERATION, "reading-room", "audit-source-use", "prepare", "resume", "read-source", "catalogue", "audit-numbers", "verify-delivery", "open-delivery", "read-artifact"} | RECONCILE_OPERATIONS | set(odds_commands.READ_COMMANDS) | set(agenda_commands.COMMANDS)
+READ_OPERATIONS |= set(decision_preparation_commands.READS)
+PRIVATE_PREPARATION_OPERATIONS = set(decision_preparation_commands.COMMANDS + decision_preparation_commands.RECONCILES)
 MAX_RESULT_BYTES = 8 * 1024 * 1024
 WORKFLOW = ".github/workflows/research-runtime.yml"
 
@@ -74,6 +79,8 @@ def _perform(store: VersionedStore, command: dict, *, room_public=True) -> dict:
     operation, payload = command["operation"], command["payload"]
     if operation in hosted_handoff.OPERATIONS:
         return hosted_handoff.perform(store, operation, payload, command["submission_id"])
+    if operation in PRIVATE_PREPARATION_OPERATIONS:
+        return decision_preparation_commands.perform(store, operation, payload, command["submission_id"])
     if operation == industry_commands.OPERATION:
         return industry_commands.perform(store, payload)
     if operation == reading_commands.OPERATION:
@@ -191,10 +198,15 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     reading_commands.preflight(command["operation"], command["payload"], public=not private_room_allowed)
     agenda_commands.preflight(command["operation"], command["payload"])
     odds_commands.preflight(command["operation"], command["payload"])
+    if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
+        decision_preparation_commands.preflight(command["operation"], command["payload"])
     backend, room_public = None, True
     if command["operation"] in hosted_handoff.OPERATIONS:
         backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
         require(backend.live_visibility() == "private", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
+    if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
+        backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
+        require(backend.live_visibility() == "private", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
     if private_room_allowed:
         # A public-origin marker/opt-in is not evidence of today's visibility.
         # Keep this checked adapter for the entire read, including its one-way
@@ -224,7 +236,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         # authorized for its destination; artifacts are transport, not a new store.
         # Private room reads have no write to reconcile. Defer their exact references
         # until the final native visibility check, just like the body and HTML.
-        if room_public:
+        private_preparation_read = operation in PRIVATE_PREPARATION_OPERATIONS and operation not in WRITE_OPERATIONS
+        if room_public and not private_preparation_read:
             (output / "inputs.json").write_bytes(encoded(inputs))
         persist()
         if backend is None:
@@ -243,6 +256,16 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS:
             result = odds_commands.verify_fresh(result, operation, lambda: VersionedStore(GitHubStore(binding, api)))
+        if operation in decision_preparation_commands.WRITES + decision_preparation_commands.RECONCILES:
+            from decision_kernel.application.relay_registry import RelayRegistry
+            registry = RelayRegistry(Path("docs/sources/relay-registry.json"))
+            result = decision_preparation_commands.verify_fresh(
+                result, lambda: decision_preparation_commands.private_reader(binding, api), registry)
+        if operation in PRIVATE_PREPARATION_OPERATIONS:
+            require(backend.live_visibility() == "private", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+            if private_preparation_read:
+                (output / "inputs.json").write_bytes(encoded(inputs))
+            report["repository_visibility"] = "private"
         if operation in hosted_handoff.OPERATIONS:
             require(backend.live_visibility() == "private", "HOSTED_PRIVATE_CUSTODY_REQUIRED")
         report.update(result=result, status="completed")
@@ -252,6 +275,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             report["status"] = "source-use-not-demonstrated"
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS and result["readback"]["status"] != "verified":
             report["status"] = "odds-readback-failed"
+        if operation in decision_preparation_commands.WRITES + decision_preparation_commands.RECONCILES and result["readback"]["status"] != "verified":
+            report["status"] = "decision-preparation-readback-failed"
         if operation in ("deliver", "reconcile-delivery", "verify-delivery"):
             verification = result.get("delivery_verification", result)
             if verification.get("status") != "verified-declared-inventory":

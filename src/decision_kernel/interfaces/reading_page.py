@@ -98,14 +98,17 @@ from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_C
 from decision_kernel.interfaces.reading_watch_page import JS as WATCH_JS
 from decision_kernel.interfaces.reading_participant_page import CSS as PARTICIPANT_CSS, JS as PARTICIPANT_JS
 from decision_kernel.interfaces.reading_calendar_page import CSS as CALENDAR_CSS, JS as CALENDAR_JS
+from decision_kernel.interfaces.reading_decision_page import CSS as DECISION_CSS, JS as DECISION_JS
 from decision_kernel.interfaces.reading_outcome_page import CSS as OUTCOME_CSS, JS as OUTCOME_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
 CSS += PARTICIPANT_CSS
+CSS += DECISION_CSS
 JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS + OVERVIEW_JS + DISCOVERY_JS + WATCH_JS
 JS += PARTICIPANT_JS
 CSS += CALENDAR_CSS
 JS += CALENDAR_JS + '\nrenderCalendar();\n'
+JS += DECISION_JS + '\nrenderDecisionPreparation();\n'
 CSS += OUTCOME_CSS
 JS += OUTCOME_JS
 
@@ -124,6 +127,8 @@ def render_page(model):
                          '<div id="participants-content"></div></section>') if "participants" in model else ""
     calendar_panel = ('<section class="panel" id="event-calendar"><h2>事件日期与研究接续</h2>'
                       '<div id="event-calendar-content"></div></section>') if "event_calendar" in model else ""
+    decision_panel = ('<section class="panel" id="decision-preparation"><h2>决策准备与多期限复核</h2>'
+                      '<div id="decision-preparation-content"></div></section>') if "decision_preparation" in model else ""
     outcome_nav = '<a href="#outcome">原预测兑现</a>' if "outcome" in model else ""
     outcome_panel = ('<section class="panel" id="outcome"><h2>原预测兑现与固定交易窗口复核</h2>'
                      '<div id="outcome-content"></div></section>') if "outcome" in model else ""
@@ -146,6 +151,7 @@ def render_page(model):
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
 <section class="panel" id="review"><h2>原问题复核与修订段落采用</h2><div id="review-content"></div></section>
 {calendar_panel}
+{decision_panel}
 {outcome_panel}
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>
 <section class="panel" id="provenance"><h2>读取范围与接续</h2></section>

@@ -4,7 +4,6 @@ No collection, retry, latest selection or storage. Full original qualification
 and the U/D/Z pool precede navigation; incomplete inputs remain explicit gaps.
 """
 from copy import deepcopy
-from datetime import timedelta
 import re
 
 from decision_kernel.application.market_relay_inputs import _view, _rows, _lineage
@@ -13,7 +12,7 @@ from decision_kernel.application.research_sources import _declared_rows, _more_r
 from decision_kernel.domain.records import MAX_BYTES, RecordError, digest, encoded
 from decision_kernel.observations.market_daily import MarketInputError, trade_day
 from decision_kernel.observations.opening_auction import (
-    PROFILE, CODE, GROUPS, STATIC_UNKNOWN, previous_session, prior_pool, apply_auction,
+    PROFILE, CODE, GROUPS, STATIC_UNKNOWN, calendar_start, previous_session, prior_pool, apply_auction,
     same_session, timeliness, close_timeliness, group, require,
 )
 
@@ -70,7 +69,7 @@ def read_auction_context(*, profile, market_session, calendar_result, registry,
     require(entity_id is None or isinstance(entity_id, str) and CODE.fullmatch(entity_id), 'ENTITY_INVALID')
     require(len(encoded([calendar_result, pool_result, auction_result, close_result])) <= MAX_BYTES,
             'INPUT_BOUND')
-    day, start = target.strftime('%Y%m%d'), (target - timedelta(days=31)).strftime('%Y%m%d')
+    day, start = target.strftime('%Y%m%d'), calendar_start(target).strftime('%Y%m%d')
     queries, lineage, coverage, clocks = {}, {}, {}, {}
 
     def take(slot, supplied, api, scope, fields):

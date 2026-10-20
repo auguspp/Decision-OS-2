@@ -138,6 +138,16 @@ def test_unrounded_conditions_and_independent_invalid_values(turnover, price, ex
     assert result[0]['status'] == expected
 
 
+@pytest.mark.parametrize('target', ['0001-01-01', '0001-01-31'])
+def test_unrepresentable_calendar_window_is_an_input_error(target):
+    payload = auction_payload()
+    payload['market_session'] = target
+    with pytest.raises(MarketInputError, match='AUCTION_CALENDAR_WINDOW_INVALID'):
+        read_market_payload(payload, REGISTRY)
+    with pytest.raises(MarketInputError, match='AUCTION_CALENDAR_WINDOW_INVALID'):
+        previous_session([], target)
+
+
 def test_calendar_requires_only_exact_prior_interval_and_target_open():
     rows = [['20261016', 1], ['20261017', 0], ['20261018', 0], ['20261019', 1]]
     source = [{'exchange': 'SSE', 'cal_date': d, 'is_open': v} for d, v in rows]

@@ -41,10 +41,18 @@ def text(value):
     return value.rstrip('0').rstrip('.') if '.' in value else value
 
 
+def calendar_start(target):
+    """The finite auction lookback must fit the qualified target's date range."""
+    try:
+        return target - timedelta(days=31)
+    except OverflowError:
+        raise MarketInputError('AUCTION_CALENDAR_WINDOW_INVALID') from None
+
+
 def previous_session(rows, target):
     """Only the explicit prior-to-target interval must be gap-free."""
     target = trade_day(target)
-    start, values = target - timedelta(days=31), {}
+    start, values = calendar_start(target), {}
     for row in rows:
         raw = row.get('cal_date')
         require(isinstance(raw, str) and re.fullmatch(r'[0-9]{8}', raw), 'CALENDAR_IDENTITY')

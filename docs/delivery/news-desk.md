@@ -4,7 +4,9 @@
 
 ## 1. 一条可使用的交付路径
 
-沿原 `news-rolling.yml` 的手动入口，`operation=desk` 读取一个**精确已保管的24小时索引**，从保留的来源版本完整重建，产生：
+普通阅读先用 [固定 News Desk 入口](https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml) 的 `operation=latest-desk`：不必填写 Ref、代码 SHA 或业务 plan，保持 `save=false` 和两个写入字段为空。它只发现并恢复既存对象，原 native main/CI、公开资格和释放前复核仍执行。详细范围见[只读发现合同](#latest-entry)。
+
+原高级 `operation=desk` 继续读取一个**精确已保管的24小时索引**，从保留的来源版本完整重建，产生：
 
 - `news-desk.html`：自包含离线阅读页，含全部可读行；来源、标题、最后观察时间和选择状态筛选、每页40条、原链接和完整来源健康。
 - `news-brief.md`：本期实际生成的晨间、晚间或即时新闻简报正文。
@@ -41,7 +43,7 @@
 
 页面选择仅存在本页内存；导出前提示未存档。导出的计划绑定本页已保存简报作为下一基线，未保存时合并原输入与本地变更。**导出不等于提交或公开。** 未提交选择关闭页面会丢失，可先保留导出文件。本页不使用 localStorage，不把点击、停留或打开原链接记成已读/接受。
 
-GitHub 原生工作流产物可能公开。因此非空新选择无论 `save` 是否为 true，都须**单独**设置 `public_feedback_custody_confirmed=true`，否则在生成输出和访问 Store 前拒绝。它不是通用元数据权利的继承。私人笔记不可填入公共工作流；本地浏览、导出后可由用户在许可范围内另行交回。该字段是调用者声明，不是身份认证，文档始终 `human_acceptance=not-established-by-artifact`，不伪造人类投资审批。
+GitHub 原生工作流产物可能公开。因此原 `desk` 的非空新选择无论 `save` 是否为 true，都须**单独**设置 `public_feedback_custody_confirmed=true`，否则在生成输出和访问 Store 前拒绝。它不是通用元数据权利的继承。新增 `latest-desk` 复用固定且可撤销的部署公开授权，也保留原显式资格作为无部署授权时的入口；已保存选择和研究出口分别检查，含基线承接的选择，不把旧 private custody 当公开权利。私人笔记不可填入公共工作流；本地浏览、导出后可由用户在许可范围内另行交回。该字段是调用者声明，不是身份认证，文档始终 `human_acceptance=not-established-by-artifact`，不伪造人类投资审批。
 
 ## 4. 原生调用
 
@@ -70,3 +72,51 @@ GitHub 原生工作流产物可能公开。因此非空新选择无论 `save` �
 核心测试覆盖真正 Git、原 GitHubAPI/Store/CAS、两次独立读取、未知ACK的原意图对账、缺基线/未来基线拒绝、重复/迟到/到期选择和公开反馈门禁。单一现役 cold-wheel consumer 增补安装后完整新闻消费，不重复建轮子。独立 Chromium 测试覆盖分页、零筛选健康、选择导出再保管/恢复、移动屏及脚本逃逸；测试合成选择不冒充用户采用。受管浏览器若阻止 file URL，记录其限制，仅渲染相同HTML字节做交互验收，不声称验证了宿主文件访问权限。
 
 退休时同步移除专属投影/路由/测试/文档，已有 Artifact/SourceRef、来源窗口、失败历史与共享Store保护保留。公开原文权利、实质研究、私有反馈、自动调度、外发通知、独立持久备份及生产切换需各自实际验收；不能靠此页或CI代签。
+
+<a id="latest-entry"></a>
+## 6. 最新保管入口、原时间与完整历史
+
+本责任组复用 `brief_discovery` 的原正常发行版枚举、`news_rolling_index.open_index/restore_index`、`brief_delivery.open_edition/build_edition` 和 `ResearchArtifacts`，不建第二目录真源。`latest-desk` 是原新闻工作流的只读分支，不是新的 research-runtime operation。旧 `build/read/desk/read-desk` 的合法输入、默认 `build`、原写入键、CAS 和未知写对账都保留。
+
+### 双最新对象
+
+| 对象 | 发现范围与顺序 | 合格读取 |
+|---|---|---|
+| 最新正常宿主保管窗口 | 同一固定 records snapshot 的 `source-views/news-roll-*/<version>/manifest.json`；最多64个候选；按原 index.as_of 取最大 | 路径仅提名；核完整 SourceRef、manifest/body/index摘要，再通过原 `restore_index` 重建全部指定批次 |
+| 最后已保存发行版 | 原 `research/artifacts/news-edition-*`；继承128个候选边界；按原声明 cutoff 取最大 | 沿原 Brief reader 验文档、窗口、必要父版和研究／产业扩展；cutoff 不代表来源新鲜度 |
+
+同一时点的平局明确计数，按路径升序确定展示，不解释为保存先后或经济优先级。任意自定义名称仍能按原确切引用打开，不暗称已进入这个目录。
+
+当最新保管窗口已有对应合格发行版，恢复真实正文与 Attention；原 Ref 保留，不因本次目录 snapshot 改写原文。如果较新窗口尚无对应已存 Desk，沿原构建器生成 `retained-window-preview-not-saved`，`cutoff` 固定为该窗口原 `as_of`、无新选择、无伪造 baseline、`saved_reference=null`。旧发行版仍独立具名并可导出原精确读取请求；不会自动承接其选择。
+
+候选损坏、超界、无法恢复所选依赖或公开资格不足，保留具体范围和失败，不能用较旧可读版冒充最新；历史候选仍可按确切引用显式恢复。没有保管候选是 `no-retained-desk`，不是正常零条新闻。全部来源失败和0条成功捕获分别保留。
+
+### 五种时钟
+
+| 页面时钟 | 原证据 | 缺失时的含义 |
+|---|---|---|
+| 最后成功捕获回执 | 重建来源 outcome 的 `captured` 与真实 capture.finished_at/received_at | legacy observed_at 另列；不得填成成功捕获时钟 |
+| 原观察窗口起止 | 原 index.window_start/as_of | 此24小时只覆盖所选观察批次，不是全网发布时间窗口 |
+| 交付声明 cutoff | 原保存版 plan 或原窗口预览的固定 as_of | 页面生成不能替换它；保存时间不当新闻日期 |
+| 本次 read_as_of / rendered_at | 明确评估时钟与本次实际渲染时钟 | 只计算年龄，不刷新旧资料或回填原 GET 时刻 |
+| 逐条媒体时间声明 | 原 published_claim 原值与未核／缺失状态 | 不推断时区、精度或真实发布时间；不存在的字段保持未建立 |
+
+年龄显示超过24小时、未超过24小时、未知或读取时钟早于原时点。未超过24小时也不证明持续采集，`complete_news_coverage` 和 `continuous_capture_verified` 仍为 false。原整窗失败、未定位时钟和裁剪不随搜索、筛选、新闻分页或历史分页消失。
+
+### 固定历史与原生状态
+
+历史合并两个正常路径范围，**枚举分母先于分页**。每页默认8项、上限20，包含无效候选，保留 `total_candidates/scanned_candidates/listed_candidates/invalid_candidates`。cursor 绑定仓库、snapshot、完整行摘要和 offset；下一页保持该快照。刷新请求显式去掉旧 snapshot 和评估时点，执行后才取得新快照。列表只验候选元数据，逐历史项并未完整重放全部依赖，不把列表本身称为合格原文。
+
+只读宿主用同一 backend/API 有限检查固定 `news-intake.yml/rss-intake.yml/news-custody.yml/news-rolling.yml` 的 main 前20个 run，不读取其输入或产物、不请求新闻来源。展示每个有限列表最近观察的 attempt、状态、原时钟与完整列表分母；不越过较新失败去挑最后成功。Actions success 不证明捕获或保管，更不证明连续生产；rolling 的新运行可能只恢复旧资料。未取得的原生信息不当成“没有新运行”。
+
+原 API 512 次总请求、8MiB 同操作 SourceRef 缓存保持；没有新 API 实例给发现、恢复或状态查询重开额度。只有新 `latest-desk` 开启原 `_SourceReads` 的 fatal latch：当前原生403/429、请求耗尽、绑定／精确引用越界保留原异常；即使原 rolling 把错误暂记成失败批次，缓存、后续批次、末次 head 和输出也不能继续。来源 outcome 内的历史失败是资料内容，不等于本次存储权限拒绝。旧模式默认缓存与错误语义不变。
+
+### 输出、权限与实际验收
+
+`latest-desk` 强制 `save=false`、空 submission_id/expected_head；原工作流写作业排除它。仅此纯读模式可留空 code_sha，从可信 `GITHUB_SHA` 固定本次代码，仍核 main 与适用成功 CI；高级旧模式仍要求原精确代码和 plan。可选历史 plan 仅含 `as_of/snapshot/history`，不接受新窗口、选择或源正文。
+
+`navigation.json`、原 `news-desk.html` 和 `news-summary.md` 来自同一模型；有可读正文时另附原 `edition.json/news-brief.md/quick-candidates.json`。Summary 只投影前12条并标明范围，完整页面保留全部可读观察。历史与刷新按钮只导出原宿主请求，不执行读取；高级 `read-desk/desk` 仍需要原参数与公开资格。Actions 附件30天保留期不当持久资料保管，records 精确引用仍是恢复真源。
+
+公开资格只复用 `runtime_publication.publication_basis`：固定当前部署授权的 sources/brief/reading 用于新闻入口，research/watch 等仍各管研究和反馈出口；撤销后回到原显式资格。来源标题允许公开不代签私人反馈或受限研究。读取结束后同 backend 复核原绑定、main 和公开授权，才释放正文、HTML及Summary；失败只留有限原因报告，不保留来源正文或半成页面。
+
+本组工程验证包括原临时 Git、原 GitHubAPI/Store/native news host、一次真实 HTTP 错误形状、权限撤销、512耗尽、固定历史和原文恢复；安装消费者仅扩现役唯一 wheel helper。此前一般新闻页的浏览器证据不自动覆盖本次新增导航。当前需要另核：获准真实原件上的正常 `latest-desk` 消费、真正新期间的捕获→保管→读回、最终桌面／移动页面操作、自然周期的连续运行。未新增在线托管、调度、通知、来源执行或 Research/Odds Book；代码和CI不代签这些产品结果。

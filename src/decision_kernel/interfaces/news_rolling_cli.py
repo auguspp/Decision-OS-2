@@ -29,24 +29,37 @@ class _SourceReads:
     reads; failures are never memoized. An exhausted cache falls back to the same
     bounded reader, not dropped sources or a fresh/reset API request budget.
     """
-    def __init__(self, reader):
+    def __init__(self, reader, *, fail_closed=False):
         self._reader, self._cache = reader, {}
         self.serialized_bytes = self.reads = self.hits = 0
+        self._fail_closed, self._terminal = fail_closed, None
+
+    def raise_if_terminal(self):
+        if self._terminal is not None:
+            raise self._terminal
 
     def __call__(self, ref):
-        exact = reference(ref)
-        key = encoded(exact)
-        raw = self._cache.get(key)
-        if raw is None:
-            raw = encoded(_read_verified(self._reader, exact))
-            self.reads += 1
-            size = len(key) + len(raw)
-            if self.serialized_bytes + size <= MAX_SOURCE_CACHE_BYTES:
-                self._cache[key] = raw
-                self.serialized_bytes += size
-        else:
-            self.hits += 1
-        return json_object(raw)
+        self.raise_if_terminal()  # Before parsing a new Ref or using cached bytes.
+        try:
+            exact = reference(ref)
+            key = encoded(exact)
+            raw = self._cache.get(key)
+            if raw is None:
+                raw = encoded(_read_verified(self._reader, exact))
+                self.reads += 1
+                size = len(key) + len(raw)
+                if self.serialized_bytes + size <= MAX_SOURCE_CACHE_BYTES:
+                    self._cache[key] = raw
+                    self.serialized_bytes += size
+            else:
+                self.hits += 1
+            return json_object(raw)
+        except RecordError as error:
+            if self._fail_closed:
+                from decision_kernel.application.brief_discovery import operation_failure
+                if operation_failure(error):
+                    self._terminal = error
+            raise
 
     def usage(self):
         return {"verified_source_reads": self.reads, "reused_source_reads": self.hits,
@@ -70,9 +83,20 @@ def build_on_host(output):
             and os.environ.get("GITHUB_RUN_ATTEMPT") == "1", "NEWS_ROLL_MANUAL_HOST_REQUIRED")
     event = _file(Path(os.environ["GITHUB_EVENT_PATH"]), 2 * 1024 * 1024)
     inputs = event["inputs"]
-    require(inputs["code_sha"] == os.environ.get("GITHUB_SHA"), "NEWS_ROLL_CODE_CHANGED")
-    require(inputs.get("save") in ("true", "false"), "NEWS_ROLL_SAVE_REQUIRED")
     operation = inputs.get("operation", "build")
+    if operation == "latest-desk":
+        # This read-only entry alone can pin the trusted native checkout itself.
+        from decision_kernel.domain.records import SHA
+        actual = os.environ.get("GITHUB_SHA")
+        require(isinstance(actual, str) and SHA.fullmatch(actual)
+                and inputs.get("code_sha", "") in ("", actual), "NEWS_ROLL_CODE_CHANGED")
+        inputs = {**inputs, "code_sha": actual}
+    else:
+        require(inputs["code_sha"] == os.environ.get("GITHUB_SHA"), "NEWS_ROLL_CODE_CHANGED")
+    require(inputs.get("save") in ("true", "false"), "NEWS_ROLL_SAVE_REQUIRED")
+    if operation == "latest-desk":
+        from decision_kernel.interfaces.news_delivery_cli import run_latest_desk
+        return run_latest_desk(output, inputs)
     if operation in ("desk", "read-desk"):
         from decision_kernel.interfaces.news_delivery_cli import run_desk
         return run_desk(output, inputs)

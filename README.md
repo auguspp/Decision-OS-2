@@ -10,6 +10,12 @@
 
 原六股周期仍为北京时间工作日18:35，每周期至多2个日历请求和12个价格请求；真实交易日、延迟补更、失败/hold及预算不变。正常 Public 更新、补更和定时采用已登记授权，不再停在仅元数据诊断。撤销授权时停止相应公开业务，保留明确原因；源码/CI公开不公开密钥，也不重开耗尽任务。现役原件/研究/Brief和备份仍走同一 records，具体见[公开运行合同](docs/engineering/public-runtime.md)、[统一阅读室](docs/delivery/reading-room.md)及[日常更新规则](docs/architecture/daily-market.md)。
 
+### News Desk：打开已保管新闻
+
+进入固定 [News Desk 工作流](https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml)，选择 `latest-desk`，保持 `save=false`，`code_sha`、`plan` 和两个写入字段留空。在原生 main/CI 与现役公开授权检查后，Summary 会显示**原捕获／窗口／发行截止**、有限原生运行状态和新闻清单；同包 `news-desk.html` 提供原链接、筛选、完整来源健康和确切历史请求。此入口不需要自己寻找 SourceRef 或 ArtifactRef，不采集、不写 records、不启动研究。
+
+“较新已保管窗口”和“最后已保存发行版”分别显示；没有对应发行版时，只生成保持原窗口日期的未保存预览。10/16 的资料在今天打开仍是 10/16 的资料，今天的页面或绿色 Actions 不会把它更新为今天新闻。历史页先保留完整候选分母，翻页固定 records 快照；导出历史请求不等于已执行读取。完整操作与仍需真实新期／浏览器验收的范围见 [News Desk 合同](docs/delivery/news-desk.md#latest-entry)。当前交付仍是 Actions Summary 与自包含页面，没有新增常驻网站或调度。
+
 ## 从这里开始
 
 | 你要做什么 | 唯一入口 |

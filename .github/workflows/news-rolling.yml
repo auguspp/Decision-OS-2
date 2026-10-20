@@ -3,19 +3,21 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Build/read a 24h snapshot, generate a news desk, or reopen an exact saved edition'
+        description: 'latest-desk discovers retained news without a Ref; other modes keep their exact original plans'
         type: choice
-        options: [build, read, desk, read-desk]
+        options: [build, read, desk, read-desk, latest-desk]
         default: build
         required: false
       code_sha:
-        description: 'Exact inspected main code SHA with successful independent CI'
+        description: 'Exact inspected main code SHA; only latest-desk may leave empty to pin the native main checkout'
         type: string
-        required: true
+        required: false
+        default: ''
       plan:
-        description: 'Public JSON plan: desk uses window/cutoff/kind/baseline/attention and optional exact research/industry; read-desk uses artifact reference'
+        description: 'Original exact JSON plan; latest-desk alone may leave empty (or use its exported fixed-snapshot history plan)'
         type: string
-        required: true
+        required: false
+        default: ''
       save:
         description: 'Preserve build metadata or a desk edition through the existing versioned writer'
         type: boolean
@@ -57,7 +59,7 @@ jobs:
   build:
     if: >-
       github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
-      github.run_attempt == 1 && (!inputs.save || inputs.public_metadata_custody_confirmed)
+      github.run_attempt == 1 && (inputs.operation == 'latest-desk' || !inputs.save || inputs.public_metadata_custody_confirmed)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -71,12 +73,27 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: dev
+      - name: Reject write fields on the read-only News Desk entry
+        if: inputs.operation == 'latest-desk'
+        env:
+          SAVE_REQUESTED: ${{ inputs.save }}
+          SUBMISSION: ${{ inputs.submission_id }}
+          RECORDS_HEAD: ${{ inputs.expected_head }}
+        run: |
+          set -euo pipefail
+          test "$SAVE_REQUESTED" = false
+          test -z "$SUBMISSION"
+          test -z "$RECORDS_HEAD"
       - name: Verify exact main CI before building
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_CODE: ${{ inputs.code_sha }}
+          NEWS_OPERATION: ${{ inputs.operation }}
         run: |
           set -euo pipefail
+          if [ "$NEWS_OPERATION" = latest-desk ] && [ -z "$EXPECTED_CODE" ]; then
+            EXPECTED_CODE="$GITHUB_SHA"
+          fi
           test "$GITHUB_SHA" = "$EXPECTED_CODE"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
           gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push -f per_page=20 > "$RUNNER_TEMP/news-roll-ci.json"
@@ -91,6 +108,9 @@ jobs:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
           DOS2_NEWS_MODE: read
         run: python -m decision_kernel.interfaces.news_rolling_cli build --out "$RUNNER_TEMP/news-roll"
+      - name: Read News Desk dates and bounded headlines in Actions
+        if: success() && inputs.operation == 'latest-desk' && !inputs.save
+        run: cat "$RUNNER_TEMP/news-roll/news-summary.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Retain read-only result
         if: always() && !inputs.save
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -101,7 +121,7 @@ jobs:
           retention-days: 30
   save:
     needs: build
-    if: inputs.save && inputs.public_metadata_custody_confirmed && inputs.operation != 'read' && inputs.operation != 'read-desk'
+    if: inputs.save && inputs.public_metadata_custody_confirmed && inputs.operation != 'read' && inputs.operation != 'read-desk' && inputs.operation != 'latest-desk'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

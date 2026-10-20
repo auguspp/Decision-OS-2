@@ -201,7 +201,8 @@ class _Sources:
                     'UNCHANGED_DATED_OBSERVATIONS', 'DATED_OBSERVATIONS_UPDATED'), 'PREVIOUS_OBSERVATION')
             check = project(basis, values, through, quotes, checked_at, cohort if retained else None)
             require(encoded(check['current_attempt']) == encoded(cohort['current_attempt']), 'PREVIOUS_ATTEMPT_CHANGED')
-            require(not retained or bool(check['current_attempt']['unavailable_previously_observed_fields']),
+            require(not retained or bool(check['current_attempt']['unavailable_previously_observed_fields'])
+                    or check['current_attempt']['previous_completion_unavailable'],
                     'PREVIOUS_RETENTION_CHANGED')
             if not retained:
                 require(derived['quote_key'] == check['result']['quote_key'], 'PREVIOUS_QUOTE_CHANGED')

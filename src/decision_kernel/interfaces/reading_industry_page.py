@@ -11,7 +11,7 @@ function renderIndustryUses(pane,part){
  const name=s=>`${s.name||s.entity_id} (${s.entity_id})`;
  const terms={'read':'原输入可读','partial':'部分恢复','source-blocked':'来源资格受阻','unavailable':'不可用或不可比','producer':'生产 / 销售端','purchaser':'采购端','historical':'历史适用','not-revalidated':'未重新核验'};
  const term=x=>terms[x]||val(x);
- const sourceButton=ref=>button('导出此来源读取请求',()=>request('industry-use-source.json',{operation:'read-source',payload:{reference:ref}}));
+ const sourceButton=ref=>button('导出此来源读取请求',()=>request('industry-use-source.json',{operation:'read-source',payload:ref}));
  pane.append(el('h3','六项产业用途与未补齐证据'),
   el('p',`包内截止 ${v.as_of} · 准备 ${v.prepared_at} · ${v.scope.read_uses} 项原输入可读，${v.scope.partial_uses} 项部分恢复，${v.scope.source_blocked_uses} 项来源资格受阻`,'banner'),
   el('p',v.coverage_note),
@@ -110,7 +110,7 @@ function renderIndustry(){
  const summary=el('p'),body=el('div'),relationBody=el('div'),calculationBody=el('div');
  pane.append(summary,button('导出当前筛选的原读取请求',()=>request('industry-query.json',{operation:'industry-read',payload:{...ip,
   subject_id:subject.value||(company.value?null:ip.subject_id),company_id:company.value||(subject.value?null:ip.company_id)}})),body,relationBody,calculationBody);
- function sourceButton(ref){return button('导出此来源读取请求',()=>request('industry-source.json',{operation:'read-source',payload:{reference:ref}}));}
+ function sourceButton(ref){return button('导出此来源读取请求',()=>request('industry-source.json',{operation:'read-source',payload:ref}));}
  function showSeries(s){
   const box=el('div',undefined,'industry-series');box.append(el('h3',`${subjectName(s.subject)} · ${s.metric||s.series_id}`));
   const ar=adopted.get(s.series_id);

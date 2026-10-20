@@ -6,10 +6,10 @@ on:
     inputs:
       operation:
         type: choice
-        options: [status, update, recover-late]
+        options: [status, update, recover-late, repair-calendar]
         default: status
         required: true
-        description: 'Read status, update after close, or recover the latest elapsed weekday 18:35 slot within 24 hours; existing cycle holds and budgets apply'
+        description: 'Read status, update after close, or recover the latest elapsed weekday 18:35 slot within 24 hours; existing cycle holds and budgets apply; repair-calendar uses only config/daily-calendar-repair.json'
       code_sha:
         type: string
         required: true
@@ -87,7 +87,7 @@ jobs:
           retention-days: 30
   daily:
     needs: visibility
-    if: needs.visibility.outputs.runtime_authorized == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late')))
+    if: needs.visibility.outputs.runtime_authorized == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late' || inputs.operation == 'repair-calendar')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:

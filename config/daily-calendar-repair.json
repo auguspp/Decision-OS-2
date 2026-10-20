@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "repair": {
+    "schema": "daily-calendar-repair-v1",
+    "original_reference": {
+      "manifest": {
+        "commit": "8d36aa8d7b3884695bc452aed76f2a2337672123",
+        "path": "source-views/daily-market-cycle-20261019-r002/821c24b87f7edcee2478aafdc932169cc95c21ef5e147acd298d99dec44735a9/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "e1b299676ddad8fdad6f7f2f4b2455c5dd6d1ed130377a7625466970c09b5d56"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "authorization_ref": "https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6284820778",
+    "venue": "SSE",
+    "additional_requests": 1
+  }
+}

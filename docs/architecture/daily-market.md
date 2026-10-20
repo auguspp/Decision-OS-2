@@ -4,6 +4,8 @@
 
 ## 真实范围与周期
 
+日历传输失败的一次显式恢复见[日历恢复合同](daily-calendar-repair.md)；原写入实际已保管而宿主回执未知的固定五笔对账，见[原写入接续合同](daily-write-reconciliation.md)。两者均保留旧失败与已用预算，普通调度不能自动启动恢复授权。
+
 可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。保留原市场 5226 只分母；六只日常更新不能代签全市场完成。
 
 [daily-market.yml](../../.github/workflows/daily-market.yml) 使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。时区换算固定 UTC+8，没有自建时钟服务。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
@@ -55,7 +57,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
   --out "$RUNNER_TEMP/dos2-daily-market"
 ```
 
-自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；手动输入只接受 `operation=update|status|recover-late` 和确切 `code_sha`。宿主重新核原生仓库 ID / private、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。回执分别记录真实 `invocation=schedule|update|status|recover-late` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
+自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；手动输入只接受 `operation=update|status|recover-late|repair-calendar|reconcile-write` 和确切 `code_sha`。两个恢复入口各自加载固定获审配置。宿主重新核原生仓库 ID / 可见性与部署授权、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。回执分别记录真实 `invocation=schedule|update|status|recover-late|repair-calendar|reconcile-write` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
 
 周期准入固定使用原生运行创建时刻，不能因队列或同次安全 quota 等待跨过午夜、甚至下一次 18:35，就领取另一天的预算。进入宿主时，真实当前时间必须不早于该原生创建时刻，且相差严格小于 24 小时；这个队列年龄上限与原生创建时刻距业务槽的不足 24 小时上限分别成立。新建周期的实际创建时间不早于其原生准入时间；采集和正常读取仍使用当时真实时钟，不回填成槽的时刻。
 

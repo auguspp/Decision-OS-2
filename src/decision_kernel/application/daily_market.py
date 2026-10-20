@@ -88,8 +88,10 @@ def _exact(value, repository):
 
 def _source(state):
     limitations = LIMITATIONS
-    if state["schema"] == "daily-market-cycle-v2":
+    if state["schema"] in {"daily-market-cycle-v2", "daily-market-cycle-v3"}:
         limitations = LIMITATIONS[:2] + ("EXPLICIT_ONE_ADDITIONAL_CALENDAR_REQUEST_ORIGINAL_FAILURE_PRESERVED",) + LIMITATIONS[3:]
+    if state["schema"] == "daily-market-cycle-v3":
+        limitations += ("EXACT_SETTLED_WRITE_RECONCILIATION_ZERO_ADDITIONAL_SOURCE_REQUESTS",)
     return SourceInput(source_id=PREFIX + state["date"] + "-r" + str(state["revision"]).zfill(3),
         kind="content", title="每日行情日历与原集合接续 / " + state["date"],
         origin="https://github.com/auguspp/Decision-OS-2", custody="provided",
@@ -101,12 +103,18 @@ def validate_cycle(value):
         "policy_sha256", "base_market_reference", "calendar_start", "calendar_end",
         "calendars", "price_end", "market_generation", "market_reference", "status", "reason_code"}
     from decision_kernel.application.daily_calendar_repair import CYCLE_SCHEMA, proof
-    repaired = isinstance(value, dict) and value.get("schema") == CYCLE_SCHEMA
+    from decision_kernel.application.daily_write_reconciliation import CYCLE_SCHEMA as RECONCILED_SCHEMA, proof as write_proof
+    reconciled = isinstance(value, dict) and value.get("schema") == RECONCILED_SCHEMA
+    repaired = isinstance(value, dict) and value.get("schema") in {CYCLE_SCHEMA, RECONCILED_SCHEMA}
     repair = proof(value.get("calendar_repair")) if repaired else None
+    if reconciled:
+        write_proof(value.get("write_reconciliation"))
     require(isinstance(value, dict) and set(value) == fields | ({"calendar_repair"} if repaired else set())
-        and value["schema"] == (CYCLE_SCHEMA if repaired else SCHEMA)
+        | ({"write_reconciliation"} if reconciled else set())
+        and value["schema"] == (RECONCILED_SCHEMA if reconciled else CYCLE_SCHEMA if repaired else SCHEMA)
         and isinstance(value["date"], str) and re.fullmatch(r"[0-9]{8}", value["date"])
-        and type(value["revision"]) is int and (3 if repaired else 0) <= value["revision"] <= (8 if repaired else 6)
+        and type(value["revision"]) is int and (9 if reconciled else 3 if repaired else 0)
+            <= value["revision"] <= (10 if reconciled else 8 if repaired else 6)
         and value["calendar_end"] == value["date"]
         and value["market_generation"] == "daily-" + value["date"]
         and isinstance(value["policy_sha256"], str)
@@ -131,6 +139,10 @@ def validate_cycle(value):
         "DAILY_MARKET_ONE_CALENDAR_IN_FLIGHT")
     require(value["status"] in {"calendar-pending", "market-pending", "blocked"} | SUCCESS
         and (value["reason_code"] is not None) == (value["status"] == "blocked"), "DAILY_MARKET_STATUS")
+    if reconciled:
+        require((value["revision"], value["status"]) in {
+            (9, "market-pending"), (10, "complete"), (10, "blocked")},
+            "DAILY_WRITE_RECONCILIATION_PHASE")
     for reason in [value["reason_code"], *(row["reason_code"] for row in calendars.values())]:
         require(reason is None or isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason),
             "DAILY_MARKET_REASON")
@@ -149,6 +161,10 @@ def validate_cycle(value):
 
 
 def _transition(previous, current):
+    if previous["status"] == "blocked" and "write_reconciliation" not in previous and "write_reconciliation" in current:
+        from decision_kernel.application.daily_write_reconciliation import transition
+        transition(previous, current)
+        return
     if previous["status"] == "blocked" and "calendar_repair" not in previous and "calendar_repair" in current:
         from decision_kernel.application.daily_calendar_repair import transition
         transition(previous, current)
@@ -160,6 +176,13 @@ def _transition(previous, current):
         "market_reference", "status", "reason_code"}
     require(all(previous[key] == current[key] for key in immutable)
         and _stamp(current["updated_at"]) >= _stamp(previous["updated_at"]), "DAILY_MARKET_INTENT_CHANGED")
+    if "write_reconciliation" in previous:
+        require(previous["revision"] == 9 and current["revision"] == 10
+            and current["status"] in {"complete", "blocked"}
+            and current["calendars"] == previous["calendars"]
+            and current["price_end"] == previous["price_end"]
+            and (current["status"] == "complete" or current["market_reference"] == previous["market_reference"]),
+            "DAILY_WRITE_RECONCILIATION_PHASE")
     changed = [venue for venue in VENUES if previous["calendars"][venue] != current["calendars"][venue]]
     require(len(changed) <= 1, "DAILY_MARKET_CALENDAR_TRANSITION")
     if changed:
@@ -227,6 +250,13 @@ def latest_cycle(store, *, registry=None, protected_symbols=()):
                         registry, reader, protected_symbols)
             else:
                 _transition(previous["cycle"], current)
+                if "write_reconciliation" not in previous["cycle"] and "write_reconciliation" in current:
+                    from decision_kernel.application.daily_write_reconciliation import verify_original
+                    verify_original(previous["cycle"], current["write_reconciliation"],
+                        registry=registry, store=reader, snapshot=head)
+                if current.get("write_reconciliation") is not None and current["status"] == "complete":
+                    from decision_kernel.application.daily_write_reconciliation import verify_completed
+                    verify_completed(current, registry=registry, store=reader)
             previous = item
         return previous
 
@@ -241,6 +271,25 @@ def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_sy
             "DAILY_MARKET_STALE_CONTROL")
         if before is not None and before["cycle"]["date"] == state["date"]:
             _transition(before["cycle"], state)
+            if "write_reconciliation" not in before["cycle"] and "write_reconciliation" in state:
+                from decision_kernel.application.daily_write_reconciliation import (
+                    ORIGINAL_PRICE_BUDGET, verify_original,
+                )
+                grant = state["write_reconciliation"]
+                restored = verify_original(before["cycle"], grant, registry=registry,
+                    store=reader, snapshot=snapshot)
+                plan = restored["collection"]["plan"]
+                targets = sorted([{"symbol": symbol, "adjust_kind": kind} for symbol in protected_symbols
+                    for kind in ("none", "forward")], key=lambda target: (target["symbol"], target["adjust_kind"]))
+                require(len(targets) == ORIGINAL_PRICE_BUDGET and plan["targets"] == targets,
+                    "DAILY_MARKET_POLICY_CHANGED")
+                require(latest_ftshare_reference(reader, registry, collection_id=plan["collection_id"],
+                    generation=plan["generation"]) == grant["settled_market_reference"],
+                    "DAILY_WRITE_RECONCILIATION_FT_FRONTIER_CHANGED")
+                check_cycle_frontier(state, registry, reader, protected_symbols=protected_symbols)
+            if state.get("write_reconciliation") is not None and state["status"] == "complete":
+                from decision_kernel.application.daily_write_reconciliation import verify_completed
+                verify_completed(state, registry=registry, store=reader)
             if any(before["cycle"]["calendars"][venue]["status"] in {"pending", "failed"}
                     and state["calendars"][venue]["status"] == "in-flight" for venue in VENUES):
                 # The authority for one new calendar request and its durable

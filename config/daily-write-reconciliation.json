@@ -1,0 +1,141 @@
+{
+  "enabled": true,
+  "reconciliation": {
+    "additional_source_requests": 0,
+    "authorization_ref": "https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6293255907",
+    "native_run": {
+      "artifact_id": 12256346083,
+      "code_sha": "524243caf8755839245bcf7b374cd1178aaf32b2",
+      "run_attempt": 1,
+      "run_id": 39401024562,
+      "sha256": "428109354af0fd21f8df4b12eef020a618f651a7d2117af3ca566ad6ca569acc",
+      "size_bytes": 245783
+    },
+    "original_reference": {
+      "manifest": {
+        "commit": "f0f447c4ea747d50edd4b2ec4e3d590a061bbeef",
+        "path": "source-views/daily-market-cycle-20261019-r008/f7806892673b343fa1e19a152212fa809fee898f34705f534677174f122f4bb5/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "53f32e5071e1bbb3171945ae094b03fea15d7ed6e5d70bbbdc442368aded627a"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "schema": "daily-write-reconciliation-v1",
+    "settled_market_reference": {
+      "manifest": {
+        "commit": "f07277ed62e883d59b3b3ec0bd081cbecc83f768",
+        "path": "source-views/ftshare-collection-b84e0a754942a88e7f4b3e2375378d8e-r002/4efdbfb6a165f41813d6a4a93d823a4155c1ed64b04ee50c0dd9759e375168f5/manifest.json",
+        "repository": "auguspp/Decision-OS-2",
+        "sha256": "01431553e31b4fe515d6538074e6e92160eb933e283cbc2d071199dfa41dd92a"
+      },
+      "selection": {
+        "columns": [],
+        "end": null,
+        "kind": "all",
+        "start": null
+      }
+    },
+    "submissions": [
+      {
+        "expected_head": "824aa4a93e7d47ea15a0fb6b5c56716af3d3c10a",
+        "intent_sha256": "868e1f4db835ab0ad13d13eab6025c4aa081372d8a4482b1388010e273eb335f",
+        "reference": {
+          "manifest": {
+            "commit": "c46d4a620d3a74eebf39dd47452ad498619f2b85",
+            "path": "source-views/ftshare-collection-b84e0a754942a88e7f4b3e2375378d8e-r000/63cc852d9e37139cfd410b5ce8e30e6ddf14a441a7c8419a40857f6eed23bf0f/manifest.json",
+            "repository": "auguspp/Decision-OS-2",
+            "sha256": "198c264345dd1058d139ed5de39d855126baeaa97c29e48f41cac0ab3704b80c"
+          },
+          "selection": {
+            "columns": [],
+            "end": null,
+            "kind": "all",
+            "start": null
+          }
+        },
+        "submission_id": "market-custody-63cc852d9e37139cfd410b5ce8e30e6ddf14a441a7c8419a40857f6eed23bf0f"
+      },
+      {
+        "expected_head": "c46d4a620d3a74eebf39dd47452ad498619f2b85",
+        "intent_sha256": "325fadd4acacb50503bd61f259a3976d8c9a3a6750f84688c2c55d496b6909fe",
+        "reference": {
+          "manifest": {
+            "commit": "ef235d5c713f225a9a22e77090444526d23579c7",
+            "path": "source-views/ftshare-collection-b84e0a754942a88e7f4b3e2375378d8e-r001/c6cb155f663e870d8ab89b9ece18f530a61e86c9185f80a3d70cdb7a4b9c24a1/manifest.json",
+            "repository": "auguspp/Decision-OS-2",
+            "sha256": "936e80dcaeade3a060bd2aef286b5e647a204cbdd704a48675efe39498c09569"
+          },
+          "selection": {
+            "columns": [],
+            "end": null,
+            "kind": "all",
+            "start": null
+          }
+        },
+        "submission_id": "market-custody-c6cb155f663e870d8ab89b9ece18f530a61e86c9185f80a3d70cdb7a4b9c24a1"
+      },
+      {
+        "expected_head": "ef235d5c713f225a9a22e77090444526d23579c7",
+        "intent_sha256": "334a1ec91214fd9eeeb2adbf5648ce8a6166c41e0344cb8ff6bb56c58462dedd",
+        "reference": {
+          "manifest": {
+            "commit": "2d21e8e5f3527ab8b0223b7e6104316ee45c602c",
+            "path": "source-views/ftshare-single-daily-none-c434f51a8e6cc553-cf15edafb9091e4c-wire/8e0b12c68e8edc89568ec44e67292e81fd5eac2f70c4261ef2abd1fd1ad2db14/manifest.json",
+            "repository": "auguspp/Decision-OS-2",
+            "sha256": "2648f8bd4ebbf06db9d516a57668a63d6086284c8cdb1b06f1cb8015c9771f36"
+          },
+          "selection": {
+            "columns": [],
+            "end": null,
+            "kind": "all",
+            "start": null
+          }
+        },
+        "submission_id": "market-custody-8e0b12c68e8edc89568ec44e67292e81fd5eac2f70c4261ef2abd1fd1ad2db14"
+      },
+      {
+        "expected_head": "2d21e8e5f3527ab8b0223b7e6104316ee45c602c",
+        "intent_sha256": "99a55d7260f7eb1b5be1bdb82fd24ad0b9af4e69b68a13997185e3849c34f429",
+        "reference": {
+          "manifest": {
+            "commit": "f07277ed62e883d59b3b3ec0bd081cbecc83f768",
+            "path": "source-views/ftshare-collection-b84e0a754942a88e7f4b3e2375378d8e-r002/4efdbfb6a165f41813d6a4a93d823a4155c1ed64b04ee50c0dd9759e375168f5/manifest.json",
+            "repository": "auguspp/Decision-OS-2",
+            "sha256": "01431553e31b4fe515d6538074e6e92160eb933e283cbc2d071199dfa41dd92a"
+          },
+          "selection": {
+            "columns": [],
+            "end": null,
+            "kind": "all",
+            "start": null
+          }
+        },
+        "submission_id": "market-custody-4efdbfb6a165f41813d6a4a93d823a4155c1ed64b04ee50c0dd9759e375168f5"
+      },
+      {
+        "expected_head": "f07277ed62e883d59b3b3ec0bd081cbecc83f768",
+        "intent_sha256": "efc3c5900eb6cb89869b3ae8c2d1a6597667253e46628ff90196788ddf33b768",
+        "reference": {
+          "manifest": {
+            "commit": "f0f447c4ea747d50edd4b2ec4e3d590a061bbeef",
+            "path": "source-views/daily-market-cycle-20261019-r008/f7806892673b343fa1e19a152212fa809fee898f34705f534677174f122f4bb5/manifest.json",
+            "repository": "auguspp/Decision-OS-2",
+            "sha256": "53f32e5071e1bbb3171945ae094b03fea15d7ed6e5d70bbbdc442368aded627a"
+          },
+          "selection": {
+            "columns": [],
+            "end": null,
+            "kind": "all",
+            "start": null
+          }
+        },
+        "submission_id": "daily-market-f7806892673b343fa1e19a152212fa80"
+      }
+    ]
+  }
+}

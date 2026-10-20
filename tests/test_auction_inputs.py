@@ -257,6 +257,22 @@ def test_late_and_missing_clocks_are_separate_from_read_time_and_corrupt_clock_r
     assert read_market_payload(payload, REGISTRY)['queries']['auction']['reason_code'] == 'SOURCE_REQUEST_CLOCK_INVALID'
 
 
+@pytest.mark.parametrize('stamp', [
+    '0001-01-01T00:00:00+14:00', '9999-12-31T23:59:59-12:00'])
+def test_extreme_original_clocks_remain_readable_without_preopen_qualification(stamp):
+    payload = auction_payload()
+    before = read_market_payload(payload, REGISTRY)
+    page = payload['auction_result']['capture']['pages'][0]
+    page['captured_at'] = stamp
+    page['transport']['request_clock'] = {'requested_at': stamp, 'received_at': stamp}
+    out = read_market_payload(payload, REGISTRY)
+    assert out['queries']['auction']['status'] == 'checked'
+    assert out['timeliness'] == 'HISTORICAL_OR_LATE_NOT_PREOPEN_DISCOVERY'
+    assert out['cohort_denominator'] == before['cohort_denominator'] == 8
+    assert out['matched'] == before['matched'] == 2
+    assert out['cohort_rows'] == before['cohort_rows']
+
+
 def test_auction_clock_cannot_be_attached_to_an_unrelated_source_api():
     daily = capture('daily_basic', ['ts_code', 'trade_date', 'turnover_rate'],
         [['600001.SH', '20261020', '12']], {'trade_date': '20261020'})

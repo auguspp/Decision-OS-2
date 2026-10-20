@@ -266,9 +266,11 @@ def timeliness(clocks, target):
     if not clocks or any(clock is None for clock in clocks):
         return 'NOT_ESTABLISHED'
     target, zone = trade_day(target), timezone(timedelta(hours=8))
+    start = datetime.combine(target, time(9, 26), tzinfo=zone)
+    end = datetime.combine(target, time(9, 30), tzinfo=zone)
     for clock in clocks:
-        asked, received = [datetime.fromisoformat(clock[k].replace('Z', '+00:00')).astimezone(zone)
+        asked, received = [datetime.fromisoformat(clock[k].replace('Z', '+00:00'))
                            for k in ('requested_at', 'received_at')]
-        if not (asked.date() == received.date() == target and time(9, 26) <= asked.time() <= received.time() < time(9, 30)):
+        if not start <= asked <= received < end:
             return 'HISTORICAL_OR_LATE_NOT_PREOPEN_DISCOVERY'
     return 'RECEIVED_BEFORE_CONTINUOUS_OPEN'

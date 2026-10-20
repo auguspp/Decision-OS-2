@@ -401,13 +401,9 @@ def _inspect_result(result, registry):
                     'SOURCE_TRANSPORT_RECEIPT_INVALID')
         if 'request_clock' in meta:
             _request_clock(meta['request_clock'], page['captured_at'])
-            require(isinstance(page['attempts'], list), 'SOURCE_REQUEST_CLOCK_INVALID')
-            if page['attempts']:
-                last = page['attempts'][-1]
-                require(isinstance(last, dict) and last.get('error') is None
-                        and {k: last.get(k) for k in ('requested_at', 'received_at')} == meta['request_clock']
-                        and last.get('transport') == {k: meta[k] for k in meta_keys},
-                        'SOURCE_REQUEST_CLOCK_INVALID')
+            # Source inspection consumes only the finite saved projection.
+            # Execution diagnostics are discarded, not an alternate clock or
+            # an admission condition. Capture/checkpoint owners bind attempts.
         fingerprint = digest(encoded({'fields': table['fields'], 'items': table['items']}))
         require(not table['items'] or fingerprint not in seen, 'SOURCE_PAGINATION_STALLED')
         seen.add(fingerprint)

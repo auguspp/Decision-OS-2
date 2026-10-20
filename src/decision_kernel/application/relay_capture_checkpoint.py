@@ -278,10 +278,14 @@ def _check_capture_checkpoint(value, request, registry, *, max_pages, policy=Non
             'RELAY_CHECKPOINT_CAPTURE_BOUND')
     for page in pages:
         validate_attempts(page['attempts'], complete=True)
-        # The inspector already binds the two finite request clock fields to
-        # this same successful attempt; they are not HTTP response headers.
+        # This execution owner validates the original attempts before binding
+        # the finite projection. Ordinary source readers discard diagnostics.
         transport = {k: v for k, v in page['transport'].items() if k != 'request_clock'}
-        require(page['attempts'][-1]['transport'] == transport, 'RELAY_CHECKPOINT_TRANSPORT')
+        last = page['attempts'][-1]
+        require(last['transport'] == transport, 'RELAY_CHECKPOINT_TRANSPORT')
+        if 'request_clock' in page['transport']:
+            require({k: last[k] for k in ('requested_at', 'received_at')}
+                    == page['transport']['request_clock'], 'SOURCE_REQUEST_CLOCK_INVALID')
     number = control['page_number']
     require(type(number) is int and 1 <= number <= max_pages + 1, 'RELAY_CHECKPOINT_PAGE')
     retry = validate_retry_state(control['retry']) if control['retry'] is not None else None

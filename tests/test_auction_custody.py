@@ -96,28 +96,35 @@ def test_raw_daily_value_and_completed_close_clock_remain_distinct_after_new_rea
     assert out['same_session']['completed_session_cutoff'] == '2026-10-20T15:30:00+08:00'
 
 
-def test_daily_projected_success_clock_is_bound_to_the_exact_original_attempt():
+def test_daily_reader_uses_saved_clock_without_promoting_execution_diagnostics():
     payload = auction_payload()
     page = payload['close_result']['capture']['pages'][0]
+    # The original execution owner binds its attempts, but the source reader
+    # must not reconstruct a later clock from editable/discarded diagnostics.
     page['transport']['request_clock']['requested_at'] = '2026-10-20T07:29:59+00:00'
+    page['attempts'].append({'private': 'NOT_FOR_SOURCE_OR_CLOCK_QUALIFICATION'})
     out = read_market_payload(payload, REGISTRY)
-    assert out['queries']['close'] == {'status': 'rejected', 'reason_code': 'SOURCE_REQUEST_CLOCK_INVALID'}
+    assert out['queries']['close'] == {'status': 'checked', 'reason_code': None}
+    assert out['same_session']['completion_clock'] == 'REQUESTED_BEFORE_SESSION_COMPLETION'
     assert out['same_session']['comparable'] == 0 and out['cohort_denominator'] == 8
+    assert 'NOT_FOR_SOURCE_OR_CLOCK_QUALIFICATION' not in encoded(out).decode()
 
 
-def test_finite_clock_projection_uses_original_checkpoint_without_reset_or_transport_change():
+@pytest.mark.parametrize('api', ['stk_auction', 'daily'])
+def test_finite_clock_projection_uses_original_checkpoint_without_reset_or_transport_change(api):
     from decision_kernel.application.relay_capture_checkpoint import validate_capture_checkpoint
     from decision_kernel.application.research_sources import validate_plan, capture_registered
     from decision_kernel.infrastructure.relay_retry import RetryingRelay
     from test_relay_capture_checkpoint import run
-    request = {'api': 'stk_auction', 'stage': 'baseline', 'purpose': '合成原checkpoint接续',
-        'parameters': {'trade_date': '20261020', 'ts_type': 'STK',
-                       'fields': 'ts_code,trade_date,price,pre_close', 'limit': 100}}
+    fields = ['ts_code', 'trade_date', 'price', 'pre_close'] if api == 'stk_auction' else ['ts_code', 'trade_date', 'close']
+    values = ['600001.SH', '20261020', '104', '100'] if api == 'stk_auction' else ['600001.SH', '20261020', '104']
+    parameters = {'trade_date': '20261020', 'fields': ','.join(fields), 'limit': 100}
+    if api == 'stk_auction':
+        parameters['ts_type'] = 'STK'
+    request = {'api': api, 'stage': 'baseline', 'purpose': '合成原checkpoint接续', 'parameters': parameters}
     use = validate_plan({'schema': 'research-source-plan-v1', 'case_id': 'synthetic-checkpoint',
                          'requests': [request]}, REGISTRY)['requests'][0]
-    body = {'code': 0, 'api_name': 'stk_auction', 'data': {
-        'fields': ['ts_code', 'trade_date', 'price', 'pre_close'],
-        'items': [['600001.SH', '20261020', '104', '100']]}, 'count': 1}
+    body = {'code': 0, 'api_name': api, 'data': {'fields': fields, 'items': [values]}, 'count': 1}
     capture, writes, client, opener, clock = run(body, use=use)
     checked = validate_capture_checkpoint(writes[-1], use, REGISTRY, max_pages=4)
     assert checked['control']['state'] == 'complete'

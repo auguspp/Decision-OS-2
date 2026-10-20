@@ -83,7 +83,9 @@ Room 承担各自责任；本消费者保留固定观察条件、完整原池与
 `limit_list_d`、`stk_auction` 和同日 close 所需 `daily` 可保留同一有限
 `transport.request_clock={requested_at,received_at}`。新 capture 只从最后成功的
 原 attempt 取这两个字段，核原 base transport 一致、时区明确且
-`requested_at <= received_at <= captured_at`；检查原 capture/checkpoint 时再次逐字段绑定。
+`requested_at <= received_at <= captured_at`；原 checkpoint 执行 owner 在校验完整
+attempts 后再次逐字段绑定。普通 inspector/exporter 只检查有限投影的形状与时间顺序，
+沿原合同剔除可编辑的执行诊断，不以诊断作为准入条件或补齐时钟。
 其他 API 不能携此字段。daily 的其他消费者不增加必需门槛，也不改变其数值资格。
 
 原保管有意不保存 attempts。恢复后这份有限投影只能证明该确切

@@ -184,6 +184,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
                 code_sha: str, output: Path, run_id: str = "", attempt: str = "") -> dict:
     """Caller authentication/mandate is the host's job, never a field in source text."""
     command = parse_inputs(inputs)
+    from decision_kernel.application.reading_odds_book import selected
+    room_odds = command["operation"] == reading_commands.OPERATION and selected(command["payload"].get("plan"))
     require(command["code_sha"] == code_sha, "RUNTIME_CODE_CHANGED")
     require(binding.visibility == "public" and not binding.write_enabled,
             "PUBLIC_READ_ONLY_CONFIG_REQUIRED")
@@ -217,7 +219,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         decision_preparation_commands.preflight(command["operation"], command["payload"])
     room_public = True
     hosted_watch_publication = False
-    if command["operation"] == odds_commands.BOOK_OPERATION:
+    if command["operation"] == odds_commands.BOOK_OPERATION or room_odds:
         if backend is None:
             backend = _CommandStore(binding, api, command)
         checked_odds_book_visibility(backend)
@@ -274,7 +276,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         # Private room reads have no write to reconcile. Defer their exact references
         # until the final native visibility check, just like the body and HTML.
         private_preparation_read = operation in PRIVATE_PREPARATION_OPERATIONS and operation not in WRITE_OPERATIONS
-        if room_public and not private_preparation_read and operation != odds_commands.BOOK_OPERATION:
+        if room_public and not private_preparation_read and operation != odds_commands.BOOK_OPERATION and not room_odds:
             (output / "inputs.json").write_bytes(encoded(inputs))
         persist()
         if backend is None:
@@ -288,8 +290,9 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             report["repository_visibility"] = backend.live_visibility()
             if authority is not None:
                 checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")
-            reading_commands.write_page(output / "reading-room.html", result)
-            if not room_public:
+            if not room_odds:
+                reading_commands.write_page(output / "reading-room.html", result)
+            if not room_public and not room_odds:
                 (output / "inputs.json").write_bytes(encoded(inputs))
         if operation in ("deliver", "reconcile-delivery"):
             result = verify_fresh(result, lambda: VersionedStore(GitHubStore(binding, api)))
@@ -316,7 +319,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         if authority is not None:
             # Revocation cannot turn into a successful public body/attachment.
             checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")
-        if operation == odds_commands.BOOK_OPERATION:
+        if operation == odds_commands.BOOK_OPERATION or room_odds:
             # This composite read has no write to reconcile. Its exact query
             # references are released only with the final checked Book, after
             # every dependency and the original native scope have completed.
@@ -342,8 +345,18 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         elif operation in RECONCILE_OPERATIONS:
             report["write"] = "reconciled-without-write"
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
+        room_html = None
+        if room_odds:
+            # A composed read has no write to reconcile. Render and check the
+            # complete report before the last five-scope gate and any body export.
+            require(len(encoded(report)) <= MAX_RESULT_BYTES, "COMMAND_RESULT_TOO_LARGE")
+            from decision_kernel.interfaces.reading_page import render_page
+            room_html = render_page(result)
+            report["repository_visibility"] = checked_odds_book_visibility(backend)
         persist()  # A verified store receipt and a retained report are distinct facts.
-        if operation == odds_commands.BOOK_OPERATION:
+        if room_odds:
+            reading_commands.write_html(output / "reading-room.html", room_html)
+        if operation == odds_commands.BOOK_OPERATION or room_odds:
             (output / "inputs.json").write_bytes(encoded(inputs))
         return report
     except (RecordError, OSError, TypeError, KeyError) as error:

@@ -267,7 +267,8 @@ def test_manual_workflow_read_write_boundary_and_no_new_source_permissions():
     text=(Path(__file__).parents[1]/".github/workflows/news-rolling.yml").read_text()
     flow=yaml.load(text,Loader=yaml.BaseLoader)
     assert set(flow["on"])=={"workflow_dispatch"}
-    assert flow["on"]["workflow_dispatch"]["inputs"]["operation"]["options"]==["build","read","desk","read-desk"]
+    assert flow["on"]["workflow_dispatch"]["inputs"]["operation"]["options"]==["build","read","desk","read-desk","latest-desk"]
     assert "inputs.operation != 'read'" in flow["jobs"]["save"]["if"]
+    assert "inputs.operation != 'latest-desk'" in flow["jobs"]["save"]["if"]
     assert flow["jobs"]["build"]["permissions"]=={"contents":"read","actions":"read"}
     assert "schedule:" not in text and "TUSHARE" not in text

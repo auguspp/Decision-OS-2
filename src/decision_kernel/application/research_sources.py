@@ -191,6 +191,13 @@ def _table(api, params, body, *, preserve_coverage=True):
     require(isinstance(rows, list) and len(rows) <= int(params['limit']), 'SOURCE_ROWS_INVALID')
     requested = params['fields'].split(',')
     required = set(requested) - AUCTION_OPTIONAL_FIELDS.get(api, set())
+    # The fixed marketwide T+1 request already used daily close,open. Missing
+    # open must not erase a returned close. Identity and close remain required;
+    # this does not give daily the auction coverage-metadata contract.
+    if (api == 'daily' and set(params) <= {'trade_date', 'fields', 'limit', 'offset'}
+            and isinstance(params.get('trade_date'), str) and re.fullmatch(r'[0-9]{8}', params['trade_date'])
+            and set(requested) == {'ts_code', 'trade_date', 'close', 'open'}):
+        required.discard('open')
     require(not rows or required <= set(fields), 'SOURCE_REQUESTED_FIELDS_MISSING')
     selected = [f for f in fields if f in requested]
     indices = [fields.index(f) for f in selected]

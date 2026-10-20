@@ -48,7 +48,11 @@ pytest 保留致命信号的 faulthandler，显式 `faulthandler_timeout=0` 停�
 
 产物名绑定 `run_id` 与 `run_attempt`：`dos2-plan-*`、`dos2-part-{contracts,1,2,3,4,5,6,7,8}-*`、`dos2-ci-*`。最终产物保留计划、实际 summary、九组原始 ZIP/API 元数据及时长。下载须通过原生归属、唯一产物、大小、SHA-256、CRC、安全路径和展开上限；只读取固定数据名。最终 full 可重新验证所有原始分片。原生最新失败或 rerun 不被旧成功替代；读取不确定不产生复用资格。
 
+合同与八个分片仍在各自执行目录保留完整 `plan.json` 和 `durations-hint.json`，上传时用固定版本 [upload-artifact 的多路径排除](https://github.com/actions/upload-artifact/blob/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/README.md#upload-using-multiple-paths-and-exclusions)仅省略这两份重复公共数据；prepare 与最终产物继续保留公共计划和时长。各片自己的收集结果、JUnit、实际环境、结果与全部诊断日志仍上传，结果中的 `timing_digest` 继续逐片核对提示。排除路径不改变产物根目录，原件仍按实际大小与摘要验证；没有删本地执行输入或放宽失败与完整集合检查。需要回退时将两个分片上传路径恢复为整个目录，不改变历史产物或 reader。
+
 最终 gate 在必需 jobs 成功后，只读取一次本 run 的完整原生产物目录，供 plan 与九组分片共同使用；原来的十次相同目录读取减为一次。每件原件仍按固定 artifact ID 下载并逐件验证；目录缺项、重名、不完整，目录读取后原 ID 被删除导致的下载失败，以及下载字节与原摘要不符均会失败，不重新按名称寻找替代物。目录只存于本次 gate 调用，路由、baseline 和 merge_reuse 的读取及最新运行复核保持独立。[GitHub 的 artifact 迁移说明](https://github.com/actions/upload-artifact/blob/main/docs/MIGRATION.md)说明新版本产物不可变，覆盖会删除旧 ID 并产生新 ID。此窄适配由现役 CI owner 维护，可恢复逐件目录读取；不会删除原件/历史或退出共享身份、集合和失败保护。
+
+仅当 prepare 已输出确切 `content` scope 时，Gate 与 prepare 一样跳过 `ci-python` 安装，使用 runner 自带 Python 标准库核原生 needs、plan 身份、ZIP、内容检查与可信 base。`full`、`draft_feedback`、`merge_reuse` 及 prepare 没有输出 scope 的失败情况仍走原锁定安装；pytest 只由需要检查测试结果的路径加载。此条件不扩大内容资格，也不省略最终 Gate。现役路由测试以隔离、禁用 site-packages 的独立 Python 进程实际调用 content Gate，保留坏摘要拒绝；自然 content 采用仍以正常运行记录为准，不制造空 PR。回退可移除 Gate 安装条件；由现役 CI owner 维护，能力退出时连同该消费者验证处理。
 
 GH_TOKEN 仅给必要 Git/Actions 只读步骤，不给安装、collect 或测试；checkout 不保留凭据。CI 不接收业务 secrets，不配置外发/研究任务。最终 gate 的 `always()` 只保证验证失败路径也被执行，不把前置失败转成功。原始失败日志保留，不循环 rerun 换绿。
 

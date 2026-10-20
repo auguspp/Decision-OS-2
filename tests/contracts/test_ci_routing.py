@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -411,3 +412,71 @@ def test_gate_failed_prerequisite_stops_before_inventory(runtime, gate_case, mon
     with pytest.raises(ValueError, match="REQUIRED_JOBS_NOT_PASSED"):
         runtime.gate(tmp_path)
     assert gate_case["queries"] == gate_case["fetched"] == []
+
+
+def test_content_gate_without_site_packages_keeps_archive_validation(runtime, evidence, bundle, tmp_path):
+    """Use the normal CLI consumer in a fresh stdlib-only process; native I/O is synthetic."""
+    plan = dict(identity=bundle["plan"]["identity"], scope="content", merge_eligible=True,
+                baseline=dict(id=99, head_sha="d" * 40), durations={},
+                content_checks=[dict(path="CHANGELOG.md", digest=evidence.digest(b"release notes\n"))])
+    raw, meta = bundle["archive"]({"plan.json": evidence.encoded(plan)}, "dos2-plan-100-1")
+    (tmp_path / "plan.zip").write_bytes(raw)
+    (tmp_path / "case.json").write_bytes(evidence.encoded(dict(plan=plan, metadata=meta)))
+    script = r'''
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+
+assert sys.flags.isolated and sys.flags.no_site
+assert importlib.util.find_spec("pytest") is None and importlib.util.find_spec("_pytest") is None
+spec = importlib.util.spec_from_file_location("ci-runtime", sys.argv[1])
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+root = Path(sys.argv[2])
+case = json.loads((root / "case.json").read_bytes())
+plan, metadata = case["plan"], case["metadata"]
+queries, downloads = [], []
+
+def api(path):
+    queries.append(path)
+    assert path == "actions/runs/100/artifacts?per_page=100"
+    return dict(total_count=1, artifacts=[metadata])
+
+def command(*args, **kwargs):
+    downloads.append(args)
+    assert args == ("gh", "api", "repos/auguspp/Decision-OS-2/actions/artifacts/1/zip")
+    assert kwargs == dict(token=True)
+    return (root / "plan.zip").read_bytes()
+
+runtime.identity = lambda: plan["identity"]
+runtime.api, runtime.command = api, command
+os.environ["CI_NEEDS"] = json.dumps(dict(
+    prepare=dict(result="success", outputs=dict(scope="content")),
+    contracts=dict(result="skipped"), remaining=dict(result="skipped")))
+out = root / "valid"
+sys.argv = [runtime.__file__, "gate", "--out", str(out)]
+runtime.main()
+assert runtime.read(out, "summary.json") == dict(identity=plan["identity"], scope="content",
+    merge_eligible=True, executed_full_count=None, source=None)
+assert runtime.read(out, "plan.json") == plan
+assert runtime.read(out, "durations.json") == plan["durations"]
+assert len(queries) == len(downloads) == 1
+
+metadata["digest"] = "sha256:" + "0" * 64
+bad = root / "bad-digest"
+sys.argv = [runtime.__file__, "gate", "--out", str(bad)]
+try:
+    runtime.main()
+except ValueError as error:
+    assert str(error) == "ARCHIVE_DIGEST"
+else:
+    raise AssertionError("invalid artifact digest must fail without a success summary")
+assert not (bad / "summary.json").exists()
+assert len(queries) == len(downloads) == 2
+assert not any(name == "pytest" or name.startswith("_pytest") for name in sys.modules)
+'''
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", script, runtime.__file__, str(tmp_path)],
+                            check=True, capture_output=True, text=True, timeout=30)
+    assert result.stdout.splitlines() == ["VALIDATED_SCOPE=content MERGE_ELIGIBLE=True"]

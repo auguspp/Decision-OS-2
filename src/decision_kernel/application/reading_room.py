@@ -134,7 +134,8 @@ class ReadingRoom:
                 "kind": payload["kind"], "body": body, "body_sha256": digest(body.encode("utf-8")),
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
-    def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True):
+    def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
+              watch_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
@@ -160,6 +161,10 @@ class ReadingRoom:
         if plan["reference"] is not None and plan["reference"] not in refs:
             refs.append(plan["reference"])
         agenda = _panel(lambda: self._agenda(refs, plan), plan["agenda"])
+        from decision_kernel.application.watch_evidence import export_required
+        if agenda["status"] == "readable" and export_required(agenda["view"]) and not watch_export:
+            agenda = {"reference": plan["agenda"], "status": "sources-permission-required",
+                      "error": "ROOM_PUBLIC_WATCH_EVIDENCE_NOT_CONFIRMED"}
         brief = {"reference": None, "status": "not-supplied"}
         if latest_selector(plan["brief"]):
             brief = {"reference": None, "status": discovery["status"]}
@@ -178,6 +183,9 @@ class ReadingRoom:
                 if not industry_export and "industry" in doc:
                     brief = {"reference": plan["brief"], "status": "sources-permission-required",
                              "error": "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED"}
+                if not watch_export and export_required(doc.get("research") or {}):
+                    brief = {"reference": plan["brief"], "status": "sources-permission-required",
+                             "error": "ROOM_PUBLIC_WATCH_EVIDENCE_NOT_CONFIRMED"}
         readings, used = [], 0
         for ref in refs:
             row = {"reference": deepcopy(ref),

@@ -48,6 +48,7 @@ def perform(store, payload, *, public=True, market_registry=None):
             payload["plan"], feedback_export=not public or payload.get("public_feedback_custody_confirmed") is True,
             material_export=not public or payload.get("public_material_custody_confirmed") is True,
             industry_export=not public or payload.get("public_sources_custody_confirmed") is True,
+            watch_export=not public or payload.get("public_sources_custody_confirmed") is True,
             market_export=not public or payload.get("public_sources_custody_confirmed") is True)
         result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result

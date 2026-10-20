@@ -20,6 +20,7 @@ from decision_kernel.domain.records import (
 from decision_kernel.domain.research_artifacts import ArtifactInput, artifact_reference
 
 SCHEMA = "research-agenda-v1"
+WATCH_SCHEMA = "research-agenda-v2"
 MAX_REFERENCES, MAX_CHANGES, MAX_STATE = 8, 32, 128
 MAX_DOCUMENT_BYTES, MAX_CARD_BYTES = 256 * 1024, 1024 * 1024
 MAX_VIEW_BYTES = 4 * 1024 * 1024
@@ -98,7 +99,7 @@ def choice(value):
 
 def plan_input(value):
     require(isinstance(value, dict) and {"references", "as_of"} <= set(value)
-            and set(value) <= {"references", "as_of", "baseline", "changes"}, "AGENDA_PLAN_SHAPE")
+            and set(value) <= {"references", "as_of", "baseline", "changes", "watch_evidence"}, "AGENDA_PLAN_SHAPE")
     clock(value["as_of"])
     refs, changes = value["references"], value.get("changes", [])
     require(isinstance(refs, list) and len(refs) <= MAX_REFERENCES, "AGENDA_REFERENCE_BOUND")
@@ -112,8 +113,12 @@ def plan_input(value):
         require(item["reference"] in refs, "AGENDA_CHOICE_OUTSIDE_SELECTION")
         if item["action"] == "defer" and item["review"]:
             require(clock(item["review"]["closes_at"]) > clock(value["as_of"]), "AGENDA_DEFER_ALREADY_ENDED")
-    return {"references": refs, "as_of": value["as_of"], "changes": changes,
-            "baseline": asdict(artifact_reference(value["baseline"])) if value.get("baseline") is not None else None}
+    result = {"references": refs, "as_of": value["as_of"], "changes": changes,
+              "baseline": asdict(artifact_reference(value["baseline"])) if value.get("baseline") is not None else None}
+    if "watch_evidence" in value:
+        from decision_kernel.application.watch_evidence import selections
+        result["watch_evidence"] = selections(value["watch_evidence"])
+    return result
 
 
 def _state(value, as_of):
@@ -169,7 +174,9 @@ class ResearchAgenda:
             require(len(raw) <= MAX_DOCUMENT_BYTES, "AGENDA_DOCUMENT_BOUND")
             doc = json.loads(raw)
             require(isinstance(doc, dict) and set(doc) == {"schema", "plan", "state"}
-                    and doc["schema"] == SCHEMA and encoded(doc) == raw, "AGENDA_DOCUMENT_INVALID")
+                    and isinstance(doc["plan"], dict)
+                    and doc["schema"] == (WATCH_SCHEMA if "watch_evidence" in doc["plan"] else SCHEMA)
+                    and encoded(doc) == raw, "AGENDA_DOCUMENT_INVALID")
             require(plan_input(doc["plan"]) == doc["plan"]
                     and _state(doc["state"], doc["plan"]["as_of"]) == doc["state"], "AGENDA_DOCUMENT_INVALID")
             return doc
@@ -229,6 +236,13 @@ class ResearchAgenda:
         return result
 
     def _project(self, doc, as_of, cards):
+        watch_rows = None
+        if "watch_evidence" in doc["plan"]:
+            from decision_kernel.application.watch_evidence import read_rows
+            watch_rows = read_rows(self.store, doc["plan"]["watch_evidence"], as_of)
+            for card in cards:
+                card["watch_evidence"] = [deepcopy(row) for row in watch_rows
+                                           if row["selection"]["reference"] == card["reference"]]
         state = {target_id(c["reference"], c["question_id"]): c for c in doc["state"]}
         for card in cards:
             if card["status"] != "readable":
@@ -268,6 +282,13 @@ class ResearchAgenda:
                   "research_assessment": "not-performed", "feedback_assessment": "submitted-claims-not-verified",
                   "human_acceptance": "not-established-by-agenda", "execution": "not-started",
                   "notification": "not-sent", "market_quiet": "not-assessed", "persistence": "not-written"}
+        if watch_rows is not None:
+            result["watch_evidence"] = watch_rows
+            result["unselected_watch_evidence"] = [deepcopy(row) for row in watch_rows
+                                                    if row["selection"]["reference"] not in refs]
+            result["watch_evidence_assessment"] = "retained-results-replayed-no-new-check-or-economic-assessment"
+            if any(row["status"] != "readable" for row in watch_rows):
+                result["status"] = "partial"
         return result
 
     def build(self, value):
@@ -275,6 +296,8 @@ class ResearchAgenda:
         previous = self._checked_document(plan["baseline"]) if plan["baseline"] else None
         if previous:
             require(clock(previous["plan"]["as_of"]) <= clock(plan["as_of"]), "AGENDA_BASELINE_AFTER_CLOCK")
+            if "watch_evidence" not in plan and "watch_evidence" in previous["plan"]:
+                plan["watch_evidence"] = deepcopy(previous["plan"]["watch_evidence"])
         cards = [self._card(ref) for ref in plan["references"]]
         previous_targets = {target_id(c["reference"], c["question_id"]) for c in previous["state"]} if previous else set()
         for selected in plan["changes"]:
@@ -284,7 +307,7 @@ class ResearchAgenda:
             require(card["status"] == "readable", "AGENDA_CHOICE_RESEARCH_UNREADABLE")
             require(selected["question_id"] is None or selected["question_id"] in {
                 q["question_id"] for q in card["questions"]}, "AGENDA_QUESTION_NOT_IN_ORIGINAL_RESEARCH")
-        doc = {"schema": SCHEMA, "plan": plan,
+        doc = {"schema": WATCH_SCHEMA if "watch_evidence" in plan else SCHEMA, "plan": plan,
                "state": reduce_state(previous["state"] if previous else [], plan)}
         raw = encoded(doc)
         require(len(raw) <= MAX_DOCUMENT_BYTES, "AGENDA_DOCUMENT_BOUND")

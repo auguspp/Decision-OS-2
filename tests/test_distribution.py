@@ -229,3 +229,7 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same cold wheel: original Relay business rows -> counts, without keys or network.
     from test_main_business import exercise_installed_main_business
     exercise_installed_main_business(outside, python, env)
+
+    # Same cold wheel: exact original forecast, actual source and normal Room/CLI.
+    from test_outcome_room_integration import exercise_installed_outcome
+    exercise_installed_outcome(command, outside, store)

@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "decision_preparation"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants", "event_calendar", "decision_preparation", "outcome"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -66,6 +66,9 @@ def plan_input(value):
         from decision_kernel.interfaces.decision_preparation_commands import preflight
         preflight("read-decision-preparation", value["decision_preparation"])
         result["decision_preparation"] = deepcopy(value["decision_preparation"])
+    if value.get("outcome") is not None:
+        from decision_kernel.application.reading_outcome import outcome_plan
+        result["outcome"] = outcome_plan(value["outcome"])
     return result
 
 
@@ -145,7 +148,7 @@ class ReadingRoom:
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
     def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
-              watch_export=True, participant_export=True, decision_export=True):
+              watch_export=True, participant_export=True, decision_export=True, outcome_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
@@ -155,6 +158,7 @@ class ReadingRoom:
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
         require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
         require(not plan.get("decision_preparation") or decision_export is True, "ROOM_PUBLIC_DECISION_PREPARATION_NOT_CONFIRMED")
+        require(not plan.get("outcome") or outcome_export is True, "ROOM_PUBLIC_OUTCOME_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
@@ -334,6 +338,22 @@ class ReadingRoom:
             prepared["open_request"] = request
             result["decision_preparation"] = prepared
             partial = partial or prepared["status"] != "readable" or prepared.get("view", {}).get("document", {}).get("status") == "partial"
+        if plan.get("outcome"):
+            from decision_kernel.application.reading_outcome import open_outcome
+            from decision_kernel.application.outcome_review import _fatal
+            try:
+                outcome = open_outcome(self.store, plan["outcome"], registry=self.market_registry)
+            except (RecordError, KeyError, TypeError) as error:
+                # Access and source/API budgets terminate the whole export;
+                # the component owner has already retained ordinary row gaps.
+                if _fatal(error):
+                    raise
+                failure = ({"status": "not-included", "error": "OUTCOME_RESULT_BOUND"}
+                           if isinstance(error, RecordError) and str(error) == "OUTCOME_RESULT_BOUND"
+                           else _failure(error))
+                outcome = {"plan": plan["outcome"], **failure}
+            result["outcome"] = outcome
+            partial = partial or outcome["status"] != "readable" or outcome.get("partial", False)
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

@@ -26,6 +26,8 @@ from decision_kernel.infrastructure.relay_http import ROOT
 SPEC_RECORD = "frozen-valuation-record-v1"
 RESULT_RECORD = "conditional-odds-record-v1"
 RECORD_LAYOUTS = {
+    # This custody envelope wraps either activity event version. Segment seals
+    # are ordinary ResearchArtifacts and share its original store/journal.
     "odds-watch-activity-record-v1": ("odds-watch-activity-", "odds-watch-activity.json"),
     "frozen-odds-watch-record-v1": ("odds-watch-", "odds-watch.json"),
     "odds-watch-check-record-v1": ("odds-watch-check-", "odds-watch-check.json"),

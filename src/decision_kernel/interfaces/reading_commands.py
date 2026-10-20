@@ -39,6 +39,10 @@ def preflight(operation, payload, *, public=True):
             "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
     require(not plan.get("event_calendar") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
+    require(not plan.get("decision_preparation") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_DECISION_PREPARATION_NOT_CONFIRMED")
+    require(not plan.get("outcome") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_OUTCOME_NOT_CONFIRMED")
     require(not plan.get("structure") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_STRUCTURE_NOT_CONFIRMED")
 
@@ -56,7 +60,9 @@ def perform(store, payload, *, public=True, market_registry=None):
             industry_export=not public or payload.get("public_sources_custody_confirmed") is True,
             watch_export=not public or payload.get("public_sources_custody_confirmed") is True,
             market_export=not public or payload.get("public_sources_custody_confirmed") is True,
-            participant_export=not public or payload.get("public_sources_custody_confirmed") is True)
+            participant_export=not public or payload.get("public_sources_custody_confirmed") is True,
+            decision_export=not public or payload.get("public_sources_custody_confirmed") is True,
+            outcome_export=not public or payload.get("public_sources_custody_confirmed") is True)
         result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result
 

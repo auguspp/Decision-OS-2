@@ -10,6 +10,10 @@
 
 复用官方CNINFO固定地址、表单、身份、原始毫秒时间戳与安全PDF定位合同，不下载PDF，不猜测orgId。目录时间是来源声称，不能替实际阅读原件；全文/报告期/可持续盈利仍由Quick核查。源明确401/403/429后停止该提供方全部关键词，持久 `source_hold` 阻止次日自动重试，解除需具体授权和已核前提；不是更换网址重试。一般失败保留良好页面，不写零公告。已成功保管的同日提交只读恢复，不重新抓取。
 
+每个新查询表示增加 `rejected_row_details`：只保留从1起算的原 `page_number`、页内 `row_number` 和固定集合内的 `reason_code`。它记录各行首次失败的验证，不保存拒绝行正文／标题／原URL，不执行或回显来源中的指令；未知异常文字统一为 `DISCOVERY_ROW_INVALID`。诊断数量等于原 `rejected_rows`，仍受每类4页×30行的原范围限制；合格行、总行数、重复、分页缺口和来源停止语义不变。新字段随原 `SourceInput`、独立 `read-source` 和精确版本保管读取，不建另一份诊断库。
+
+历史 `announcement-discovery-v1` 表示可以没有该字段；缺失表示当时未记录逐行原因，不能补成空数组来宣称零拒绝，原计数和未知原因均保留。新增诊断不改变公告 `version_id` 或已有版本比较，不改写旧SourceRef和同日意图。旧窗口无效行的原始内容未保留时，不能用新代码、另一次采集或合成行补造原因；只在后续正常已授权窗口产生新诊断。[共享CNINFO传输](../sources/cninfo-catalog.md#错误保留维护)的声明长度／部分正文校验仍保留前页，并沿原有限错误报告失败。
+
 原始获准元数据摘取经 `SourceInput` 同仓保管；固定 `source_id`/`submission_id` 为 `announcement-discovery-YYYYMMDD`，日期为该次窗口终点；实际取得时钟单列，历史重放不能认证当时已知。保留 `source-input.json` 与 `intent.json` 原意图，CAS/未知写不改键重抓，按现役只读对账恢复。30天Actions产物不是长期备份。只允许main、首次attempt与独立对应mainCI；每次核实际原生可见性，Public 沿[已授权的现仓公开合同](../engineering/public-runtime.md)核同一目标与来源范围，不把 Public 填成 Private。数据不在PR里。主线CI失败时停止采集，不绕过。
 
 ## 2. Hosted Quick 的真实执行合同

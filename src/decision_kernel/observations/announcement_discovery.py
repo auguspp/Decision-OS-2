@@ -13,6 +13,13 @@ from decision_kernel.observations.cninfo_catalog import PAGE_SIZE, MAX_PAGES, _p
 
 SCHEMA = "announcement-discovery-v1"
 TERMS = ("业绩", "报告", "合同", "中标", "投资", "风险", "更正")
+# Only validation codes are retained. Source values and arbitrary exception text
+# do not belong in rejection diagnostics; page/row positions are one-based.
+_ROW_REJECTION_REASONS = frozenset({
+    "DISCOVERY_ROW_INVALID", "DISCOVERY_ID_INVALID", "CNINFO_STOCK_CODE_REQUIRED",
+    "CNINFO_TITLE_REQUIRED", "CNINFO_TITLE_MARKUP_INVALID", "CNINFO_PUBLICATION_TIME_INVALID",
+    "CNINFO_PUBLICATION_OUTSIDE_WINDOW", "CNINFO_PDF_LOCATOR_INVALID", "INVALID_TEXT", "INVALID_UTF8",
+})
 
 
 def window(start, end):
@@ -65,6 +72,7 @@ def normalize_query(term, pages, *, start, end, error=None):
     window(start, end)
     result = {"term": term, "stock_filter": None, "advertised_total": None, "pages_read": len(pages),
               "rows_read": 0, "rejected_rows": 0, "duplicate_rows": 0, "entries": [],
+              "rejected_row_details": [],
               "complete_query": False, "gaps": [], "status": "unavailable"}
     seen = set()
     for number, page in enumerate(pages, 1):
@@ -82,11 +90,16 @@ def normalize_query(term, pages, *, start, end, error=None):
         if len(rows) != min(PAGE_SIZE, max(0, total - (number-1)*PAGE_SIZE)):
             result["gaps"].append("SHORT_OR_OVERLAPPING_PAGE")
         result["rows_read"] += len(rows)
-        for raw in rows:
+        for row_number, raw in enumerate(rows, 1):
             try:
                 row = normalize_row(raw, start, end)
-            except RecordError:
+            except RecordError as exc:
                 result["rejected_rows"] += 1
+                reason = str(exc)
+                result["rejected_row_details"].append({
+                    "page_number": number, "row_number": row_number,
+                    "reason_code": reason if reason in _ROW_REJECTION_REASONS else "DISCOVERY_ROW_INVALID",
+                })
                 continue
             if row["version_id"] in seen:
                 result["duplicate_rows"] += 1

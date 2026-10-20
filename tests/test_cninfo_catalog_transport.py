@@ -1,6 +1,8 @@
 """Only modeled HTTP responses; never claim live CNINFO provider acceptance."""
 import json
 from datetime import datetime
+from http.client import HTTPException, IncompleteRead
+from io import BytesIO
 from urllib.error import HTTPError
 
 import pytest
@@ -16,10 +18,13 @@ class FakeResponse:
     status = 200
     def __init__(self, url, body=b'{}', headers=None):
         self.url, self.body, self.headers = url, body, headers or {"Content-Type":"application/json"}
+        self.closed, self.read_calls = False, 0
     def geturl(self): return self.url
-    def read(self, limit): return self.body[:limit]
+    def read(self, limit):
+        self.read_calls += 1
+        return self.body[:limit]
     def __enter__(self): return self
-    def __exit__(self, *args): return None
+    def __exit__(self, *args): self.closed = True
 
 
 class FakeOpener:
@@ -91,3 +96,47 @@ def test_malformed_response_and_explicit_denial_keep_bounded_errors():
     opener.fake = HTTPError(ORG_SEARCH, 403, "sensitive upstream body", {}, None)
     with pytest.raises(RecordError, match="CNINFO_HTTP_403"):
         http(ORG_SEARCH, {})
+
+
+@pytest.mark.parametrize("length", ["0", "1", "3", "-1", "two", " 2", "2, 2", "２",
+    str(MAX_RESPONSE + 1), "9" * 30])
+def test_declared_length_cannot_qualify_a_different_or_unbounded_body(length):
+    response = FakeResponse(ORG_SEARCH, b'{}', {
+        "Content-Type": "application/json", "Content-Length": length})
+    opener = FakeOpener(response)
+    with pytest.raises(RecordError, match="^CNINFO_RESPONSE_LENGTH_INVALID$"):
+        OfficialCatalogTransport(opener=opener)(ORG_SEARCH, {})
+    assert response.closed and len(opener.calls) == 1
+    if length == str(MAX_RESPONSE + 1):
+        assert response.read_calls == 0  # Reject a declared oversized body before reading it.
+
+
+@pytest.mark.parametrize("length", [None, "2"])
+def test_complete_bounded_json_still_accepts_optional_correct_content_length(length):
+    headers = {"Content-Type": "application/json"}
+    if length is not None:
+        headers["Content-Length"] = length
+    response = FakeResponse(ORG_SEARCH, b'{}', headers)
+    assert OfficialCatalogTransport(opener=FakeOpener(response))(ORG_SEARCH, {}) == {}
+    assert response.closed
+
+
+@pytest.mark.parametrize("failure", [IncompleteRead(b"private-response-fragment", 100),
+    HTTPException("private-upstream-detail")])
+def test_partial_http_body_is_a_bounded_source_failure_and_closes_response(failure):
+    class BrokenResponse(FakeResponse):
+        def read(self, limit):
+            raise failure
+    response = BrokenResponse(ORG_SEARCH)
+    opener = FakeOpener(response)
+    with pytest.raises(RecordError, match="^CNINFO_TRANSPORT_UNAVAILABLE$"):
+        OfficialCatalogTransport(opener=opener)(ORG_SEARCH, {})
+    assert response.closed and len(opener.calls) == 1
+
+
+def test_explicit_http_refusal_closes_its_body_without_exposing_it():
+    body = BytesIO(b"private-denial-body")
+    opener = FakeOpener(HTTPError(ORG_SEARCH, 429, "private-denial-detail", {}, body))
+    with pytest.raises(RecordError, match="^CNINFO_HTTP_429$"):
+        OfficialCatalogTransport(opener=opener)(ORG_SEARCH, {})
+    assert body.closed and len(opener.calls) == 1

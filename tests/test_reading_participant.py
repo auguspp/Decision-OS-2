@@ -1,13 +1,20 @@
 """Participant family paging and checked command composition on retained sources."""
 from copy import deepcopy
 from dataclasses import asdict
+import io
+import json
+from urllib.error import HTTPError
 
 import pytest
 
 from decision_kernel.application import reading_participant as panel
-from decision_kernel.domain.records import RecordError, encoded
-from decision_kernel.interfaces import participant_commands
-from test_participant_reading import saved
+from decision_kernel.domain.records import RecordError, StoreUnavailable, encoded
+from decision_kernel.infrastructure.github_store import API_ROOT
+from decision_kernel.interfaces import participant_commands, research_runtime
+from decision_kernel.interfaces.reading_page import render_page
+from test_participant_reading import PREPARED, saved, saved_page_custody
+from test_reading_scope import transport
+from test_research_runtime import CODE, inputs
 
 
 def test_family_pages_keep_whole_scope_refs_and_next_plan(saved):
@@ -57,3 +64,60 @@ def test_command_uses_exact_ref_and_pure_reader_without_registering_new_host_act
     with pytest.raises(RecordError, match='PAYLOAD'):
         participant_commands.perform(store, {'reference': asdict(ref), 'execute': True})
     assert not hasattr(participant_commands, 'OPERATION')
+
+
+def test_native_room_reads_large_compressed_page_tail_with_original_scope(saved_page_custody, tmp_path):
+    model, original, cases = saved_page_custody
+    ref, body = cases['gzip']
+    before, api = model.git.head(), transport(model)
+    plan = {'as_of': PREPARED, 'participants': {'reference': asdict(ref), 'family': 'northbound',
+                                              'offset': 1439, 'limit': 1}}
+    output = tmp_path / 'compressed-room'
+    report = research_runtime.run_command(model.binding, api=api,
+        inputs=inputs('reading-room', {'plan': plan}), code_sha=CODE, output=output)
+    part = report['result']['participants']
+    view = part['view']
+    assert report['status'] == 'completed' and report['repository_visibility'] == 'private'
+    assert part['status'] == 'readable' and part['partial'] and part['next_plan'] is None
+    assert view['page']['query_rows'] == 1440 and view['page']['returned'] == 1
+    assert view['rows'][0]['raw'] == original['rows'][-1] and view['rows'][0]['source_row'] == 1724
+    assert view['scope']['raw_rows'] == 1601 and view['scope']['accepted_rows'] == 1441
+    assert view['scope']['rejected_rows'] == 160 and view['scope']['incomplete_inputs'] == 1
+    assert len(view['families']) == 8
+    assert encoded(view['input_outcomes'][0]['references']) == encoded(body['inputs'][0]['references'])
+    assert view['input_outcomes'][0]['physical_pages'] == [original['physical_page']]
+    assert view['input_outcomes'][0]['control']['error'] == 'SYNTHETIC_TERMINAL_FAILURE'
+    assert len(encoded(view)) <= 768 * 1024
+    assert (output / 'reading-room.html').read_text() == render_page(report['result'])
+    assert view['source_requests'] == view['writes'] == model.writes == 0
+    assert model.git.head() == before and 0 < api._requests < 512
+
+
+def test_native_tail_authorization_failure_stops_room_before_neighbor_or_export(
+        saved_page_custody, tmp_path):
+    model, _, cases = saved_page_custody
+    ref, body = cases['gzip']
+    tail = body['inputs'][0]['references'][-1]['manifest']
+    blob = model.git._run('rev-parse', tail['commit'] + ':' + tail['path']).stdout.decode().strip()
+    target = API_ROOT + '/repos/' + model.binding.repository + '/git/blobs/' + blob
+    api, calls = transport(model), []
+    original, denied = api._opener, []
+    class OneDeniedTail:
+        def open(self, request, timeout):
+            calls.append(request.full_url)
+            if not denied and request.full_url == target:
+                denied.append(len(calls) - 1)
+                raise HTTPError(target, 403, 'Synthetic one-shot refusal', {}, io.BytesIO(b'Synthetic refusal'))
+            return original.open(request, timeout)
+    api._opener = OneDeniedTail()
+    before, output = model.git.head(), tmp_path / 'denied-tail'
+    plan = {'as_of': PREPARED, 'participants': {'reference': asdict(ref), 'family': 'public-seats',
+                                              'company_id': 'no-matching-company'}}
+    with pytest.raises(StoreUnavailable, match='^REMOTE_NOT_AUTHORIZED$'):
+        research_runtime.run_command(model.binding, api=api,
+            inputs=inputs('reading-room', {'plan': plan}), code_sha=CODE, output=output)
+    assert denied == [len(calls) - 1] and calls[-1] == target
+    report = json.loads((output / 'report.json').read_bytes())
+    assert report['status'] == 'failed' and report['error'] == 'REMOTE_NOT_AUTHORIZED' and 'result' not in report
+    assert sorted(path.name for path in output.iterdir()) == ['report.json']
+    assert model.git.head() == before and model.writes == 0 and 0 < api._requests < 512

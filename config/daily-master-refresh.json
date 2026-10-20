@@ -1,0 +1,10 @@
+{
+  "schema": "daily-master-refresh-policy-v1",
+  "trigger": "every-new-completed-session",
+  "venues": ["SSE", "SZSE"],
+  "list_status": "L",
+  "page_size": 500,
+  "max_pages_per_venue": 20,
+  "max_attempts_per_page": 4,
+  "max_wait_seconds_per_page": 180
+}

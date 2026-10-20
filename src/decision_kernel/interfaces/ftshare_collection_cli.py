@@ -312,13 +312,15 @@ def _work_slot_counts(collection):
         for status in ("pending", "in-flight", "complete", "failed")}
 
 
-def _check_sync_plan(collection, config, calendar_references):
+def _check_sync_plan(collection, config, calendar_references, master_references=None):
     """A retained generation cannot silently acquire a different configured scope."""
     plan = collection["plan"]
     require(all(plan[key] == config[key] for key in ("collection_id", "generation", "legacy_reference")),
         "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
     require(calendar_references is None or plan["calendar_references"] == calendar_references,
         "FTSHARE_RUNTIME_RESUME_CALENDAR_CHANGED")
+    require(master_references is None or plan["master_references"] == master_references,
+        "FTSHARE_RUNTIME_RESUME_MASTER_CHANGED")
     sync = config.get("kernel_sync")
     if sync is None:
         require(plan["schema"] == PLAN_SCHEMA, "FTSHARE_RUNTIME_RESUME_CONFIG_CHANGED")
@@ -465,7 +467,8 @@ def _run_kernel_adoption(*, config, registry, open_unit, kernel_loader,
 def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                    access_confirmed=False, custody_authorized=False, client_factory=None,
                    guard=None, progress=None, clock=None, monotonic=time.monotonic,
-                   sleep=time.sleep, capacity=market_capacity, calendar_references=None, kernel_loader=None,
+                   sleep=time.sleep, capacity=market_capacity, calendar_references=None, master_references=None,
+                   kernel_loader=None,
                    quota_wait=None):
     """Finite source sync, source-free adoption, or independently restored status."""
     require(operation in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
@@ -475,6 +478,8 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
     require(not writing or access_confirmed is True and custody_authorized is True,
         "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
     single = config.get("kernel_sync") is not None
+    require(master_references is None or operation == "ftshare-sync" and single,
+            "FTSHARE_RUNTIME_MASTER_OVERRIDE_REQUIRES_SINGLE_SYNC")
     if operation == "ftshare-adopt-kernel":
         require(not single, "FTSHARE_RUNTIME_KERNEL_ADOPTION_GENERATION_CLOSED")
         require(calendar_references is None, "FTSHARE_RUNTIME_STATUS_CALENDAR_OVERRIDE")
@@ -551,12 +556,13 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                             collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
                             start=sync["start"], end=sync["end"], targets=sync["targets"],
                             source_budget=sync["source_budget"], calendar_references=calendar_references,
+                            master_references=master_references,
                             completion_policy=sync.get("completion_policy"))
                     else:
                         collection = plan_ftshare_collection(config["legacy_reference"], registry, reader,
                             collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
                             calendar_references=calendar_references)
-                    _check_sync_plan(collection, config, calendar_references)
+                    _check_sync_plan(collection, config, calendar_references, master_references)
             summary = _summary(collection)
             if summary["source_hold"] is not None:
                 receipt.update(status="source-held", reason_code=summary["source_hold"]["reason_code"])

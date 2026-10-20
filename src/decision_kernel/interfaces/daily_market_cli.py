@@ -15,8 +15,9 @@ import time
 from urllib.parse import urlencode
 
 from decision_kernel.application.daily_market import (
-    SUCCESS, VENUES, _stamp, calendar_plan, completed_session, daily_market_reference,
-    initial_cycle, next_state, policy, price_configuration, retain_cycle,
+    MASTER_SCHEMA, SUCCESS, VENUES, _stamp, calendar_plan, check_cycle_frontier,
+    completed_session, daily_market_reference, initial_cycle, latest_cycle,
+    next_state, policy, price_configuration, retain_cycle,
 )
 from decision_kernel.application.ftshare_collection_inputs import read_ftshare_collection_version
 from decision_kernel.application.market_capacity import market_capacity
@@ -38,6 +39,7 @@ from decision_kernel.interfaces.market_collection_cli import BINDING_ENV, REGIST
 WORKFLOW = ".github/workflows/daily-market.yml"
 TITLE = "decision-os-daily-market"
 POLICY_FILE = Path("config/daily-market.json")
+MASTER_POLICY_FILE = Path("config/daily-master-refresh.json")
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 ADMISSION_REQUESTS = 240
 MAX_QUOTA_REFRESH_WAITS = 5
@@ -229,7 +231,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               guard=None, calendar_client_factory=None, price_client_factory=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
               sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False,
-              calendar_repair=None, write_reconciliation=None, reconciliation_verifier=None):
+              calendar_repair=None, write_reconciliation=None, reconciliation_verifier=None,
+              master_refresh=None, master_client_factory=None, execute_master_unit=None):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
@@ -237,11 +240,14 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     require(calendar_repair is None or operation == "update", "DAILY_CALENDAR_REPAIR_OPERATION")
     require(write_reconciliation is None or operation == "update" and calendar_repair is None,
         "DAILY_WRITE_RECONCILIATION_OPERATION")
+    if master_refresh is not None:
+        from decision_kernel.application.daily_master_refresh import policy as master_policy
+        master_refresh = master_policy(master_refresh)
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda api: None)
     report = {"schema": "daily-market-runtime-v1", "operation": operation, "status": "started",
         "reason_code": None, "source_requests": 0, "calendar_source_requests": 0,
-        "price_source_requests": 0, "calendar_source_budget": 2,
+        "price_source_requests": 0, "master_source_requests": 0, "calendar_source_budget": 2,
         "price_source_budget": approved["max_price_requests"], "stock_count": len(approved["symbols"]),
         "schedule_enabled": approved["enabled"], "scheduled_time": "18:35 Asia/Shanghai Monday-Friday",
         "started_at": clock(), "admission": None,
@@ -250,10 +256,12 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     item = None
     control = {"schema": "daily-market-reading-control-v1", "market_reference": None,
         "cycle_reference": None, "generation": None, "calendar_references": {},
+        "master_references": {},
         "frontier_reason_code": None, "frontier_blocking_reference": None,
         "frontier_successor_references": []}
     def update():
-        report["source_requests"] = report["calendar_source_requests"] + report["price_source_requests"]
+        report["source_requests"] = (report["calendar_source_requests"] + report["price_source_requests"]
+            + report["master_source_requests"])
         quota_receipt = getattr(open_unit, "quota_receipt", None)
         if callable(quota_receipt):
             report["store_quota_wait"] = quota_receipt()
@@ -273,6 +281,13 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             report["write_reconciliation"] = _reconciliation_summary(item["cycle"])
         elif item is not None:
             report.pop("write_reconciliation", None)
+        if item is not None and item["cycle"]["schema"] == MASTER_SCHEMA:
+            report["master_refresh"] = deepcopy(item["cycle"]["master_refresh"])
+            report["master_reserved_queries"] = sum(row["reserved_queries"]
+                for row in item["cycle"]["masters"].values())
+            report["master_query_budget"] = 2
+            report["master_page_budget"] = 40
+            report["master_source_budget"] = 160
         if progress is not None:
             progress(deepcopy(report), deepcopy(control))
     def save(state, store, fresh):
@@ -287,6 +302,62 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             require(capacity(fresh())["admit_work_unit"] is True, "DAILY_MARKET_STORAGE_CAPACITY")
             _admit(api)
         return store, fresh, api
+    def refresh_masters():
+        from decision_kernel.application.daily_master_refresh import run_master_unit
+        execute = execute_master_unit or run_master_unit
+        for venue in VENUES:
+            if item["cycle"]["masters"][venue]["status"] == "complete":
+                continue
+            if item["cycle"]["masters"][venue]["status"] == "pending":
+                store, fresh, api = unit(True)
+                masters = deepcopy(item["cycle"]["masters"])
+                masters[venue].update(status="in-flight", reserved_queries=1)
+                save(next_state(item, at=clock(), masters=masters), store, fresh)
+            # One accepted source attempt per finite unit, with one final
+            # zero-request promotion allowed. Checkpoints keep the original
+            # per-page retry allowance across clients and native quota windows.
+            for _ in range(81):
+                store, fresh, api = unit(True)
+                def preflight(reader):
+                    require(latest_cycle(reader, registry=registry, protected_symbols=approved["symbols"]) == item,
+                        "DAILY_MARKET_STALE_CONTROL")
+                    check_cycle_frontier(item["cycle"], registry, reader, protected_symbols=approved["symbols"])
+                def admitted():
+                    guard(api)
+                    _admit(api)
+                value = execute(cycle=item["cycle"], venue=venue, registry=registry, store=store,
+                    fresh_reader=fresh, client_factory=master_client_factory or calendar_client_factory,
+                    clock=clock, monotonic=monotonic, sleep=sleep, guard=admitted,
+                    preflight=preflight)
+                count = value["source_requests"]
+                require(type(count) is int and 0 <= count <= 1, "DAILY_MASTER_WORK_UNIT_BUDGET")
+                report["master_source_requests"] += count
+                report["master_execution"] = {**deepcopy(value), "venue": venue}
+                update()
+                if value["status"] in {"complete", "failed", "source-held"}:
+                    masters = deepcopy(item["cycle"]["masters"])
+                    complete = value["status"] == "complete"
+                    masters[venue].update(status="complete" if complete else "failed",
+                        reference=value.get("reference") if complete else None,
+                        checkpoint_reference=value.get("checkpoint_reference"),
+                        reason_code=None if complete else value["reason_code"] or "DAILY_MASTER_REVIEW_REQUIRED")
+                    store, fresh, api = unit(True)
+                    save(next_state(item, at=clock(), masters=masters,
+                        status="master-pending" if complete else "blocked",
+                        reason_code=None if complete else masters[venue]["reason_code"]), store, fresh)
+                    if not complete:
+                        report.update(status=value["status"], reason_code=masters[venue]["reason_code"])
+                        return
+                    break
+                require(value["status"] in {"partial", "persistence-unconfirmed"}, "DAILY_MASTER_UNIT_STATUS")
+                if value["status"] == "persistence-unconfirmed" or count == 0:
+                    report.update(status=value["status"], reason_code=value.get("reason_code"))
+                    return
+            else:
+                report.update(status="partial", reason_code="DAILY_MASTER_WORK_UNIT_BOUND")
+                return
+        store, fresh, api = unit(True)
+        save(next_state(item, at=clock(), status="market-pending"), store, fresh)
     quota_progress = getattr(open_unit, "set_quota_progress", None)
     if callable(quota_progress):
         quota_progress(update)
@@ -299,7 +370,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             repair_new = False
             reconciliation_new = False
             if write_reconciliation is not None:
-                from decision_kernel.application.daily_market import latest_cycle, policy_digest
+                from decision_kernel.application.daily_market import policy_digest
                 from decision_kernel.application.daily_write_reconciliation import select_reconciliation
                 current = latest_cycle(fresh_market_reader(store, fresh), registry=registry,
                     protected_symbols=approved["symbols"])
@@ -318,9 +389,10 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         report["write_reconciliation_native_proof"] = reconciliation_verifier(write_reconciliation)
             elif calendar_repair is None:
                 prepared = initial_cycle(approved, fresh_market_reader(store, fresh), registry,
-                    at=clock(), admission_at=admission_at, allow_late=allow_late)
+                    at=clock(), admission_at=admission_at, allow_late=allow_late,
+                    master_refresh=master_refresh)
             else:
-                from decision_kernel.application.daily_market import latest_cycle, policy_digest
+                from decision_kernel.application.daily_market import policy_digest
                 from decision_kernel.application.daily_calendar_repair import select_repair
                 current = latest_cycle(fresh_market_reader(store, fresh), registry=registry,
                     protected_symbols=approved["symbols"])
@@ -419,7 +491,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     try:
                         session = completed_session(item["cycle"], registry, fresh_market_reader(store, fresh))
                         save(next_state(item, at=clock(), price_end=session["price_end"],
-                            status="market-pending" if session["new_session"] else "no-new-session",
+                            status=("master-pending" if item["cycle"]["schema"] == MASTER_SCHEMA else "market-pending")
+                                if session["new_session"] else "no-new-session",
                             market_reference=None if session["new_session"] else item["cycle"]["base_market_reference"]),
                             store, fresh)
                     except Exception as exc:
@@ -427,6 +500,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                             raise
                         save(next_state(item, at=clock(), status="blocked", reason_code=_reason(exc)), store, fresh)
                         raise
+                if item["cycle"]["status"] == "master-pending":
+                    refresh_masters()
                 if item["cycle"]["status"] == "market-pending":
                     config = price_configuration(item["cycle"], approved, registry, fresh_market_reader(store, fresh))
                     references = {venue: item["cycle"]["calendars"][venue]["reference"] for venue in VENUES}
@@ -439,6 +514,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         access_confirmed=True, custody_authorized=True, client_factory=price_client_factory,
                         guard=guard, progress=price_progress, clock=clock, monotonic=monotonic,
                         sleep=sleep, capacity=capacity, calendar_references=references,
+                        **({"master_references": {v: item["cycle"]["masters"][v]["reference"] for v in VENUES}}
+                            if item["cycle"]["schema"] == MASTER_SCHEMA else {}),
                         quota_wait=getattr(open_unit, "quota_wait", None))
                     price = executed["receipt"]
                     report["price_source_requests"], report["price_execution"] = price["source_requests"], price
@@ -452,7 +529,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         save(next_state(item, at=clock(), status="blocked",
                             reason_code=price["reason_code"] or "DAILY_MARKET_PRICE_REVIEW_REQUIRED"), store, fresh)
                     report.update(status=price["status"], reason_code=price["reason_code"])
-                else:
+                elif item["cycle"]["status"] != "master-pending" and report["status"] not in {
+                        "failed", "source-held", "persistence-unconfirmed"}:
                     report["status"] = item["cycle"]["status"]
     except Exception as exc:
         reason = _reason(exc)
@@ -464,7 +542,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             "DAILY_MARKET_BEFORE_CLOSE", "DAILY_MARKET_NO_RECENT_SCHEDULE"} else
             "persistence-unconfirmed" if isinstance(exc, UnknownWrite) else "blocked", reason_code=reason)
     # Latest attempts remain visible; a failed update does not silently become
-    # an older green snapshot. The normal reader keeps all 5,226 denominator gaps.
+    # an older green snapshot. The normal reader keeps the actual complete
+    # current-L denominator and every retained request owner.
     try:
         _, fresh, api = unit(False)
         reader = fresh()
@@ -487,6 +566,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     calendar_source_budget=3, calendar_repair=deepcopy(current["calendar_repair"]))
             control.update(generation=current["market_generation"], calendar_references={venue: row["reference"]
                 for venue, row in current["calendars"].items() if row["reference"] is not None})
+            if current["schema"] == MASTER_SCHEMA:
+                control["master_references"] = {venue: row["reference"]
+                    for venue, row in current["masters"].items() if row["reference"] is not None}
             report.update(cycle_date=current["date"], cycle_status=current["status"],
                 calendar_checked_through=current["calendar_end"]
                     if all(row["status"] == "complete" for row in current["calendars"].values()) else None,
@@ -522,6 +604,9 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         repair_options["write_reconciliation"] = load_grant()
         repair_options["reconciliation_verifier"] = lambda grant: verify_native_reconciliation(
             api, grant, token=env[TOKEN_ENV])
+    elif selected["operation"] == "update":
+        from decision_kernel.application.daily_master_refresh import policy as master_policy
+        repair_options["master_refresh"] = master_policy(_json(_regular(MASTER_POLICY_FILE, 8192)))
     now = datetime.now(timezone.utc)
     # Freeze admission to the native invocation clock, even if a queue or a
     # safe quota wait later crosses midnight. Only schedule/recover-late may

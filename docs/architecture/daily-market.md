@@ -6,11 +6,13 @@
 
 日历传输失败的一次显式恢复见[日历恢复合同](daily-calendar-repair.md)；原写入实际已保管而宿主回执未知的固定五笔对账，见[原写入接续合同](daily-write-reconciliation.md)。两者均保留旧失败与已用预算，普通调度不能自动启动恢复授权。
 
-可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。保留原市场 5226 只分母；六只日常更新不能代签全市场完成。
+后续新周期的完整 current-L 主表刷新与正常 FT 后继采用，见[主表刷新合同](daily-master-refresh.md)。新 v4 周期在两所日历确认新增已完成交易日后、价格预留前执行主表阶段；旧 v1/v2/v3 周期仍按原意图恢复，不追加主表请求。当前仓库的公开部署与资料发布按[公开运行合同](../engineering/public-runtime.md)的既有可撤销授权判定，本文件历史 private 描述不另设公开授权障碍。
+
+可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。原完整主表的 5226 只分母留在旧版本；新完整主表采用时由实际 scope 重建分母，隔离项和未覆盖证券继续计数。六只日常更新不能代签全市场完成。
 
 [daily-market.yml](../../.github/workflows/daily-market.yml) 使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。时区换算固定 UTC+8，没有自建时钟服务。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
 
-每个业务日期至多建立一个正常日更周期，一次调用最多推进一个既存或新周期，每周期最多 **2 个实际交易日历请求 + 12 个 FTShare 单股整段请求**。两所 `trade_cal` 返回全部开闭市日，按实际完整日历决定最后已完成交易日，不凭星期推定开市。休市且没有新增交易日时只保留实际日历与原市场引用，不重抓价格。新开市日使用最长 119 自然日整段窗口；是否足够 5/20/60 交易日比较由实际会话及价格点判定，119 天不是保证，缺点继续显示 partial。
+每个业务日期至多建立一个正常日更周期，一次调用最多推进一个既存或新周期。日历与价格原预算仍为 **2 个实际交易日历请求 + 12 个 FTShare 单股整段请求**；新 v4 周期另有两所完整主表查询，各最多20页、每页500行及原4次尝试/180秒等待，最多40页/160次实际主表HTTP，不能把两次完整查询写成只有两次HTTP。两所 `trade_cal` 返回全部开闭市日，按实际完整日历决定最后已完成交易日，不凭星期推定开市。休市且没有新增交易日时只保留实际日历与原市场引用，不重抓主表或价格。新开市日使用最长119自然日整段窗口；是否足够5/20/60交易日比较由实际会话及价格点判定，119天不是保证，缺点继续显示partial。
 
 ### 延迟调度与显式补更
 
@@ -78,7 +80,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 | 输出 | 含义 |
 |---|---|
 | `result.json` | 安全计数、周期状态、实际请求与失败、原生代码身份及 invocation、正常 reader 的 freshness / coverage；`admission` 保留准入模式、原生准入时刻、业务日、计划槽、延迟及适用上限，`store_quota_wait` 保留同次运行的原生等待和额度观察。没有研究执行或通知。 |
-| `control.json` | 同 private 产物内的确切 `cycle_reference`、当前实际 `market_reference`、周期 generation 和已保管日历引用，供现役正常消费者使用。另保留 `frontier_reason_code`、首个 `frontier_blocking_reference` 和实际经过的 `frontier_successor_references`。 |
+| `control.json` | 同产物内的确切 `cycle_reference`、当前实际 `market_reference`、周期 generation 和已保管日历/主表引用，供现役正常消费者使用。另保留 `frontier_reason_code`、首个 `frontier_blocking_reference` 和实际经过的 `frontier_successor_references`。 |
 | `reading-room.html` | 原统一阅读室的离线页面，显示本次更新状态、自动发现并固定的已存 Brief、研究、待复核问题与实际市场覆盖。 |
 | `reading-room.json` | 与 HTML 对应的只读模型及实际日更状态，保留原精确引用、内容截止与失败。 |
 | `reading-summary.md` | 同模型派生的人用摘要，经发布前私有核验后写入本次 Actions Summary。 |

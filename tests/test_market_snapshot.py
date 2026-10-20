@@ -23,7 +23,7 @@ from decision_kernel.application.research_sources import capture_registered
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceInput, digest, encoded
 from decision_kernel.infrastructure.git_store import GitStore
-from decision_kernel.infrastructure.github_store import GitHubStore
+from decision_kernel.infrastructure.github_store import GitHubStore, MAX_REQUESTS
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader, _fetch_market_branch
 from decision_kernel.infrastructure.relay_http import RelayHTTP
 from decision_kernel.infrastructure.relay_retry import RetryingRelay
@@ -62,29 +62,58 @@ def source(text):
                        origin="https://example.invalid/synthetic-market", text=text, custody="provided")
 
 
-def test_lazy_nested_scope_keeps_original_refs_and_repins_only_on_next_outer_group(native):
+def observe_native_queries(monkeypatch):
+    original, calls = GitStore._run, []
+
+    def run(self, *args, **options):
+        calls.append((self.root, args))
+        return original(self, *args, **options)
+
+    monkeypatch.setattr(GitStore, "_run", run)
+    return calls
+
+
+def test_lazy_nested_scope_keeps_original_refs_and_repins_only_on_next_outer_group(native, monkeypatch):
     model, store = native
     first = store.put_source("first", source("original"))
     api, fetches = transport(model), []
     backend = GitMarketReader(replace(model.binding, write_enabled=False), api,
                               fetch=local_fetch(model, fetches))
     reader = VersionedStore(backend)
+    queries = observe_native_queries(monkeypatch)
     assert api._requests == 0 and not fetches
     with market_read_scope(reader) as grouped:
+        memo = grouped.backend._reader
+        assert not memo._memo and memo._memo_bytes == 0
         pinned = grouped.backend.head()
         budget = api._requests
         assert grouped.read_source(first)["data"] == "original"
+        count = len(queries)
+        assert grouped.read_source(first)["data"] == "original" and len(queries) == count
+        assert memo._memo and memo._memo_bytes > 0
         second = store.put_source("second", source("successor"))
         with market_read_scope(grouped) as nested:
+            assert nested.backend._reader is memo
             assert nested.backend.head() == pinned
+            count = len(queries)
             assert nested.read_source(first)["data"] == "original"
-            with pytest.raises(RecordError, match="COMMIT_OUTSIDE_BINDING"):
-                nested.read_source(second)
+            assert len(queries) == count
+            for _ in range(2):
+                count = len(queries)
+                with pytest.raises(RecordError, match="COMMIT_OUTSIDE_BINDING"):
+                    nested.read_source(second)
+                assert len(queries) > count  # Failed ancestry is never a memo hit.
         assert api._requests == budget and len(fetches) == 1
     assert api._requests > budget and all(not c["destination"].exists() for c in fetches)
+    assert not memo._memo and memo._memo_bytes == 0
+    with pytest.raises(RecordError, match="^MARKET_SNAPSHOT_SCOPE_CLOSED$"):
+        memo.read(first.manifest.commit, first.manifest.path)
     with market_read_scope(reader) as grouped:
+        assert grouped.backend._reader is not memo and not grouped.backend._reader._memo
         assert grouped.backend.head() == second.manifest.commit
+        count = len(queries)
         assert grouped.read_source(second)["data"] == "successor"
+        assert len(queries) > count
         assert grouped.read_source(first)["data"] == "original"
     assert len(fetches) == 2 and api._requests == len(model.requests) < 64
     assert all(c["api"] is api and not c["destination"].exists() for c in fetches)
@@ -98,10 +127,15 @@ def test_final_live_binding_drift_prevents_a_scoped_result_from_returning(native
     backend = GitMarketReader(replace(model.binding, write_enabled=False), api,
                               fetch=local_fetch(model, fetches))
     released = []
+    views = []
 
     def obtain():
         with market_read_scope(VersionedStore(backend)) as reader:
+            views.append(reader.backend._reader)
             value = reader.read_source(reference)
+            count = api._requests
+            assert reader.read_source(reference) == value and api._requests == count
+            assert views[-1]._memo
             if drift == "visibility":
                 model.meta["private"] = False
             else:
@@ -111,7 +145,66 @@ def test_final_live_binding_drift_prevents_a_scoped_result_from_returning(native
     with pytest.raises(RecordError):
         released.append(obtain())
     assert not released and backend._depth == 0 and backend._reader is None
+    assert all(not view._memo and view._memo_bytes == 0 and not view._active for view in views)
     assert all(not call["destination"].exists() for call in fetches)
+
+
+def test_exceptional_nested_scope_closes_memo_and_next_scope_reads_original_bytes(native):
+    model, store = native
+    reference = store.put_source("original", source("retained source"))
+    api, fetches = transport(model), []
+    backend = GitMarketReader(replace(model.binding, write_enabled=False), api,
+                              fetch=local_fetch(model, fetches))
+
+    class Interrupted(Exception):
+        pass
+
+    with pytest.raises(Interrupted):
+        with market_read_scope(VersionedStore(backend)) as reader:
+            memo = reader.backend._reader
+            assert reader.read_source(reference)["data"] == "retained source"
+            with market_read_scope(reader) as nested:
+                assert nested.backend._reader is memo and memo._memo
+                with pytest.raises(RecordError, match="^MARKET_SNAPSHOT_READ_ONLY$"):
+                    memo.commit({}, expected=reference.manifest.commit)
+                raise Interrupted()
+    assert backend._depth == 0 and backend._reader is None
+    assert not memo._active and not memo._memo and memo._memo_bytes == 0
+    with pytest.raises(RecordError, match="^MARKET_SNAPSHOT_SCOPE_CLOSED$"):
+        memo.head()
+    with market_read_scope(VersionedStore(backend)) as reader:
+        assert reader.backend._reader is not memo and not reader.backend._reader._memo
+        assert reader.read_source(reference)["data"] == "retained source"
+    assert len(fetches) == 2 and all(not call["destination"].exists() for call in fetches)
+    assert model.writes == 0 and api._requests == len(model.requests) < MAX_REQUESTS
+
+
+def test_warm_native_memo_does_not_bypass_shared_api_limit_on_scope_exit(native):
+    model, store = native
+    reference = store.put_source("original", source("bounded read"))
+    api, fetches = transport(model), []
+    backend = GitMarketReader(replace(model.binding, write_enabled=False), api,
+                              fetch=local_fetch(model, fetches))
+    views, released, last_io = [], [], []
+
+    def obtain():
+        with market_read_scope(VersionedStore(backend)) as reader:
+            views.append(reader.backend._reader)
+            value = reader.read_source(reference)
+            assert views[-1]._memo
+            # Other operations can consume the same unit's remaining allowance.
+            api._requests = MAX_REQUESTS
+            last_io.append(len(model.requests))
+            assert reader.read_source(reference) == value
+            return value
+
+    with pytest.raises(RecordError, match="^REMOTE_REQUEST_LIMIT$"):
+        released.append(obtain())
+    assert not released and api._requests == MAX_REQUESTS + 1 and MAX_REQUESTS == 512
+    assert len(model.requests) == last_io[0] and model.writes == 0
+    assert backend._depth == 0 and backend._reader is None
+    assert all(not view._active and not view._memo and view._memo_bytes == 0 for view in views)
+    assert len(fetches) == 1 and not fetches[0]["destination"].exists()
 
 
 def test_source_only_reader_refuses_writes_foreign_refs_and_research_paths(native):
@@ -138,6 +231,8 @@ def test_source_only_reader_refuses_writes_foreign_refs_and_research_paths(nativ
         with pytest.raises(RecordError, match="BLOB_DIGEST_MISMATCH"):
             reader.read_source(corrupted)
         assert reader.read_source(reference)["data"] == "provided source"
+        with pytest.raises(RecordError, match="BLOB_DIGEST_MISMATCH"):
+            reader.read_source(corrupted)
     assert model.git.head() == before and model.writes == 0
 
 

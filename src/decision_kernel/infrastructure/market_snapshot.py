@@ -17,6 +17,7 @@ from decision_kernel.domain.records import RecordError, StoreUnavailable, requir
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.git_snapshot import GitSnapshot, MAX_BUNDLE_BYTES
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore, github_tree_inventory
+from decision_kernel.infrastructure.native_git_memo import native_git_memo_scope
 
 
 def _fetch_market_branch(binding, api, destination):
@@ -78,14 +79,17 @@ class GitMarketReader:
         with TemporaryDirectory(prefix="dos2-market-read-") as temporary:
             root = Path(temporary) / "records.git"
             self._fetch(self.binding, self.api, root)
-            self._reader = GitSnapshot(root, self.binding, snapshot)
-            self._depth = 1
-            try:
-                yield self
-                remote.check_commit(snapshot)
-            finally:
-                self._depth = 0
-                self._reader = None
+            native = GitSnapshot(root, self.binding, snapshot)
+            with native_git_memo_scope(native, closed_error="MARKET_SNAPSHOT_SCOPE_CLOSED",
+                    read_only_error="MARKET_SNAPSHOT_READ_ONLY") as reader:
+                self._reader = reader
+                self._depth = 1
+                try:
+                    yield self
+                    remote.check_commit(snapshot)
+                finally:
+                    self._depth = 0
+                    self._reader = None
 
     @contextmanager
     def source_read_scope(self, snapshot):

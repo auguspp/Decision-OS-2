@@ -34,12 +34,16 @@ UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code"
     "calendar_last_failure", "calendar_source_budget", "calendar_original_source_budget",
     "calendar_additional_source_budget", "calendar_reserved_requests", "calendar_repair",
     "write_reconciliation", "write_reconciliation_native_proof", "write_last_failure",
+    "master_source_requests", "master_refresh", "master_reserved_queries", "master_query_budget",
+    "master_page_budget", "master_source_budget", "master_execution",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
     "no-new-session": "没有新增交易日", "paused": "更新已暂停", "not-due": "尚未到约定更新时间",
     "blocked": "本轮更新受阻", "source-held": "来源已暂停，等待复核", "persistence-unconfirmed": "保存结果待对账",
     "reading-unavailable": "行情读回尚未完成", "started": "本轮尚未完成", "in-progress": "本轮正在进行",
-    "partial": "本轮部分完成", "failed": "本轮更新失败", "exhausted": "本轮额度已耗尽"}
+    "partial": "本轮部分完成", "failed": "本轮更新失败", "exhausted": "本轮额度已耗尽",
+    "calendar-pending": "交易日历更新尚未完成", "master-pending": "证券主表更新尚未完成",
+    "market-pending": "价格更新尚未完成"}
 
 
 def _error(exc, token=None):
@@ -131,6 +135,11 @@ def _summary_lines(model):
         lines.append("已存日更任务：" + str(cycle["date"]) + "，" + STATES.get(cycle["status"], cycle["status"]) + "。")
         if cycle.get("reason_code") and cycle["reason_code"] != receipt.get("reason_code"):
             lines.append("任务保留的限制：" + cycle["reason_code"])
+        if cycle.get("schema") == "daily-market-cycle-v4":
+            if cycle["status"] == "complete":
+                lines.append("证券主表：本轮两所完整主表已被行情版本采用，资料取得时间按原页保留。")
+            elif cycle["status"] == "master-pending":
+                lines.append("证券主表尚未全部更新完成，本轮新价格尚未开始取得。")
     elif context["market_resolution"] == "resolved":
         lines.append("尚无日更记录。")
     else:

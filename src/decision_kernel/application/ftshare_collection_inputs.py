@@ -270,8 +270,11 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     view = {"schema": VIEW_SCHEMA, "provider": "FTSHARE", "start": start,
         "requested_end": end, "as_of": surfaces["raw"]["as_of"], "as_of_by_exchange": cutoffs,
         "scope_count": len(codes), "known_scope_count": len(codes), "by_exchange": by_venue,
-        "master": {venue: {key: deepcopy(value) for key, value in master.items()
-            if key not in ("securities", "qualification", "lineage")} for venue, master in context["masters"].items()},
+        "master": {venue: {**{key: deepcopy(value) for key, value in master.items()
+            if key not in ("securities", "qualification", "lineage")},
+            "capture_times": {status: [page["captured_at"] for page in lineage["pages"]]
+                for status, lineage in master.get("lineage", {}).items()}}
+            for venue, master in context["masters"].items()},
         "qualification_counts": {kind: surfaces[kind]["horizon_counts"] for kind in KINDS.values()},
         "normalization": NORMALIZATION, "source_lineage": lineage, "queries": sources,
         "freshness": freshness, "source_requests": 0,

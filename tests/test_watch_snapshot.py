@@ -7,7 +7,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.application.watch_activity import WatchActivity
 from decision_kernel.domain.records import RecordError, StoreUnavailable
 from decision_kernel.infrastructure.github_store import GitHubStore, MAX_REQUESTS
-from decision_kernel.infrastructure import watch_snapshot
+from decision_kernel.infrastructure import native_git_memo, watch_snapshot
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.git_snapshot import bundle_from_bare, restored_bundle
 from decision_kernel.infrastructure.github_reading import reading_scope
@@ -373,15 +373,15 @@ def test_memo_capacity_exhaustion_keeps_original_queries_and_results(native, mon
     model, _ = native
     path, raw = "submissions/memo-cap.json", b"retained original" * 256
     head = model.git.commit({path: raw}, expected=model.git.head())
-    if cap == "bytes": monkeypatch.setattr(watch_snapshot, "_MEMO_BYTES", 1024)
-    else: monkeypatch.setattr(watch_snapshot, "MAX_TREE_ENTRIES", 1)
+    if cap == "bytes": monkeypatch.setattr(native_git_memo, "_MEMO_BYTES", 1024)
+    else: monkeypatch.setattr(native_git_memo, "MAX_TREE_ENTRIES", 1)
     calls = observe_native(monkeypatch)
     with watch_read_scope(model.git) as reader:
         assert reader.read(head, path) == raw
         count = len(calls)
         assert reader.read(head, path) == raw and len(calls) > count
-        assert reader._memo_bytes <= watch_snapshot._MEMO_BYTES
-        assert len(reader._memo) <= watch_snapshot.MAX_TREE_ENTRIES
+        assert reader._memo_bytes <= native_git_memo._MEMO_BYTES
+        assert len(reader._memo) <= native_git_memo.MAX_TREE_ENTRIES
     assert model.git.head() == head
 
 

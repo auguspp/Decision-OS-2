@@ -25,6 +25,7 @@ from decision_kernel.application.market_custody import (
     _document, _put, _read_source, authorize_market_custody, fresh_market_reader,
     market_read_scope, restore_market_query,
 )
+from decision_kernel.application.market_security_inputs import inspect_security_master
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.versioned_store import MAX_STORE_VERSIONS, VersionedStore
 from decision_kernel.domain.records import (
@@ -524,6 +525,8 @@ def _expansion_edge_reason(previous, current, protected):
         return "FTSHARE_EXPANSION_DAILY_GENERATION"
     if any(before[key] != after[key] for key in ("start", "end", "calendar_end", "calendar_references")):
         return "FTSHARE_EXPANSION_WINDOW_CHANGED"
+    if before["master_references"] != after["master_references"]:
+        return "FTSHARE_EXPANSION_MASTER_CHANGED"
     if before.get("completion_policy") != after.get("completion_policy"):
         return "FTSHARE_EXPANSION_COMPLETION_CHANGED"
     old, new = _expansion_owners(previous), _expansion_owners(current)
@@ -743,7 +746,8 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
                 base = restore_ftshare_collection(plan["base_reference"], registry, grouped)
                 _single_write_frontier(base, registry, grouped, generation=plan["generation"])
                 context = _single_context(base, registry, grouped, start=plan["start"], end=plan["end"],
-                                          calendar_references=plan["calendar_references"])
+                    created_at=plan["created_at"], calendar_references=plan["calendar_references"],
+                    master_references=plan["master_references"])
                 expected = _single_plan(base, context, collection_id=plan["collection_id"],
                     generation=plan["generation"], created_at=plan["created_at"],
                     targets=plan["targets"], source_budget=plan["source_budget"],
@@ -1005,14 +1009,49 @@ def _single_base_ready(base):
             "FTSHARE_SINGLE_BASE_NOT_TERMINAL")
 
 
-def _single_context(base, registry, store, *, start, end, calendar_references=None):
-    """Use actual bounded calendar queries, preserving the original price baseline."""
+def _single_masters(context, base, registry, store, references, *, created_at):
+    """Adopt whole current-L snapshots without deleting or requalifying old owners."""
+    if references is None:
+        references = context["master_references"]
+    require(isinstance(references, dict) and set(references) == set(VENUES),
+            "FTSHARE_SINGLE_MASTER_REFERENCES")
+    references = {venue: _ref(references[venue], store.backend.repository) for venue in VENUES}
+    for venue in VENUES:
+        if references[venue] == context["master_references"][venue]:
+            continue
+        result = restore_market_query(references[venue], registry, store)["result"]
+        master = inspect_security_master({"L": result}, registry=registry, exchange=venue)
+        previous = [_clock(page["captured_at"])
+            for page in context["masters"][venue]["lineage"]["L"]["pages"]]
+        current = [_clock(page["captured_at"]) for page in master["lineage"]["L"]["pages"]]
+        require(previous and current and all(a <= b for a, b in zip(current, current[1:]))
+            and min(current) >= max(previous) and max(current) <= _clock(created_at),
+            "FTSHARE_SINGLE_MASTER_CLOCK")
+        context["master_results"][venue] = result
+        context["master_references"][venue] = references[venue]
+        context["masters"][venue] = master
+    rows = {code: item for master in context["masters"].values()
+        for code, item in master["securities"].items()}
+    require(len(rows) == sum(master["scope_count"] for master in context["masters"].values()),
+            "FTSHARE_SINGLE_MASTER_DUPLICATE_SYMBOL")
+    owners = {request["parameters"]["symbol"] for request in base["collection"]["plan"]["requests"].values()}
+    require(owners <= rows.keys() and all(rows[code] is not None for code in owners),
+            "FTSHARE_SINGLE_MASTER_OWNER_UNQUALIFIED")
+    context["scope_symbols"] = sorted(rows)
+    context["eligible_symbols"] = sorted(code for code, item in rows.items() if item is not None)
+    context["quarantined_symbols"] = sorted(code for code, item in rows.items() if item is None)
+
+
+def _single_context(base, registry, store, *, start, end, created_at, calendar_references=None,
+                    master_references=None):
+    """Use actual master/calendar queries, preserving the original price baseline."""
     from decision_kernel.application.market_collection_inputs import _fresh_calendar
     _single_base_ready(base)
     _single_period(start, end)
     prior = base["collection"]["plan"]
     require(start >= prior["start"] and end >= prior["end"], "FTSHARE_SINGLE_RANGE_ROLLBACK")
     context = deepcopy(base["context"])
+    _single_masters(context, base, registry, store, master_references, created_at=created_at)
     if calendar_references is None:
         calendar_references = context["calendar_references"]
     require(isinstance(calendar_references, dict) and set(calendar_references) == set(VENUES),
@@ -1131,14 +1170,14 @@ def _capture_completion(capture, completion_policy):
 
 def plan_ftshare_single_collection(base_reference, registry, store, *, collection_id,
                                   generation, created_at, start, end, targets, source_budget,
-                                  calendar_references=None, completion_policy=None):
+                                  calendar_references=None, master_references=None, completion_policy=None):
     """Plan bounded new v1 calls on the exact terminal FTShare frontier; no provider I/O."""
     require(isinstance(registry, RelayRegistry), "FTSHARE_COLLECTION_REGISTRY_REQUIRED")
     with market_read_scope(store) as reader:
         base = restore_ftshare_collection(base_reference, registry, reader)
         _single_write_frontier(base, registry, reader, generation=generation)
         context = _single_context(base, registry, reader, start=start, end=end,
-                                  calendar_references=calendar_references)
+            created_at=created_at, calendar_references=calendar_references, master_references=master_references)
         plan = _single_plan(base, context, collection_id=collection_id, generation=generation,
             created_at=created_at, targets=targets, source_budget=source_budget,
             completion_policy=completion_policy)
@@ -1252,7 +1291,8 @@ def _restore_single_collection(reference, content, registry, store):
     for reference, content in reversed(lineage):
         collection, plan = content["collection"], content["collection"]["plan"]
         context = _single_context(base, registry, store, start=plan["start"], end=plan["end"],
-                                  calendar_references=plan["calendar_references"])
+            created_at=plan["created_at"], calendar_references=plan["calendar_references"],
+            master_references=plan["master_references"])
         expected = _single_plan(base, context, collection_id=plan["collection_id"], generation=plan["generation"],
             created_at=plan["created_at"], targets=plan["targets"], source_budget=plan["source_budget"],
             completion_policy=plan.get("completion_policy"))

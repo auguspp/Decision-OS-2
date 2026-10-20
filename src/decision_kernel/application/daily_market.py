@@ -13,7 +13,7 @@ import json
 import re
 
 from decision_kernel.application.ftshare_collection import (
-    SINGLE_PLAN_SCHEMA, _single_write_frontier, latest_ftshare_reference,
+    SINGLE_PLAN_SCHEMA, _single_sources, _single_write_frontier, latest_ftshare_reference,
     resolve_ftshare_expansion_frontier, restore_ftshare_collection,
 )
 from decision_kernel.application.market_custody import (
@@ -28,6 +28,7 @@ from decision_kernel.domain.records import (
 )
 
 SCHEMA = "daily-market-cycle-v1"
+MASTER_SCHEMA = "daily-market-cycle-v4"
 POLICY_SCHEMA = "daily-market-policy-v1"
 PREFIX = "daily-market-cycle-"
 VENUES = ("SSE", "SZSE")
@@ -92,6 +93,9 @@ def _source(state):
         limitations = LIMITATIONS[:2] + ("EXPLICIT_ONE_ADDITIONAL_CALENDAR_REQUEST_ORIGINAL_FAILURE_PRESERVED",) + LIMITATIONS[3:]
     if state["schema"] == "daily-market-cycle-v3":
         limitations += ("EXACT_SETTLED_WRITE_RECONCILIATION_ZERO_ADDITIONAL_SOURCE_REQUESTS",)
+    if state["schema"] == MASTER_SCHEMA:
+        limitations += ("FULL_CURRENT_L_MASTER_REFRESH_ON_EACH_NEW_COMPLETED_SESSION",
+            "MASTER_PAGE_AND_RETRY_BUDGETS_REMAIN_OWNED_BY_ORIGINAL_RELAY_CHECKPOINTS",)
     return SourceInput(source_id=PREFIX + state["date"] + "-r" + str(state["revision"]).zfill(3),
         kind="content", title="每日行情日历与原集合接续 / " + state["date"],
         origin="https://github.com/auguspp/Decision-OS-2", custody="provided",
@@ -106,15 +110,17 @@ def validate_cycle(value):
     from decision_kernel.application.daily_write_reconciliation import CYCLE_SCHEMA as RECONCILED_SCHEMA, proof as write_proof
     reconciled = isinstance(value, dict) and value.get("schema") == RECONCILED_SCHEMA
     repaired = isinstance(value, dict) and value.get("schema") in {CYCLE_SCHEMA, RECONCILED_SCHEMA}
+    refreshed = isinstance(value, dict) and value.get("schema") == MASTER_SCHEMA
     repair = proof(value.get("calendar_repair")) if repaired else None
     if reconciled:
         write_proof(value.get("write_reconciliation"))
     require(isinstance(value, dict) and set(value) == fields | ({"calendar_repair"} if repaired else set())
         | ({"write_reconciliation"} if reconciled else set())
-        and value["schema"] == (RECONCILED_SCHEMA if reconciled else CYCLE_SCHEMA if repaired else SCHEMA)
+        | ({"daily_policy", "master_refresh", "masters"} if refreshed else set())
+        and value["schema"] == (MASTER_SCHEMA if refreshed else RECONCILED_SCHEMA if reconciled else CYCLE_SCHEMA if repaired else SCHEMA)
         and isinstance(value["date"], str) and re.fullmatch(r"[0-9]{8}", value["date"])
         and type(value["revision"]) is int and (9 if reconciled else 3 if repaired else 0)
-            <= value["revision"] <= (10 if reconciled else 8 if repaired else 6)
+            <= value["revision"] <= (11 if refreshed else 10 if reconciled else 8 if repaired else 6)
         and value["calendar_end"] == value["date"]
         and value["market_generation"] == "daily-" + value["date"]
         and isinstance(value["policy_sha256"], str)
@@ -138,7 +144,10 @@ def validate_cycle(value):
     require(sum(row["status"] == "in-flight" for row in calendars.values()) <= 1,
         "DAILY_MARKET_ONE_CALENDAR_IN_FLIGHT")
     require(value["status"] in {"calendar-pending", "market-pending", "blocked"} | SUCCESS
+        | ({"master-pending"} if refreshed else set())
         and (value["reason_code"] is not None) == (value["status"] == "blocked"), "DAILY_MARKET_STATUS")
+    if refreshed:
+        _validate_masters(value)
     if reconciled:
         require((value["revision"], value["status"]) in {
             (9, "market-pending"), (10, "complete"), (10, "blocked")},
@@ -146,7 +155,7 @@ def validate_cycle(value):
     for reason in [value["reason_code"], *(row["reason_code"] for row in calendars.values())]:
         require(reason is None or isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason),
             "DAILY_MARKET_REASON")
-    if value["status"] in SUCCESS | {"market-pending"}:
+    if value["status"] in SUCCESS | {"market-pending", "master-pending"}:
         require(all(row["status"] == "complete" for row in calendars.values())
             and isinstance(value["price_end"], str) and re.fullmatch(r"[0-9]{8}", value["price_end"])
             and value["calendar_start"] <= value["price_end"] <= value["date"], "DAILY_MARKET_CALENDAR_INCOMPLETE")
@@ -158,6 +167,95 @@ def validate_cycle(value):
             SourceRef.from_dict(value[field])
     require(len(encoded(value)) <= 12 * 1024, "DAILY_MARKET_CONTROL_BOUND")
     return json.loads(encoded(value))
+
+
+def _frozen_daily_policy(value):
+    """Recover the original digest authority without consulting current config."""
+    frozen = value["daily_policy"]
+    require(isinstance(frozen, dict) and "enabled" not in frozen, "DAILY_MARKET_FROZEN_POLICY")
+    checked = policy({**frozen, "enabled": False})
+    checked.pop("enabled")
+    require(encoded(checked) == encoded(frozen) and digest(encoded(checked)) == value["policy_sha256"],
+        "DAILY_MARKET_FROZEN_POLICY")
+    return checked
+
+
+def _validate_masters(value):
+    from decision_kernel.application.daily_master_refresh import policy as master_policy
+    _frozen_daily_policy(value)
+    master_policy(value["master_refresh"])
+    masters = value["masters"]
+    require(isinstance(masters, dict) and set(masters) == set(VENUES), "DAILY_MASTER_VENUES")
+    for row in masters.values():
+        require(isinstance(row, dict) and set(row) == {"status", "reserved_queries", "reference",
+            "checkpoint_reference", "reason_code"}
+            and row["status"] in {"pending", "in-flight", "complete", "failed"}
+            and type(row["reserved_queries"]) is int
+            and row["reserved_queries"] == int(row["status"] != "pending")
+            and (row["reference"] is not None) == (row["status"] == "complete")
+            and (row["reason_code"] is not None) == (row["status"] == "failed")
+            and (row["checkpoint_reference"] is not None or row["status"] != "complete")
+            and (row["checkpoint_reference"] is None or row["status"] in {"complete", "failed"}),
+            "DAILY_MASTER_STATE")
+        for key in ("reference", "checkpoint_reference"):
+            if row[key] is not None:
+                require(SourceRef.from_dict(row[key]).selection == Selection(), "DAILY_MASTER_REFERENCE")
+        require(row["reason_code"] is None or isinstance(row["reason_code"], str)
+            and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", row["reason_code"]), "DAILY_MASTER_REASON")
+    require(sum(row["status"] == "in-flight" for row in masters.values()) <= 1,
+        "DAILY_MASTER_ONE_QUERY_IN_FLIGHT")
+    if value["status"] in {"calendar-pending", "no-new-session"}:
+        require(all(row["status"] == "pending" for row in masters.values()), "DAILY_MASTER_PHASE")
+    if any(row["status"] != "pending" for row in masters.values()):
+        require(all(row["status"] == "complete" for row in value["calendars"].values())
+            and isinstance(value["price_end"], str), "DAILY_MASTER_BEFORE_CALENDARS")
+    if value["status"] in {"market-pending", "complete"}:
+        require(all(row["status"] == "complete" for row in masters.values()), "DAILY_MASTER_INCOMPLETE")
+
+
+def _verify_master_edges(previous, current, registry, store):
+    """Validate a newly completed master once, at its original history edge."""
+    if current["schema"] != MASTER_SCHEMA:
+        require(previous is None or previous["schema"] != MASTER_SCHEMA,
+            "DAILY_MASTER_POLICY_REMOVED")
+        return
+    from decision_kernel.application.daily_master_refresh import verify_completed_master
+    for venue, row in current["masters"].items():
+        if row["status"] == "complete" and (previous is None
+                or previous.get("masters", {}).get(venue) != row):
+            verify_completed_master(current, venue, registry, store)
+    if current["status"] == "complete":
+        restored = restore_ftshare_collection(current["market_reference"], registry, store)
+        collection = restored["collection"]
+        plan, approved = collection["plan"], _frozen_daily_policy(current)
+        targets = sorted([{"symbol": symbol, "adjust_kind": kind} for symbol in approved["symbols"]
+            for kind in ("none", "forward")], key=lambda target: (target["symbol"], target["adjust_kind"]))
+        slots = [target["adjust_kind"] + ":" + target["symbol"] for target in targets]
+        # Normal FT restoration already reconstructs collection identity,
+        # legacy/adoption and inherited owners from this exact base. Bind the
+        # newly completed daily work to its frozen authority as well.
+        require(plan["schema"] == SINGLE_PLAN_SCHEMA
+            and plan["base_reference"] == current["base_market_reference"]
+            and plan["generation"] == current["market_generation"]
+            and plan["start"] == current["calendar_start"] and plan["end"] == current["price_end"]
+            and plan["calendar_end"] == current["calendar_end"]
+            and plan.get("completion_policy") == EOD_COMPLETION_POLICY
+            and plan["targets"] == targets and plan["new_slots"] == slots
+            and plan["source_budget"] == approved["max_price_requests"]
+            and collection["reserved_requests"] == approved["max_price_requests"]
+            and collection["revision"] == 2 * approved["max_price_requests"]
+            and _stamp(plan["created_at"]) >= _stamp(current["created_at"])
+            and _stamp(collection["updated_at"]) <= _stamp(current["updated_at"])
+            and plan["master_references"] == {v: current["masters"][v]["reference"] for v in VENUES}
+            and plan["calendar_references"] == {v: current["calendars"][v]["reference"] for v in VENUES}
+            and collection["source_hold"] is None
+            and all(row["status"] == "complete" for row in collection["units"].values())
+            and all(collection["units"][slot]["request_count"] == 1 for slot in slots),
+            "DAILY_MASTER_NOT_ADOPTED")
+        # The manifest reader intentionally omits captures. Reuse their original
+        # owner to prove each newly claimed raw/forward request against its exact
+        # retained source bytes, within the caller's existing read scope.
+        _single_sources(plan, {slot: collection["units"][slot] for slot in slots}, store)
 
 
 def _transition(previous, current):
@@ -173,7 +271,7 @@ def _transition(previous, current):
         and current["revision"] == previous["revision"] + 1,
         "DAILY_MARKET_TERMINAL_OR_REVISION")
     immutable = set(previous) - {"revision", "updated_at", "predecessor", "calendars", "price_end",
-        "market_reference", "status", "reason_code"}
+        "market_reference", "status", "reason_code"} - ({"masters"} if previous["schema"] == MASTER_SCHEMA else set())
     require(all(previous[key] == current[key] for key in immutable)
         and _stamp(current["updated_at"]) >= _stamp(previous["updated_at"]), "DAILY_MARKET_INTENT_CHANGED")
     if "write_reconciliation" in previous:
@@ -183,6 +281,18 @@ def _transition(previous, current):
             and current["price_end"] == previous["price_end"]
             and (current["status"] == "complete" or current["market_reference"] == previous["market_reference"]),
             "DAILY_WRITE_RECONCILIATION_PHASE")
+    if previous["schema"] == MASTER_SCHEMA:
+        changed_masters = [v for v in VENUES if previous["masters"][v] != current["masters"][v]]
+        require(len(changed_masters) <= 1, "DAILY_MASTER_TRANSITION")
+        if changed_masters:
+            before, after = (state["masters"][changed_masters[0]] for state in (previous, current))
+            require(previous["status"] == "master-pending"
+                and (before["status"], after["status"]) in {
+                    ("pending", "in-flight"), ("in-flight", "complete"), ("in-flight", "failed")}
+                and current["status"] == ("blocked" if after["status"] == "failed" else "master-pending")
+                and all(previous[key] == current[key] for key in ("calendars", "price_end", "market_reference")),
+                "DAILY_MASTER_TRANSITION")
+            return
     changed = [venue for venue in VENUES if previous["calendars"][venue] != current["calendars"][venue]]
     require(len(changed) <= 1, "DAILY_MARKET_CALENDAR_TRANSITION")
     if changed:
@@ -194,9 +304,16 @@ def _transition(previous, current):
             and current["price_end"] == previous["price_end"]
             and current["market_reference"] == previous["market_reference"], "DAILY_MARKET_CALENDAR_TRANSITION")
     else:
-        require(previous["status"] in {"calendar-pending", "market-pending"}
-            and current["status"] in {"market-pending", "blocked"} | SUCCESS,
-            "DAILY_MARKET_PHASE_TRANSITION")
+        if previous["schema"] == MASTER_SCHEMA:
+            require(current["status"] in {
+                "calendar-pending": {"master-pending", "no-new-session", "blocked"},
+                "master-pending": {"market-pending", "blocked"},
+                "market-pending": {"complete", "blocked"},
+            }.get(previous["status"], set()), "DAILY_MASTER_PHASE_TRANSITION")
+        else:
+            require(previous["status"] in {"calendar-pending", "market-pending"}
+                and current["status"] in {"market-pending", "blocked"} | SUCCESS,
+                "DAILY_MARKET_PHASE_TRANSITION")
 
 
 def _market_bridge(base_reference, through_reference, registry, store, protected_symbols):
@@ -257,6 +374,7 @@ def latest_cycle(store, *, registry=None, protected_symbols=()):
                 if current.get("write_reconciliation") is not None and current["status"] == "complete":
                     from decision_kernel.application.daily_write_reconciliation import verify_completed
                     verify_completed(current, registry=registry, store=reader)
+            _verify_master_edges(None if previous is None else previous["cycle"], current, registry, reader)
             previous = item
         return previous
 
@@ -295,6 +413,10 @@ def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_sy
                 # The authority for one new calendar request and its durable
                 # reservation must use the same snapshot and original CAS.
                 check_cycle_frontier(state, registry, reader, protected_symbols=protected_symbols)
+            if state["schema"] == MASTER_SCHEMA and any(
+                    before["cycle"]["masters"][v]["status"] == "pending"
+                    and state["masters"][v]["status"] == "in-flight" for v in VENUES):
+                check_cycle_frontier(state, registry, reader, protected_symbols=protected_symbols)
         else:
             require(state["revision"] == 0 and (before is None or before["cycle"]["status"] in SUCCESS
                 and before["cycle"]["date"] < state["date"]), "DAILY_MARKET_PRIOR_CYCLE_NOT_COMPLETE")
@@ -306,6 +428,7 @@ def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_sy
             require(frontier["reason_code"] is None,
                 frontier["reason_code"] or "DAILY_MARKET_BASE_REQUIRES_REVIEW")
             require(frontier["reference"] == state["base_market_reference"], "DAILY_MARKET_STALE_FRONTIER")
+        _verify_master_edges(None if before is None else before["cycle"], state, registry, reader)
     source = _source(state)
     reference = store.put_source("daily-market-" + digest(encoded(asdict(source)))[:32], source,
         expected_head=snapshot)
@@ -349,7 +472,7 @@ def admission_slot(approved, *, at, allow_late=False):
         "max_delay_seconds": MAX_LATE_SECONDS if allow_late else None}
 
 
-def initial_cycle(approved, store, registry, *, at, admission_at=None, allow_late=False):
+def initial_cycle(approved, store, registry, *, at, admission_at=None, allow_late=False, master_refresh=None):
     approved = policy(approved)
     require(approved["enabled"], "DAILY_MARKET_PAUSED")
     admitted = admission_slot(approved, at=at if admission_at is None else admission_at,
@@ -359,14 +482,19 @@ def initial_cycle(approved, store, registry, *, at, admission_at=None, allow_lat
     # source-intent creation time to impersonate execution on the business day.
     stamp = _stamp(admitted["scheduled_for"]).astimezone(ZONE)
     with market_read_scope(store) as reader:
-        result = _initial_cycle(approved, reader, registry, at=at, stamp=stamp)
+        result = _initial_cycle(approved, reader, registry, at=at, stamp=stamp, master_refresh=master_refresh)
     return {**result, "admission": admitted}
 
 
-def _initial_cycle(approved, store, registry, *, at, stamp):
+def _initial_cycle(approved, store, registry, *, at, stamp, master_refresh=None):
+    if master_refresh is not None:
+        from decision_kernel.application.daily_master_refresh import policy as master_policy
+        master_refresh = master_policy(master_refresh)
     previous = latest_cycle(store, registry=registry, protected_symbols=approved["symbols"])
     if previous is not None:
         require(previous["cycle"]["policy_sha256"] == policy_digest(approved), "DAILY_MARKET_POLICY_CHANGED")
+        if previous["cycle"]["schema"] == MASTER_SCHEMA:
+            require(master_refresh == previous["cycle"]["master_refresh"], "DAILY_MASTER_POLICY_CHANGED")
         require(previous["cycle"]["date"] <= stamp.strftime("%Y%m%d"), "DAILY_MARKET_CLOCK_ROLLBACK")
         if previous["cycle"]["date"] == stamp.strftime("%Y%m%d") or previous["cycle"]["status"] not in SUCCESS:
             return {"existing": previous, "candidate": None}
@@ -394,6 +522,12 @@ def _initial_cycle(approved, store, registry, *, at, stamp):
             "reference": None, "reason_code": None} for venue in VENUES},
         "price_end": None, "market_generation": "daily-" + date,
         "market_reference": None, "status": "calendar-pending", "reason_code": None}
+    if master_refresh is not None:
+        frozen = deepcopy(approved)
+        frozen.pop("enabled")
+        state.update(schema=MASTER_SCHEMA, daily_policy=frozen, master_refresh=deepcopy(master_refresh),
+            masters={venue: {"status": "pending", "reserved_queries": 0, "reference": None,
+                "checkpoint_reference": None, "reason_code": None} for venue in VENUES})
     return {"existing": previous, "candidate": validate_cycle(state)}
 
 

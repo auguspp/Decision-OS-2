@@ -101,7 +101,7 @@ jobs:
       - uses: ./.github/actions/ci-python
         with:
           profile: contracts
-      - name: Advance at most two calendar requests and twelve FTShare whole-range requests
+      - name: Advance calendars, bounded complete current-L masters and twelve FTShare requests
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
           TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}

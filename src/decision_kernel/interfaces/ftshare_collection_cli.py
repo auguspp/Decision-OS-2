@@ -442,6 +442,10 @@ def _run_kernel_adoption(*, config, registry, open_unit, kernel_loader,
             revision=saved["collection"]["revision"])
     except Exception as exc:
         uncertain = isinstance(exc, UnknownWrite)
+        from decision_kernel.infrastructure.github_store import write_failure_diagnostic
+        diagnosis = write_failure_diagnostic(exc)
+        if diagnosis is not None:
+            receipt["write_last_failure"] = diagnosis
         receipt.update(status="persistence-unconfirmed" if uncertain else "blocked", reason_code=_safe_error(exc))
         if uncertain:
             receipt["next_run_can_resume"] = False
@@ -649,6 +653,11 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                 break
         except Exception as exc:
             uncertain = isinstance(exc, UnknownWrite) or unit["status"] in {"reserving", "in-flight", "settling"}
+            from decision_kernel.infrastructure.github_store import write_failure_diagnostic
+            diagnosis = write_failure_diagnostic(exc)
+            if diagnosis is not None:
+                receipt["write_last_failure"] = diagnosis
+                unit["write_last_failure"] = diagnosis
             receipt.update(status="persistence-unconfirmed" if uncertain else "blocked",
                 reason_code=_safe_error(exc))
             unit["status"] = receipt["status"]

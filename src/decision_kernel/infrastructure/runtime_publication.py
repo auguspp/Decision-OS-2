@@ -24,7 +24,7 @@ STORE_ID = "decision-os-runtime"
 SCOPES = frozenset({"market", "sources", "research", "reading", "brief", "watch",
                     "backup", "handoff", "decision-preparation"})
 _NATIVE_OPERATIONS = {
-    "daily-market.yml": frozenset({"status", "update", "recover-late", "repair-calendar"}),
+    "daily-market.yml": frozenset({"status", "update", "recover-late", "repair-calendar", "reconcile-write"}),
     "ashare-data.yml": frozenset({"status", "sync", "ftshare-status", "ftshare-sync"}),
 }
 

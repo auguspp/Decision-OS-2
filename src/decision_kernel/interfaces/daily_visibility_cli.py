@@ -59,7 +59,7 @@ def selection(event, env):
     else:
         inputs = event.get("inputs")
         require(isinstance(inputs, dict) and set(inputs) == {"operation", "code_sha"}
-            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar"},
+            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar", "reconcile-write"},
             "DAILY_VISIBILITY_INPUT")
         require(inputs["code_sha"] == sha, "DAILY_VISIBILITY_CODE_SHA")
         operation = inputs["operation"]
@@ -98,6 +98,9 @@ def preflight(event, env, api, *, use_authorization=False):
     allowed = not public or basis is not None
     if selected["operation"] == "repair-calendar" and allowed:
         from decision_kernel.application.daily_calendar_repair import load_grant
+        load_grant()
+    if selected["operation"] == "reconcile-write" and allowed:
+        from decision_kernel.application.daily_write_reconciliation import load_grant
         load_grant()
     blocked = public and not allowed and selected["operation"] != "status"
     report = {"schema": SCHEMA, "scope": "native-metadata-only", **selected,

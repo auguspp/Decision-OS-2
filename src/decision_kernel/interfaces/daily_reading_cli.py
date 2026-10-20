@@ -33,6 +33,7 @@ UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code"
     "source_requests", "calendar_source_requests", "price_source_requests", "expected_completed_session",
     "calendar_last_failure", "calendar_source_budget", "calendar_original_source_budget",
     "calendar_additional_source_budget", "calendar_reserved_requests", "calendar_repair",
+    "write_reconciliation", "write_reconciliation_native_proof", "write_last_failure",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
     "no-new-session": "没有新增交易日", "paused": "更新已暂停", "not-due": "尚未到约定更新时间",
@@ -113,6 +114,18 @@ def _summary_lines(model):
             lines.append("日历传输分类：" + category + "；本次没有自动重试。")
     if receipt.get("calendar_additional_source_budget") == 1:
         lines.append("日历恢复：原2次预算之外显式追加1次；原失败与已用请求仍保留。")
+    reconciliation = receipt.get("write_reconciliation")
+    if isinstance(reconciliation, dict) and reconciliation.get("schema") == "daily-write-reconciliation-v1" \
+            and type(reconciliation.get("additional_source_requests")) is int \
+            and reconciliation["additional_source_requests"] == 0:
+        lines.append("写回执接续：已核原提交，仅续原预算内未用请求；额外来源预算为0，原失败保留。")
+    write_failure = receipt.get("write_last_failure")
+    phase_names = {"response": "返回结构", "commit": "提交关系", "binding": "保管绑定",
+        "tree": "完整写入集合", "readback": "原始字节读回"}
+    if isinstance(write_failure, dict) and write_failure.get("schema") == "github-write-diagnostic-v1":
+        phase = write_failure.get("phase")
+        if isinstance(phase, str) and phase in phase_names:
+            lines.append("保存后核验未通过：" + phase_names[phase] + "；原写入结果仍须对账。")
     cycle = context["market_cycle"]
     if cycle is not None:
         lines.append("已存日更任务：" + str(cycle["date"]) + "，" + STATES.get(cycle["status"], cycle["status"]) + "。")

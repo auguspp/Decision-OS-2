@@ -137,9 +137,9 @@ def settings(event, env, approved):
     else:
         inputs = event.get("inputs")
         require(isinstance(inputs, dict) and set(inputs) == {"operation", "code_sha"}
-            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar"}, "DAILY_MARKET_INPUT")
+            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar", "reconcile-write"}, "DAILY_MARKET_INPUT")
         invocation, sha = inputs["operation"], inputs["code_sha"]
-        operation = "update" if invocation in {"recover-late", "repair-calendar"} else invocation
+        operation = "update" if invocation in {"recover-late", "repair-calendar", "reconcile-write"} else invocation
     require(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha)
         and sha == env.get("GITHUB_SHA"), "DAILY_MARKET_CODE_SHA")
     run_id = env.get("GITHUB_RUN_ID")
@@ -214,16 +214,29 @@ def _reason(exc, env=None):
     return code
 
 
+def _reconciliation_summary(cycle):
+    original = cycle.get("write_reconciliation")
+    if original is None:
+        return None
+    return {"schema": original["schema"], "authorization_ref": original["authorization_ref"],
+        "additional_source_requests": 0, "original_run_id": original["native_run"]["run_id"],
+        "original_run_attempt": original["native_run"]["run_attempt"],
+        "original_price_source_budget": 12, "original_price_reserved_requests": 1,
+        "original_price_pending_requests": 11}
+
+
 def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               guard=None, calendar_client_factory=None, price_client_factory=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
               sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False,
-              calendar_repair=None):
+              calendar_repair=None, write_reconciliation=None, reconciliation_verifier=None):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
     require(type(allow_late) is bool, "DAILY_MARKET_ADMISSION_MODE")
     require(calendar_repair is None or operation == "update", "DAILY_CALENDAR_REPAIR_OPERATION")
+    require(write_reconciliation is None or operation == "update" and calendar_repair is None,
+        "DAILY_WRITE_RECONCILIATION_OPERATION")
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda api: None)
     report = {"schema": "daily-market-runtime-v1", "operation": operation, "status": "started",
@@ -256,6 +269,10 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             report["calendar_source_budget"] = approved["max_calendar_requests"]
             for key in ("calendar_original_source_budget", "calendar_additional_source_budget", "calendar_repair"):
                 report.pop(key, None)
+        if item is not None and item["cycle"].get("write_reconciliation") is not None:
+            report["write_reconciliation"] = _reconciliation_summary(item["cycle"])
+        elif item is not None:
+            report.pop("write_reconciliation", None)
         if progress is not None:
             progress(deepcopy(report), deepcopy(control))
     def save(state, store, fresh):
@@ -280,7 +297,26 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             report["status"] = "read" if approved["enabled"] else "paused"
         else:
             repair_new = False
-            if calendar_repair is None:
+            reconciliation_new = False
+            if write_reconciliation is not None:
+                from decision_kernel.application.daily_market import latest_cycle, policy_digest
+                from decision_kernel.application.daily_write_reconciliation import select_reconciliation
+                current = latest_cycle(fresh_market_reader(store, fresh), registry=registry,
+                    protected_symbols=approved["symbols"])
+                now = clock()
+                reconciliation_new = select_reconciliation(current, write_reconciliation, at=now,
+                    registry=registry, store=fresh_market_reader(store, fresh), approved=approved)
+                require(current["cycle"]["policy_sha256"] == policy_digest(approved),
+                    "DAILY_MARKET_POLICY_CHANGED")
+                prepared = {"existing": current, "candidate": None, "admission": {
+                    "mode": "explicit-write-reconciliation", "business_date": current["cycle"]["date"],
+                    "admitted_at": now, "authorization_ref": write_reconciliation["authorization_ref"]}}
+                if reconciliation_new:
+                    require(callable(reconciliation_verifier) or api is None,
+                        "DAILY_WRITE_RECONCILIATION_NATIVE_PROOF_REQUIRED")
+                    if reconciliation_verifier is not None:
+                        report["write_reconciliation_native_proof"] = reconciliation_verifier(write_reconciliation)
+            elif calendar_repair is None:
                 prepared = initial_cycle(approved, fresh_market_reader(store, fresh), registry,
                     at=clock(), admission_at=admission_at, allow_late=allow_late)
             else:
@@ -300,6 +336,10 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             update()
             if prepared["candidate"] is not None:
                 save(prepared["candidate"], store, fresh)
+            if reconciliation_new:
+                from decision_kernel.application.daily_write_reconciliation import reserve
+                store, fresh, api = unit(True)
+                save(reserve(item, write_reconciliation, at=clock()), store, fresh)
             cycle = item["cycle"]
             if cycle["status"] in SUCCESS:
                 report["status"] = "already-complete"
@@ -402,6 +442,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         quota_wait=getattr(open_unit, "quota_wait", None))
                     price = executed["receipt"]
                     report["price_source_requests"], report["price_execution"] = price["source_requests"], price
+                    if price.get("write_last_failure") is not None:
+                        report["write_last_failure"] = deepcopy(price["write_last_failure"])
                     if price["status"] in {"complete", "already-complete"}:
                         store, fresh, api = unit(True)
                         save(next_state(item, at=clock(), status="complete", market_reference=executed["reference"]), store, fresh)
@@ -414,6 +456,10 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     report["status"] = item["cycle"]["status"]
     except Exception as exc:
         reason = _reason(exc)
+        from decision_kernel.infrastructure.github_store import write_failure_diagnostic
+        diagnosis = write_failure_diagnostic(exc)
+        if diagnosis is not None:
+            report["write_last_failure"] = diagnosis
         report.update(status="not-due" if reason in {
             "DAILY_MARKET_BEFORE_CLOSE", "DAILY_MARKET_NO_RECENT_SCHEDULE"} else
             "persistence-unconfirmed" if isinstance(exc, UnknownWrite) else "blocked", reason_code=reason)
@@ -432,6 +478,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 report.update(status="blocked", reason_code=resolved["frontier_reason_code"])
         if resolved["cycle"] is not None:
             current = resolved["cycle"]
+            reconciliation = _reconciliation_summary(current)
+            if reconciliation is not None:
+                report["write_reconciliation"] = reconciliation
             report["calendar_reserved_requests"] = sum(row["reserved_requests"] for row in current["calendars"].values())
             if current.get("calendar_repair") is not None:
                 report.update(calendar_original_source_budget=2, calendar_additional_source_budget=1,
@@ -467,6 +516,12 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
     if selected["invocation"] == "repair-calendar":
         from decision_kernel.application.daily_calendar_repair import load_grant
         repair_options["calendar_repair"] = load_grant()
+    elif selected["invocation"] == "reconcile-write":
+        from decision_kernel.application.daily_write_reconciliation import load_grant
+        from decision_kernel.interfaces.daily_write_reconciliation_cli import verify_native_reconciliation
+        repair_options["write_reconciliation"] = load_grant()
+        repair_options["reconciliation_verifier"] = lambda grant: verify_native_reconciliation(
+            api, grant, token=env[TOKEN_ENV])
     now = datetime.now(timezone.utc)
     # Freeze admission to the native invocation clock, even if a queue or a
     # safe quota wait later crosses midnight. Only schedule/recover-late may

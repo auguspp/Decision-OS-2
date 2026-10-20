@@ -29,6 +29,74 @@ TREE_RESPONSE_WORK_UNIT_RESERVE = 256 * 1024
 COMMIT_MUTATION = """mutation StoreCommit($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
 }"""
+_WRITE_PHASES = frozenset({"response", "commit", "binding", "tree", "readback"})
+_WRITE_ERROR_CLASSIFICATIONS = {
+    "REMOTE_PARENT_MISMATCH": "parent-mismatch",
+    "REMOTE_WRITE_SET_CHANGED": "write-set-changed",
+    "REMOTE_UNRELATED_CHANGE": "unrelated-change",
+    "REMOTE_WRITE_READBACK_MISMATCH": "readback-mismatch",
+    "REMOTE_BLOB_INVALID": "blob-integrity",
+    "REMOTE_BLOB_ENCODING": "blob-integrity",
+    "REMOTE_BLOB_SIZE": "blob-integrity",
+    "REMOTE_BLOB_OID": "blob-integrity",
+    "BLOB_DIGEST_MISMATCH": "blob-integrity",
+    "PRIVATE_BINDING_MISMATCH": "binding-mismatch",
+    "PUBLIC_BINDING_MISMATCH": "binding-mismatch",
+    "PRIVATE_UPGRADE_REVERSED": "binding-mismatch",
+    "STORE_MARKER_MISMATCH": "binding-mismatch",
+    "REMOTE_REF_MISMATCH": "binding-mismatch",
+    "REMOTE_BRANCH_ID_REQUIRED": "binding-mismatch",
+    "COMMIT_OUTSIDE_BINDING": "reachability-failed",
+    "REMOTE_COMMIT_MISMATCH": "commit-invalid",
+    "REMOTE_TREE_MISSING": "commit-invalid",
+    "INCOMPLETE_REMOTE_TREE": "tree-invalid",
+    "REMOTE_TREE_LIMIT": "tree-invalid",
+    "INVALID_REMOTE_TREE": "tree-invalid",
+    "DUPLICATE_REMOTE_PATH": "tree-invalid",
+    "REGULAR_REMOTE_BLOB_REQUIRED": "tree-invalid",
+    "PATH_OUTSIDE_STORE": "tree-invalid",
+    "OBJECT_MISSING": "readback-missing",
+    "REMOTE_NOT_AUTHORIZED": "not-authorized",
+    "REMOTE_NOT_FOUND_OR_NOT_AUTHORIZED": "not-found-or-not-authorized",
+    "REMOTE_RATE_LIMIT": "rate-limited",
+    "REMOTE_REQUEST_LIMIT": "request-limit",
+    "REMOTE_HTTP_FAILURE": "http-failure",
+    "REMOTE_RESPONSE_UNAVAILABLE": "response-unavailable",
+    "REMOTE_JSON_INVALID": "response-invalid",
+    "REMOTE_RESPONSE_TOO_LARGE": "response-invalid",
+    "UNEXPECTED_REMOTE_RESPONSE": "response-invalid",
+}
+_WRITE_CLASSIFICATIONS = frozenset(_WRITE_ERROR_CLASSIFICATIONS.values()) | {
+    "graphql-errors", "response-invalid", "validation-failed",
+}
+
+
+def write_failure_diagnostic(error):
+    """Project only adapter-owned post-response enums, never exception prose.
+
+    This describes the failed verification, not whether the write published or
+    a provider/network root cause. Old unclassified writes remain unclassified.
+    """
+    if (not isinstance(error, UnknownWrite) or len(error.args) != 1 or type(error.args[0]) is not str
+            or error.args[0] != "REMOTE_WRITE_REQUIRES_RECONCILIATION"):
+        return None
+    phase = getattr(error, "write_phase", None)
+    classification = getattr(error, "write_classification", None)
+    if (type(phase) is not str or phase not in _WRITE_PHASES
+            or type(classification) is not str or classification not in _WRITE_CLASSIFICATIONS):
+        return None
+    return {"schema": "github-write-diagnostic-v1", "phase": phase,
+            "classification": classification}
+
+
+def _write_failure_classification(error, phase):
+    # Inspect only exact known RecordError codes. Do not call str(error), inspect
+    # causes, or parse response messages to invent a transport diagnosis.
+    if isinstance(error, RecordError) and len(error.args) == 1 and type(error.args[0]) is str:
+        classification = _WRITE_ERROR_CLASSIFICATIONS.get(error.args[0])
+        if classification is not None:
+            return classification
+    return "response-invalid" if phase == "response" else "validation-failed"
 
 
 def _sha(value) -> str:
@@ -519,26 +587,35 @@ class GitHubStore:
         }}}
         self._repository()  # Re-check immediately before sending write bytes.
         value = self.api.request("POST", "/graphql", payload)
+        phase, classification = "response", None
         try:
             if not isinstance(value, dict) or value.get("errors"):
                 # Includes CAS rejection: no automatic resend and no parsing private error prose.
+                classification = "graphql-errors" if isinstance(value, dict) else "response-invalid"
                 raise UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION")
             commit = _sha(value["data"]["createCommitOnBranch"]["commit"]["oid"])
+            phase = "commit"
             actual = self._commit(commit)
             require(actual.get("parents") == [{"sha": expected}] or
                     isinstance(actual.get("parents"), list) and len(actual["parents"]) == 1
                     and actual["parents"][0].get("sha") == expected, "REMOTE_PARENT_MISMATCH")
+            phase = "binding"
             self.check_commit(commit)
+            phase = "tree"
             actual_tree = self._tree(commit)
             require(set(actual_tree) == set(tree) | set(files), "REMOTE_WRITE_SET_CHANGED")
             for path, row in tree.items():
                 if path not in files:
                     require(actual_tree[path]["sha"] == row["sha"], "REMOTE_UNRELATED_CHANGE")
+            phase = "readback"
             for path, raw in files.items():
                 require(self._read(commit, path, tree=actual_tree) == raw, "REMOTE_WRITE_READBACK_MISMATCH")
             return commit
         except (RecordError, KeyError, TypeError, AttributeError) as exc:
-            raise UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION") from None
+            error = UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION")
+            error.write_phase = phase
+            error.write_classification = classification or _write_failure_classification(exc, phase)
+            raise error from None
 
 
 class _SourceReadScope:

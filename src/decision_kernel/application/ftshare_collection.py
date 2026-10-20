@@ -715,7 +715,13 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
     """
     visibility = authorize_market_custody(store, custody_authorized=custody_authorized,
                                          public_rights_confirmed=public_rights_confirmed)
-    require(visibility in ("private", "synthetic"), "FTSHARE_COLLECTION_PRIVATE_CUSTODY_REQUIRED")
+    # Normal collection writes inherit only this deployment's exact grant.
+    # A caller's publication flag cannot authorize an arbitrary public target.
+    from decision_kernel.infrastructure.runtime_publication import publication_basis
+    require(visibility in ("private", "synthetic") or visibility == "public"
+        and custody_authorized is True
+        and publication_basis(getattr(store.backend, "binding", None), "sources") is not None,
+        "FTSHARE_COLLECTION_PRIVATE_CUSTODY_REQUIRED")
     checked = validate_ftshare_collection(collection)
     plan = checked["plan"]
     reader = fresh_market_reader(store, fresh_reader)

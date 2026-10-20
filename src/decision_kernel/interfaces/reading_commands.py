@@ -35,6 +35,8 @@ def preflight(operation, payload, *, public=True):
             "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
     require(not plan.get("discovery") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
+    require(not plan.get("participants") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
 
 
 def perform(store, payload, *, public=True, market_registry=None):
@@ -49,7 +51,8 @@ def perform(store, payload, *, public=True, market_registry=None):
             material_export=not public or payload.get("public_material_custody_confirmed") is True,
             industry_export=not public or payload.get("public_sources_custody_confirmed") is True,
             watch_export=not public or payload.get("public_sources_custody_confirmed") is True,
-            market_export=not public or payload.get("public_sources_custody_confirmed") is True)
+            market_export=not public or payload.get("public_sources_custody_confirmed") is True,
+            participant_export=not public or payload.get("public_sources_custody_confirmed") is True)
         result["news_source_reads"] = reads.usage()  # Only the existing Brief/news part, not all room I/O.
     return result
 

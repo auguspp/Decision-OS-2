@@ -83,7 +83,7 @@ def open_market(store, value, *, registry=None, read_as_of=None):
     restored = read_market_reference(ref, registry, store, offset=plan["offset"],
         limit=plan["limit"], entity_id=plan["entity_id"], ashare_only=True, read_as_of=read_as_of)
     result = {"reference": deepcopy(plan["reference"]), "plan": plan,
-              "open_request": {"operation": "read-source", "payload": {"reference": deepcopy(plan["reference"])}},
+              "open_request": {"operation": "read-source", "payload": deepcopy(plan["reference"])},
               "status": "readable", "next_plan": None}
     if len(encoded(restored)) > MAX_MARKET_BYTES:
         return {**result, "status": "not-included", "error": "ROOM_MARKET_DISPLAY_BOUND"}

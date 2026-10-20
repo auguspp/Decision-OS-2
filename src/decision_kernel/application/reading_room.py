@@ -272,6 +272,13 @@ class ReadingRoom:
             try:
                 industry = open_industry(self.store, plan["industry"])
             except (RecordError, KeyError, TypeError) as error:
+                # Preserve the original industry access, source-scope and whole-read failures.
+                if isinstance(error, StoreUnavailable) or str(error) in (
+                    "PRIVATE_BINDING_MISMATCH", "PUBLIC_BINDING_MISMATCH", "PRIVATE_UPGRADE_REVERSED",
+                    "OPERATING_SOURCE_SCOPE_BOUND", "READING_SCOPE_CLOSED", "SOURCE_SCAN_SCOPE_CLOSED_OR_CHANGED",
+                    "INDUSTRY_READING_BOUND", "INDUSTRY_USES_READING_BOUND",
+                ):
+                    raise
                 industry = {"reference": plan["industry"]["reference"], "plan": plan["industry"],
                             "open_request": {"operation": "industry-read", "payload": deepcopy(plan["industry"])},
                             **_failure(error)}
@@ -285,10 +292,13 @@ class ReadingRoom:
             from decision_kernel.observations.market_daily import MarketInputError
             try:
                 market = open_market(self.store, plan["market"], registry=self.market_registry)
+            except StoreUnavailable:
+                # Preserve the original market readers' operation-wide failure.
+                raise
             except (RecordError, MarketInputError, KeyError, TypeError) as error:
                 market = {"reference": plan["market"]["reference"], "plan": plan["market"],
-                          "open_request": {"operation": "read-source", "payload": {
-                              "reference": deepcopy(plan["market"]["reference"])}}, **_failure(error)}
+                          "open_request": {"operation": "read-source", "payload":
+                              deepcopy(plan["market"]["reference"])}, **_failure(error)}
             result["market"] = market
             partial = partial or market["status"] != "readable" or market.get("partial", False)
         if plan.get("discovery"):
@@ -302,10 +312,13 @@ class ReadingRoom:
             result["discovery"] = discovery_panel
             partial = partial or discovery_panel["status"] != "readable" or discovery_panel.get("partial", False)
         if plan.get("participants"):
+            from decision_kernel.application.participant_reading import operation_failure as participant_operation_failure
             from decision_kernel.application.reading_participant import open_participants
             try:
                 participants = open_participants(self.store, plan["participants"], registry=self.market_registry)
             except (RecordError, KeyError, TypeError) as error:
+                if participant_operation_failure(error):
+                    raise
                 failure = ({"status": "not-included", "error": "ROOM_PARTICIPANT_DISPLAY_BOUND"}
                            if isinstance(error, RecordError) and str(error) == "ROOM_PARTICIPANT_DISPLAY_BOUND"
                            else _failure(error))

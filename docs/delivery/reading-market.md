@@ -48,9 +48,13 @@ decision-os store --path /tmp/existing-synthetic.git research-room \
 
 Registry的原手册/目录/回执相对依赖也须可读，身份改变时沿原保管合同拒绝。无market计划不加载Registry，不改变旧入口模型。页面只导出原根read-source或同一reading-room请求，不自动提交/预填许可；下载JSON是读取结果，不是供应商原始响应文件。
 
+“导出原市场根读取请求”的 `read-source` payload 是含 `manifest`、`selection` 的完整 SourceRef，直接沿现役宿主读取；正常市场结果与根内容未通过市场合同的面板都保留同一原件引用。`tests/test_room_consumer_boundaries.py` 执行正常宿主生成的完整 HTML 脚本并触发实际按钮，将未经修补的导出请求交回原宿主与 SourceReader 独立读回；同时保持 public 来源前置确认与 private 原生核验。页面和这个消费者退出时一并移除对应回归。
+
 ## 故障、预算和退出
 
 根损坏/缺失、Registry不适用、关键上下文失败只限制市场面板；缺单个因子 query 由原 owner 降级相依视图，原价好分支可保留。来源恢复、窗口缺口和未提供分别表达；原研究、议程、Brief 权限不变。市场部分上限 2MiB，超限整项省略、保留精确根和请求，不截断原结果。旧 reading 根继续受原 32-query / 原页限额约束；持续 collection 根按[原持续数据合同](../architecture/ashare-data-continuity.md)逐日恢复，不套旧 reading 根的 32-query 总量上限，也不改变每份原 query 的页与字节边界。原 512 请求、60KiB 宿主输入、6MiB 完整模型、8MiB 输出及末次访问核验不提高或重置；总预算或最终权限核验失败不能冒称局部成功。
+
+原市场 Reader 将 `StoreUnavailable`（底层存储不可用、访问失败或共用 API 预算失败）作为整次读取失败向上传播，Room 保留同一原异常并立即停止，不继续读取或将它折成局部缺项后导出私有输入、结果正文和 HTML。普通原件缺失仍按上述相依范围降级。`tests/test_room_consumer_boundaries.py` 用真实临时 Git、原 GitHubAPI 和合成响应，验证进入市场读取后一次 403 即终止，即使后续响应本可恢复正常也不续读；该回归与市场消费者一并维护和退役。
 
 测试使用合成资料的真实临时 Git、原宿主和原唯一安装消费链；包外两进程在捕获输入删除后独立恢复。分页、未知代码、计数伪根、来源缺失/损坏、容量、实时可见性及撤权分别验证。合成成功不代签真实行情资料、合法保管/公开表示或市场研究采用；真实业务验收须原 owner 给出获准根及声明窗口，不重抓成功样本制造验收。日历、主表分页前缀或一份旧备份能恢复，也不能代签当前完整分母与 raw/qfq 5/20/60 可用。
 

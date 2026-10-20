@@ -199,7 +199,8 @@ class Host:
             def validate_credential(self):
                 return "synthetic-price-only"
             def candlesticks(self, symbol, *, since, until, adjust_kind):
-                item = daily.latest_cycle(host.fixture["fresh"]())
+                item = daily.latest_cycle(host.fixture["fresh"](), registry=REGISTRY,
+                    protected_symbols=host.approved["symbols"])
                 ref = latest_ftshare_reference(host.fixture["fresh"](), REGISTRY,
                     collection_id="ftshare-cn-eod", generation=item["cycle"]["market_generation"])
                 state = restore_ftshare_collection(ref, REGISTRY, host.fixture["fresh"]())["collection"]
@@ -383,8 +384,8 @@ def test_source_failure_is_retained_across_new_runs_and_new_dates(kind):
 def test_unknown_calendar_reservation_does_not_make_another_request(monkeypatch):
     host = Host()
     original = host.fixture["store"].put_source
-    def lost(submission, source):
-        value = original(submission, source)
+    def lost(submission, source, **kwargs):
+        value = original(submission, source, **kwargs)
         if source.source_id.endswith("-r001"):
             raise UnknownWrite("SYNTHETIC_RESERVATION_RESPONSE_LOST")
         return value
@@ -478,16 +479,16 @@ def test_daily_native_reads_pin_once_per_contract_and_keep_final_live_check(nati
 
     # Source and control fixtures still use the original custody methods. Each
     # write's before/after reader stays independently instantiated.
-    item = daily.retain_cycle(prepared["candidate"], store, fresh_reader=fresh, previous=None)
+    item = daily.retain_cycle(prepared["candidate"], store, registry=REGISTRY, fresh_reader=fresh, previous=None)
     calendars = _new_calendars(store, fresh, through="20261019")
     for venue in daily.VENUES:
         rows = deepcopy(item["cycle"]["calendars"])
         rows[venue].update(status="in-flight", reserved_requests=1)
         item = daily.retain_cycle(daily.next_state(item, at=NOW, calendars=rows),
-            store, fresh_reader=fresh, previous=item)
+            store, registry=REGISTRY, fresh_reader=fresh, previous=item)
         rows[venue].update(status="complete", reference=calendars[venue])
         item = daily.retain_cycle(daily.next_state(item, at=NOW, calendars=rows),
-            store, fresh_reader=fresh, previous=item)
+            store, registry=REGISTRY, fresh_reader=fresh, previous=item)
     prior_calls, prior_fetches = api._requests, len(fetches)
     session = daily.completed_session(item["cycle"], REGISTRY, reader)
     assert session["new_session"] and session["price_end"] == "20261019"

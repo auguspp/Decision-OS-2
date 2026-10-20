@@ -29,7 +29,7 @@ from decision_kernel.interfaces.reading_commands import perform
 from decision_kernel.interfaces.reading_page import render_page
 
 OUTPUTS = ("reading-room.html", "reading-room.json", "reading-summary.md")
-UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code", "reading_reason_code", "cycle_date", "cycle_status",
+UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code", "reading_reason_code", "frontier_reason_code", "cycle_date", "cycle_status",
     "source_requests", "calendar_source_requests", "price_source_requests", "expected_completed_session",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
@@ -50,6 +50,8 @@ def build_reading(store, market_store, registry, approved, update_receipt, *, as
         "source_receipt": {key: deepcopy(update_receipt[key]) for key in UPDATE_FIELDS if key in update_receipt},
         "source_receipt_sha256": digest(encoded(update_receipt)), "market_resolution": "unavailable",
         "market_cycle": None, "market_cycle_reference": None, "market_error": None,
+        "frontier_reason_code": None, "frontier_blocking_reference": None,
+        "frontier_successor_references": [],
         "source_http_requests": 0, "records_write": "not-requested", "research_executed": False,
         "brief_created": False, "notification_sent": False,
         "discovery_update": deepcopy(discovery_receipt), "discovery": None}
@@ -60,6 +62,8 @@ def build_reading(store, market_store, registry, approved, update_receipt, *, as
         plan["market"] = {"reference": deepcopy(resolved["reference"]), "offset": 0, "limit": 20, "entity_id": None}
         context.update(market_resolution="resolved", market_cycle=deepcopy(resolved["cycle"]),
                        market_cycle_reference=deepcopy(resolved["cycle_reference"]))
+        for key in ("frontier_reason_code", "frontier_blocking_reference", "frontier_successor_references"):
+            context[key] = deepcopy(resolved.get(key, context[key]))
         reference = resolved["reference"]
     except (RecordError, KeyError, TypeError, ValueError) as exc:
         context["market_error"] = _error(exc)
@@ -75,7 +79,8 @@ def build_reading(store, market_store, registry, approved, update_receipt, *, as
     # scope and final access checks, not a second catalogue or data service.
     result = perform(store, {"plan": plan}, public=False, market_registry=registry)
     result["daily_update"] = context
-    if context["market_resolution"] != "resolved" or context["discovery"]["status"] == "unavailable" \
+    if context["market_resolution"] != "resolved" or context["frontier_reason_code"] is not None \
+            or context["discovery"]["status"] == "unavailable" \
             or discovery_receipt is not None and discovery_receipt["status"] == "unavailable" \
             or update_receipt.get("status") not in {
             "read", "complete", "already-complete", "no-new-session", "paused", "not-due"}:
@@ -109,6 +114,8 @@ def _summary_lines(model):
         lines.append("暂时无法读取日更状态。")
     if context["market_resolution"] != "resolved":
         lines.append("最新市场版本尚未确定：" + str(context["market_error"]) + "。")
+    if context.get("frontier_reason_code"):
+        lines.append("最新行情仍有未解决限制：" + context["frontier_reason_code"] + "。")
     part = model.get("market")
     view = ((part.get("view") or {}).get("view") or {}) if part and part.get("status") == "readable" else {}
     if view:
@@ -185,7 +192,8 @@ def daily_page(model):
     # This host paragraph is derived from the same model as the JSON/summary.
     # All values are escaped; the original room renderer and CSP stay intact.
     lines = _summary_lines(model)
-    primary = [line for line in lines if line.startswith(("本次行情更新", "更新原因", "原行情读回限制", "最新市场版本尚未确定"))]
+    primary = [line for line in lines if line.startswith(("本次行情更新", "更新原因", "原行情读回限制",
+        "最新市场版本尚未确定", "最新行情仍有未解决限制"))]
     panel = '<section class="panel" aria-label="本次更新情况"><h2>本次更新情况</h2>'
     panel += "".join("<p>" + escape(line) + "</p>" for line in primary)
     panel += '<details><summary>数据日期与内容覆盖</summary>'

@@ -11,7 +11,7 @@ import unicodedata
 
 from decision_kernel.domain.records import (
     BlobRef, Conflict, IntegrityError, MissingObject, RecordError, RevisionInput,
-    Selection, SourceInput, SourceRef, checked_text, digest, encoded, identifier, require,
+    SHA, Selection, SourceInput, SourceRef, checked_text, digest, encoded, identifier, require,
 )
 from decision_kernel.application.store_backend import StoreBackend
 
@@ -81,8 +81,15 @@ class VersionedStore:
         # No success receipt before the returned version is actually readable.
         return self.backend.reference(commit, path)
 
-    def put_source(self, submission_id: str, source: SourceInput) -> SourceRef:
+    def put_source(self, submission_id: str, source: SourceInput, *, expected_head: str | None = None) -> SourceRef:
+        """Retain through the original CAS, optionally bound to a checked head.
+
+        An already retained submission still reconciles its exact source without
+        another write. A new write must use the caller's checked snapshot.
+        """
         require(isinstance(source, SourceInput), "INVALID_SOURCE_INPUT")
+        require(expected_head is None or isinstance(expected_head, str) and SHA.fullmatch(expected_head) is not None,
+            "INVALID_COMMIT")
         head = self.backend.head()
         payload = asdict(source)
         intent = {"operation": "source", "input": asdict(source)}
@@ -92,6 +99,8 @@ class VersionedStore:
             ref = SourceRef(replay, selection)
             self.read_source(ref)
             return ref
+        if expected_head is not None and head != expected_head:
+            raise Conflict("HEAD_CHANGED")
         if source.kind == "dataset" and source.text is not None:
             _table(source.text)
         version = digest(encoded(payload))

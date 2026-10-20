@@ -496,6 +496,145 @@ def latest_ftshare_reference(store, registry, *, collection_id, generation):
         return _tip(reader, registry, collection_id, generation)[0]
 
 
+def _expansion_owners(collection):
+    owners = {}
+    for slot, request in collection["plan"]["requests"].items():
+        params = request["parameters"]
+        owner = (params["symbol"], params["adjust_kind"])
+        require(owner not in owners, "FTSHARE_SINGLE_DUPLICATE_OWNER")
+        unit = collection["units"][slot]
+        owners[owner] = (request, {key: unit[key] for key in ("status", "reference", "reason_code")})
+    return owners
+
+
+def _expansion_state_reason(collection):
+    if collection["source_hold"] is not None or any(
+            unit["reason_code"] in SOURCE_HOLD_REASONS for unit in collection["units"].values()):
+        return "FTSHARE_COLLECTION_SOURCE_HOLD"
+    if any(unit["status"] == "failed" for unit in collection["units"].values()):
+        return "FTSHARE_EXPANSION_FAILED"
+    if any(unit["status"] != "complete" for unit in collection["units"].values()):
+        return "FTSHARE_SINGLE_BASE_NOT_TERMINAL"
+    return None
+
+
+def _expansion_edge_reason(previous, current, protected):
+    before, after = previous["plan"], current["plan"]
+    if after["generation"].startswith("daily-"):
+        return "FTSHARE_EXPANSION_DAILY_GENERATION"
+    if any(before[key] != after[key] for key in ("start", "end", "calendar_end", "calendar_references")):
+        return "FTSHARE_EXPANSION_WINDOW_CHANGED"
+    if before.get("completion_policy") != after.get("completion_policy"):
+        return "FTSHARE_EXPANSION_COMPLETION_CHANGED"
+    old, new = _expansion_owners(previous), _expansion_owners(current)
+    if not old.keys() < new.keys() or any(new.get(owner) != value for owner, value in old.items()) \
+            or any((after["requests"][slot]["parameters"]["symbol"],
+                    after["requests"][slot]["parameters"]["adjust_kind"]) in old
+                   for slot in after["new_slots"]):
+        return "FTSHARE_EXPANSION_OWNER_CHANGED"
+    if any(symbol in protected for symbol, _ in new.keys() - old.keys()):
+        return "FTSHARE_EXPANSION_PROTECTED_SYMBOL"
+    return None
+
+
+def _expansion_successors(store, registry):
+    """Index existing original genesis records once; this creates no new pointer."""
+    snapshot = store.backend.head()
+    paths = [path for path in store.backend.paths(snapshot, "source-views/")
+        if re.fullmatch(r"source-views/ftshare-collection-[a-f0-9]{32}-r000/[a-f0-9]{64}/manifest\.json", path)]
+    require(len(paths) <= MAX_STORE_VERSIONS, "STORE_VERSION_LIMIT_EXCEEDED")
+    successors = {}
+    for path in paths:
+        original = store.backend.last_change(snapshot, path)
+        _, body = _manifest(SourceRef(store.backend.reference(original, path)), registry, store)
+        collection = body["collection"]
+        require(collection["revision"] == 0, "FTSHARE_COLLECTION_CHAIN_PLAN_CHANGED")
+        plan = collection["plan"]
+        if plan["schema"] == SINGLE_PLAN_SCHEMA:
+            successors.setdefault(encoded(plan["base_reference"]), []).append(plan)
+    return successors
+
+
+def resolve_ftshare_expansion_frontier(base_reference, registry, store, *,
+                                       protected_symbols=(), through_reference=None):
+    """Read one original expansion path without granting another source attempt.
+
+    Current mode follows the unique structural chain to its actual tip, retaining
+    the first use-policy/state refusal even when a later generation is complete.
+    Exact mode proves only the recorded base-to-endpoint interval; it does not
+    inspect another generation after that endpoint or require today's frontier.
+    A reason-free result still needs the host's existing capacity, source budget
+    and native write-frontier gates. Structural or original-source errors escape.
+    """
+    require(isinstance(registry, RelayRegistry), "FTSHARE_COLLECTION_REGISTRY_REQUIRED")
+    require(isinstance(protected_symbols, (list, tuple)) and len(protected_symbols) <= MAX_REQUESTS
+        and all(isinstance(symbol, str) and re.fullmatch(r"[0-9]{6}\.(SH|SZ)", symbol)
+                for symbol in protected_symbols)
+        and len(protected_symbols) == len(set(protected_symbols)), "FTSHARE_EXPANSION_PROTECTED_SYMBOLS")
+    with market_read_scope(store) as reader:
+        base_ref, base_body = _manifest(base_reference, registry, reader)
+        require(base_body["collection"]["plan"]["schema"] in (ADOPTION_PLAN_SCHEMA, SINGLE_PLAN_SCHEMA),
+            "FTSHARE_SINGLE_RETAINED_V1_QUALIFICATION_REQUIRED")
+        path, seen, total = [(base_ref, base_body)], {encoded(base_ref)}, len(encoded(base_body))
+        if through_reference is not None:
+            ref, body = _manifest(through_reference, registry, reader)
+            reverse = []
+            while ref != base_ref:
+                key = encoded(ref)
+                require(key not in seen, "FTSHARE_SINGLE_LINEAGE_CYCLE")
+                seen.add(key)
+                total += len(encoded(body))
+                require(total <= MAX_CHAIN_BYTES and len(reverse) + 1 < MAX_ROOTS,
+                    "FTSHARE_COLLECTION_CHAIN_BOUND")
+                require(body["collection"]["plan"]["schema"] == SINGLE_PLAN_SCHEMA,
+                    "FTSHARE_EXPANSION_ENDPOINT_NOT_DESCENDANT")
+                reverse.append((ref, body))
+                ref, body = _manifest(body["collection"]["plan"]["base_reference"], registry, reader)
+            path.extend(reversed(reverse))
+        else:
+            plan = base_body["collection"]["plan"]
+            tip, _ = _tip(reader, registry, plan["collection_id"], plan["generation"])
+            require(tip == base_ref, "FTSHARE_SINGLE_STALE_BASE")
+            successors = _expansion_successors(reader, registry)
+            while True:
+                prior_ref, _ = path[-1]
+                children = successors.get(encoded(prior_ref), [])
+                require(len(children) <= 1, "FTSHARE_EXPANSION_FORK")
+                if not children:
+                    break
+                child = children[0]
+                require(child["collection_id"] == plan["collection_id"], "FTSHARE_SINGLE_BASE_IDENTITY")
+                ref, body = _tip(reader, registry, child["collection_id"], child["generation"])
+                require(ref is not None and body["collection"]["plan"]["base_reference"] == prior_ref,
+                    "FTSHARE_COLLECTION_CHAIN_PLAN_CHANGED")
+                key = encoded(ref)
+                require(key not in seen, "FTSHARE_SINGLE_LINEAGE_CYCLE")
+                seen.add(key)
+                total += len(encoded(body))
+                require(total <= MAX_CHAIN_BYTES and len(path) < MAX_ROOTS,
+                    "FTSHARE_COLLECTION_CHAIN_BOUND")
+                path.append((ref, body))
+        # One complete restoration proves every recorded generation and original
+        # edge. Do not turn a malformed child into a readable older green root.
+        reference = path[-1][0]
+        restored = restore_ftshare_collection(reference, registry, reader)
+        reason = _expansion_state_reason(base_body["collection"])
+        blocking = base_ref if reason is not None else None
+        protected = set(protected_symbols)
+        for (previous_ref, previous), (current_ref, current) in zip(path, path[1:]):
+            require(current["collection"]["plan"]["base_reference"] == previous_ref,
+                "FTSHARE_EXPANSION_ENDPOINT_NOT_DESCENDANT")
+            refusal = (_expansion_edge_reason(previous["collection"], current["collection"], protected)
+                       or _expansion_state_reason(current["collection"]))
+            if reason is None and refusal is not None:
+                reason, blocking = refusal, current_ref
+        _single_sources(restored["collection"]["plan"], restored["collection"]["units"], reader)
+        restored["batches_restored"] = True
+        return {"base_reference": base_ref, "reference": reference, "restored": restored,
+            "successor_references": [ref for ref, _ in path[1:]], "reason_code": reason,
+            "blocking_reference": blocking, "source_requests": 0}
+
+
 def restore_ftshare_batch(reference, store, *, request):
     """Authenticate the exact original SourceInput and requalify its UTF-8 body."""
     with market_read_scope(store) as reader:
@@ -964,11 +1103,15 @@ def _single_write_frontier(base, registry, store, *, generation):
             require(candidate["generation"] == generation, "FTSHARE_SINGLE_BASE_ALREADY_HAS_SUCCESSOR")
 
 
-def _single_inherited_sources(plan, store):
-    for slot, unit in plan["inherited_units"].items():
+def _single_sources(plan, units, store):
+    for slot, unit in units.items():
         if unit["status"] == "complete":
             captured = restore_single(unit["reference"], store, request=plan["requests"][slot])
             _capture_completion(captured, plan.get("completion_policy"))
+
+
+def _single_inherited_sources(plan, store):
+    _single_sources(plan, plan["inherited_units"], store)
 
 
 def _capture_completion(capture, completion_policy):

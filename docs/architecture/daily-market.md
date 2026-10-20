@@ -29,11 +29,15 @@
 
 ## 继承、预留和停止
 
-首次从配置内确切的六股终态 FTShare SourceRef 接续，以后使用前一成功日更引用。原 `plan_ftshare_single_collection` / `run_collection` 继续持有价格计划、单股预留、原文、资格、累计旧额度及每个 generation 的唯一前驱。周期使用业务日期确定 `daily-YYYYMMDD`，只有实际新增完成交易日时才生成该 FTShare 后继计划；换 run、重跑、换日期、选择 `recover-late` 或更新配置不能把耗尽请求再变成 pending。
+首次以配置内确切的六股终态 FTShare SourceRef 为起点，以后以前一成功日更引用为起点。建立新周期之前，可以沿原 records 中唯一、可完整恢复的 FTShare 手工扩面后继接续到实际当前引用。这里的扩面只允许在原市场分母内增加六股日更范围之外的新 symbol / adjust-kind owner；每条边必须保留 collection / adoption、价格起止日、日历窗口与确切引用、收盘资格，以及所有旧 owner 的请求、成功原件或失败状态。手工提前推进价格截止日、替换日历、改写旧 owner 请求，或将另一个 `daily-*` generation 当成手工扩面，都不能取得新周期来源资格。沿途任一 pending、failed、hold 或 in-flight 均阻断新来源，即使更后面的另一个新增 owner 已经成功。
+
+原 `plan_ftshare_single_collection` / `run_collection` 继续持有价格计划、单股预留、原文、资格、累计旧额度及每个 generation 的唯一前驱。合格扩面后继的实际累计预留全部继承；本周期仍只请求配置六股的 `none/forward`，不因继承更多已有 owner 而增加十二次价格预算。周期使用业务日期确定 `daily-YYYYMMDD`，只有实际新增完成交易日时才生成该 FTShare 后继计划；换 run、重跑、换日期、选择 `recover-late` 或更新配置不能把耗尽请求再变成 pending。
+
+新周期 r000 保存前，从实际原件再核当前后继是否仍是刚选定的 base，并把同一已核快照的 head 传给原 `VersionedStore.put_source` / backend CAS。无论新扩面到达 Store 取 head 之前还是原提交 CAS 之前，旧候选都停止，不留下过时意图。已保管的同一 submission 可以按确切原内容只读对账；即使调用者仍持旧 expected head，也不重新写入或消耗来源。独立读回历史控制链时，跨日的“前周期市场引用 → 本周期 base”只证明这两个已记录端点之间的确切 FTShare 扩面链；端点之后的新增或失败不反过来改写历史。当前来源准入另外核实际当前链，历史可恢复本身不授权越过新阻断。该适配使用原不可变 genesis 记录查找后继，没有新增手工同步的当前引用文件。
 
 新日历的两次预留使用同一个 `VersionedStore.put_source` 写成小型 `SourceInput / SourceRef`。`daily-market-cycle-YYYYMMDD-rNNN` 是原 Store 内不可变的来源工作记录：先独立保管一次预留，再发一次 HTTP，再保管实际成功或失败。它不保存另一套价格，不是新的业务主库、后台任务队列或手工同步状态看板。真实日历查询自身仍通过原 `retain_market_query` 保管和独立恢复。
 
-同日已经完成时再调用只读，来源请求为 0。未完成的安全 pending 周期只接续原引用和剩余额度；即使到了下一天，也先完成这一个旧周期，不另立日期绕过。以下情况停止新的来源请求并保留原问题：
+同日已经完成时再调用只读，来源请求为 0；期间手工扩面不会重定旧周期的 base、日期、市场引用或额度。未完成的安全 pending 周期只接续原引用和剩余额度；即使到了下一天，也先完成这一个旧周期，不另立日期绕过。每个尚未请求的日历和价格阶段之前再核原 FTShare 后继：自己的既存 `daily-YYYYMMDD` 只能由原执行器恢复剩余工作，外来后继使固定的旧周期停止，不能自动 rebase。日历由 pending 转 in-flight 的准入检查与预留写入绑定同一个已核快照；检查前到达的外来后继停止准入，检查后到达的写入由原 CAS 拒绝，均不发出该次日历 HTTP。已有来源响应的 complete / failed 落账继续保留真实效果，不套用新请求准入去丢弃已经取得的结果。以下情况停止新的来源请求并保留原问题：
 
 - 原 FTShare 基线或当前周期有 source hold、failed 或未知 in-flight；日历来源失败、历史开闭市被改写、两所最后交易日冲突。
 - 一个来源请求已预留但传输或 Store 效果不明；按原引用对账，不能借新 run 或新日期重发。
@@ -72,12 +76,14 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 | 输出 | 含义 |
 |---|---|
 | `result.json` | 安全计数、周期状态、实际请求与失败、原生代码身份及 invocation、正常 reader 的 freshness / coverage；`admission` 保留准入模式、原生准入时刻、业务日、计划槽、延迟及适用上限，`store_quota_wait` 保留同次运行的原生等待和额度观察。没有研究执行或通知。 |
-| `control.json` | 同 private 产物内的确切 `cycle_reference`、`market_reference`、generation 和已保管日历引用，供现役正常消费者使用。 |
+| `control.json` | 同 private 产物内的确切 `cycle_reference`、当前实际 `market_reference`、周期 generation 和已保管日历引用，供现役正常消费者使用。另保留 `frontier_reason_code`、首个 `frontier_blocking_reference` 和实际经过的 `frontier_successor_references`。 |
 | `reading-room.html` | 原统一阅读室的离线页面，显示本次更新状态、自动发现并固定的已存 Brief、研究、待复核问题与实际市场覆盖。 |
 | `reading-room.json` | 与 HTML 对应的只读模型及实际日更状态，保留原精确引用、内容截止与失败。 |
 | `reading-summary.md` | 同模型派生的人用摘要，经发布前私有核验后写入本次 Actions Summary。 |
 
-完成或失败之后均尝试原 `read_ftshare_collection_version`，采用最新真实尝试及其缺口，不安静换成较早的成功快照。工作台可以调用 `daily_market_reference(store, registry, policy(...))` 取得相同精确引用及日更状态，再进入自己的正常读取；此 resolver 不调用来源、不写 records。正式报告、研究采用和人工决定仍按原版本独立进行。
+完成或失败之后均尝试原 `read_ftshare_collection_version`，采用最新真实尝试及其缺口，不安静换成较早的成功快照。工作台可以调用 `daily_market_reference(store, registry, policy(...))` 取得相同精确引用及日更状态，再进入自己的正常读取；此 resolver 不调用来源、不写 records。它沿唯一的真实结构读到当前 tip，并保留沿途首个用途或状态阻断。因此“新增 owner 失败 → 后续另一个 owner 成功”仍展示后续实际引用、前面的失败原件及首个阻断；后来的成功不会清除旧失败。结构分叉、坏引用或原件恢复失败则保留不可用诊断，不回退到一个较早的绿色引用。
+
+当前阅读的 `market_reference` 可以晚于已完成周期内保存的 `market_reference`；`cycle_reference` 和周期 generation 仍标识原周期。旧周期完成与当前扩面失败分别显示，运行回执和正常阅读保留当前阻断 / partial，不把旧周期改写成失败，也不借旧周期的 complete 掩盖后续失败。正式报告、研究采用和人工决定仍按原版本独立进行。
 
 `status` 作业只有 contents / actions 读取权限，没有来源 Secret。`update`、`recover-late` 与自动调度沿用同一个更新作业，使用现有来源 Secret 和原 `records` 写入权限，Secret 不交给后续阅读步骤。产物发布前再核一次原生 private / main。读取和操作失败保留本次 failure / partial，不能用上一份成功报表代替。Actions 产物有到期日；持久真源仍是原 records。
 
@@ -89,7 +95,9 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 可以在 GitHub 原生界面停用本工作流，或经普通 PR 将本专属配置 `enabled` 置为 false。暂停不删除历史、不清除失败、不取消已有在途操作；在途结果仍按原引用核对。恢复 enabled 只恢复原合同，不能解锁已失败周期。代码回退使用普通反向 PR；新增 records 原件与它们的现役只读支持继续保留，不强制回退业务分支。
 
-工程测试包括同日零重放、真实日历休市、新日期继承累计额度、日历拒绝 / 历史冲突 / FTShare hold 跨日阻断、未知预留以及独立 Git 恢复。延迟回归另核原生午夜创建、显式补更与普通早盘更新的区别、周五至周六及严格 24 小时边界、周日和周一早盘无窗口、队列跨下一槽仍固定原日、真实创建与采集时钟、旧周期剩余预留及 hold、日历不包含当前未收盘日和下游 invocation 一致性。原生 Git/API 模型另核普通 1000 core / 1000 GraphQL 额度下的同 run 完整 2 + 12、独立新窗口响应、五次刷新上限、陈旧 headers 与拒绝停止、完成后的消费者余量。合成数据和合成时间测试只证明工程语义，不是已经等待未来五小时或已经连续更新多日的证据。首次真实运行、原生 schedule 启用、显式补更、每个后续自然交易日、人工工作台体验和长期持续性分别记录；一轮成功不能签未来 uptime 或全市场可用。
+工程测试包括同日零重放、真实日历休市、新日期继承累计额度、日历拒绝 / 历史冲突 / FTShare hold 跨日阻断、未知预留以及独立 Git 恢复。手工扩面集成回归复用原保管与正常 reader，核多个已存新增 owner 的继承、跨日确切桥接端点、后来的失败不破坏旧历史、实际最新尝试与首个阻断、r000 前竞争、外来后继在来源前停止、未知写后的原周期恢复，以及窗口 / 日历 / 旧 owner 变化拒绝。两股合成宿主的 2 + 4 请求只用于这些跨层语义；正式六股预算仍由完整 2 + 12 模型核验。
+
+延迟回归另核原生午夜创建、显式补更与普通早盘更新的区别、周五至周六及严格 24 小时边界、周日和周一早盘无窗口、队列跨下一槽仍固定原日、真实创建与采集时钟、旧周期剩余预留及 hold、日历不包含当前未收盘日和下游 invocation 一致性。原生 Git/API 模型另核普通 1000 core / 1000 GraphQL 额度下的同 run 完整 2 + 12、独立新窗口响应、五次刷新上限、陈旧 headers 与拒绝停止、完成后的消费者余量。合成数据和合成时间测试只证明工程语义，不是已经等待未来五小时或已经连续更新多日的证据。首次真实运行、原生 schedule 启用、显式补更、每个后续自然交易日、人工工作台体验和长期持续性分别记录；一轮成功不能签未来 uptime 或全市场可用。
 
 ## 组件复用与退出
 
@@ -97,4 +105,4 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 普通令牌的独立额度和真实响应等待依据同日核读的官方 [REST rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) 与 [GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api)。继续复用已有 `GitHubRateLimits.observe` / `admits`；宿主只添加有界等待与原生复核，没有通用重试中间件、第二个令牌或手工额度表。
 
-本责任维护 `application/daily_market.py`、`interfaces/daily_market_cli.py`、`interfaces/daily_reading_cli.py`、专属配置、工作流及日更/阅读入口测试。退役执行能力时同步退工作流与采集入口，保留尚有已存消费者依赖的日历控制读取、FTShare 原件及独立恢复支持；共享 Store、来源、CI 与正常阅读不因本模块退出而删除。
+本责任维护 `application/daily_market.py`、`interfaces/daily_market_cli.py`、`interfaces/daily_reading_cli.py`、专属配置、工作流及日更/阅读入口测试。`ftshare_collection.resolve_ftshare_expansion_frontier` 的来源桥接合同由本市场接续能力维护；`VersionedStore.put_source(expected_head=...)` 是当前日更控制绑定已核快照的窄适配，继续使用原 writer 和 CAS。若日更写入退役且没有其他实际消费者，同一 PR 退出这项专属调用及无用入口。退役执行能力时同步退工作流与采集入口，保留尚有已存消费者依赖的日历控制读取、FTShare 原件及独立恢复支持；共享 Store、来源、CI 与正常阅读不因本模块退出而删除。

@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 from decision_kernel.application.daily_market import (
     SUCCESS, VENUES, _stamp, calendar_plan, completed_session, daily_market_reference,
-    initial_cycle, latest_cycle, next_state, policy, price_configuration, retain_cycle,
+    initial_cycle, next_state, policy, price_configuration, retain_cycle,
 )
 from decision_kernel.application.ftshare_collection_inputs import read_ftshare_collection_version
 from decision_kernel.application.market_capacity import market_capacity
@@ -234,7 +234,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         "research_executed": False, "notification_sent": False, "long_term_uptime_certified": False}
     item = None
     control = {"schema": "daily-market-reading-control-v1", "market_reference": None,
-        "cycle_reference": None, "generation": None, "calendar_references": {}}
+        "cycle_reference": None, "generation": None, "calendar_references": {},
+        "frontier_reason_code": None, "frontier_blocking_reference": None,
+        "frontier_successor_references": []}
     def update():
         report["source_requests"] = report["calendar_source_requests"] + report["price_source_requests"]
         quota_receipt = getattr(open_unit, "quota_receipt", None)
@@ -247,7 +249,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             progress(deepcopy(report), deepcopy(control))
     def save(state, store, fresh):
         nonlocal item
-        item = retain_cycle(state, store, fresh_reader=fresh, previous=item)
+        item = retain_cycle(state, store, registry=registry, fresh_reader=fresh, previous=item,
+            protected_symbols=approved["symbols"])
         update()
     def unit(write):
         store, fresh, api = open_unit(write)
@@ -382,6 +385,12 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         reader = fresh()
         resolved = daily_market_reference(reader, registry, approved)
         control.update(market_reference=resolved["reference"], cycle_reference=resolved["cycle_reference"])
+        for key in ("frontier_reason_code", "frontier_blocking_reference", "frontier_successor_references"):
+            control[key] = deepcopy(resolved[key])
+        if resolved["frontier_reason_code"] is not None:
+            report["frontier_reason_code"] = resolved["frontier_reason_code"]
+            if report["status"] in {"read", "complete", "already-complete", "no-new-session"}:
+                report.update(status="blocked", reason_code=resolved["frontier_reason_code"])
         if resolved["cycle"] is not None:
             current = resolved["cycle"]
             control.update(generation=current["market_generation"], calendar_references={venue: row["reference"]

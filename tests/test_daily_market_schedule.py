@@ -273,8 +273,8 @@ def test_late_recovery_preserves_old_blocked_or_unknown_cycle_and_all_reservatio
     elif mode == "price-held":
         host.price_error = RecordError("FTSHARE_HTTP_403")
     else:
-        def lost(submission, source):
-            value = original(submission, source)
+        def lost(submission, source, **kwargs):
+            value = original(submission, source, **kwargs)
             if source.source_id.endswith("-r001"):
                 raise UnknownWrite("SYNTHETIC_RESERVATION_RESPONSE_LOST")
             return value

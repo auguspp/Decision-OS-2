@@ -97,6 +97,9 @@ open 缺失不消去好 close；同证券重复行则该证券两字段都未决
 时间。checked_at、来源或当前 gap 可以变化，view_version 随完整模型变化。
 first_recorded_at 是不可变记录声明，并不证明原行情当时已到达某个人。
 
+完成资格丢失独立记录为 `current_attempt.previous_completion_unavailable`，即使
+旧表没有任何可用证券价格也保留整份旧结果；前版恢复从确切来源重新计算该理由。
+
 pending cohort 遇到新 auction 继续保留。完成资格已经成立的旧 cohort，只有当新
 auction 的 T 已超过其目标日时才退出活动集合，记录准确前版 SourceRef、原 cohort
 身份和结果 hash。报价字段不全仍明确保留 gaps；“完成”在此指目标日完成资格，

@@ -137,9 +137,9 @@ def settings(event, env, approved):
     else:
         inputs = event.get("inputs")
         require(isinstance(inputs, dict) and set(inputs) == {"operation", "code_sha"}
-            and inputs.get("operation") in {"status", "update", "recover-late"}, "DAILY_MARKET_INPUT")
+            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar"}, "DAILY_MARKET_INPUT")
         invocation, sha = inputs["operation"], inputs["code_sha"]
-        operation = "update" if invocation == "recover-late" else invocation
+        operation = "update" if invocation in {"recover-late", "repair-calendar"} else invocation
     require(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha)
         and sha == env.get("GITHUB_SHA"), "DAILY_MARKET_CODE_SHA")
     run_id = env.get("GITHUB_RUN_ID")
@@ -217,11 +217,13 @@ def _reason(exc, env=None):
 def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               guard=None, calendar_client_factory=None, price_client_factory=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
-              sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False):
+              sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False,
+              calendar_repair=None):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
     require(type(allow_late) is bool, "DAILY_MARKET_ADMISSION_MODE")
+    require(calendar_repair is None or operation == "update", "DAILY_CALENDAR_REPAIR_OPERATION")
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda api: None)
     report = {"schema": "daily-market-runtime-v1", "operation": operation, "status": "started",
@@ -245,6 +247,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         if item is not None:
             report.update(cycle_date=item["cycle"]["date"], cycle_status=item["cycle"]["status"],
                 calendar_reserved_requests=sum(row["reserved_requests"] for row in item["cycle"]["calendars"].values()))
+        if item is not None and item["cycle"].get("calendar_repair") is not None:
+            report.update(calendar_original_source_budget=2, calendar_additional_source_budget=1,
+                calendar_source_budget=3, calendar_repair=deepcopy(item["cycle"]["calendar_repair"]))
         if progress is not None:
             progress(deepcopy(report), deepcopy(control))
     def save(state, store, fresh):
@@ -268,8 +273,22 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         if operation == "status" or not approved["enabled"]:
             report["status"] = "read" if approved["enabled"] else "paused"
         else:
-            prepared = initial_cycle(approved, fresh_market_reader(store, fresh), registry,
-                at=clock(), admission_at=admission_at, allow_late=allow_late)
+            repair_new = False
+            if calendar_repair is None:
+                prepared = initial_cycle(approved, fresh_market_reader(store, fresh), registry,
+                    at=clock(), admission_at=admission_at, allow_late=allow_late)
+            else:
+                from decision_kernel.application.daily_market import latest_cycle, policy_digest
+                from decision_kernel.application.daily_calendar_repair import select_repair
+                current = latest_cycle(fresh_market_reader(store, fresh), registry=registry,
+                    protected_symbols=approved["symbols"])
+                now = clock()
+                repair_new = select_repair(current, calendar_repair, at=now)
+                require(current["cycle"]["policy_sha256"] == policy_digest(approved),
+                    "DAILY_MARKET_POLICY_CHANGED")
+                prepared = {"existing": current, "candidate": None, "admission": {
+                    "mode": "explicit-calendar-repair", "business_date": current["cycle"]["date"],
+                    "admitted_at": now, "authorization_ref": calendar_repair["authorization_ref"]}}
             item = prepared["existing"]
             report["admission"] = prepared["admission"]
             update()
@@ -278,7 +297,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             cycle = item["cycle"]
             if cycle["status"] in SUCCESS:
                 report["status"] = "already-complete"
-            elif cycle["status"] == "blocked":
+            elif cycle["status"] == "blocked" and not repair_new:
                 report.update(status="source-held", reason_code=cycle["reason_code"])
             elif any(row["status"] == "in-flight" for row in cycle["calendars"].values()):
                 report.update(status="persistence-unconfirmed", reason_code="DAILY_MARKET_CALENDAR_RECONCILIATION_REQUIRED")
@@ -289,11 +308,19 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     if item["cycle"]["calendars"][venue]["status"] == "complete":
                         continue
                     store, fresh, api = unit(True)
+                    if repair_new and item["cycle"]["calendars"][venue]["status"] == "failed":
+                        from decision_kernel.application.daily_calendar_repair import reserve
+                        state = reserve(item, calendar_repair, at=clock())
+                        repair_new = False
+                    else:
+                        calendars = deepcopy(item["cycle"]["calendars"])
+                        calendars[venue].update(status="in-flight", reserved_requests=1)
+                        state = next_state(item, at=clock(), calendars=calendars)
+                    save(state, store, fresh)
                     calendars = deepcopy(item["cycle"]["calendars"])
-                    calendars[venue].update(status="in-flight", reserved_requests=1)
-                    save(next_state(item, at=clock(), calendars=calendars), store, fresh)
                     guard(api)
                     _admit(api)
+                    request_started = None
                     try:
                         if calendar_client is None:
                             calendar_client = (calendar_client_factory or RelayHTTP)()
@@ -304,6 +331,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         require(before < 2, "DAILY_MARKET_CALENDAR_BUDGET")
                         session = RetryingRelay(calendar_client, RetryPolicy(max_attempts=1, max_wait_seconds=0),
                             clock=clock, monotonic=monotonic, deadline=monotonic() + 600)
+                        request_started = monotonic()
                         try:
                             captured = capture_registered(use, registry, session, max_pages=1)
                         finally:
@@ -331,6 +359,11 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         # No new date/run id can reserve this query again.
                         if isinstance(exc, UnknownWrite):
                             raise
+                        if request_started is not None:
+                            from decision_kernel.application.daily_calendar_repair import diagnostic
+                            report["calendar_last_failure"] = diagnostic(venue, calendar_client,
+                                elapsed_seconds=monotonic() - request_started)
+                            update()
                         guard(api)
                         calendars[venue].update(status="failed", reference=None, reason_code=_reason(exc))
                         save(next_state(item, at=clock(), calendars=calendars,
@@ -393,6 +426,10 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 report.update(status="blocked", reason_code=resolved["frontier_reason_code"])
         if resolved["cycle"] is not None:
             current = resolved["cycle"]
+            report["calendar_reserved_requests"] = sum(row["reserved_requests"] for row in current["calendars"].values())
+            if current.get("calendar_repair") is not None:
+                report.update(calendar_original_source_budget=2, calendar_additional_source_budget=1,
+                    calendar_source_budget=3, calendar_repair=deepcopy(current["calendar_repair"]))
             control.update(generation=current["market_generation"], calendar_references={venue: row["reference"]
                 for venue, row in current["calendars"].items() if row["reference"] is not None})
             report.update(cycle_date=current["date"], cycle_status=current["status"],
@@ -420,6 +457,10 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         and out.resolve() != root, "DAILY_MARKET_OUTPUT")
     api = GitHubAPI(env[TOKEN_ENV]) if api is None else api
     proof = native_ready(api, selected)
+    repair_options = {}
+    if selected["invocation"] == "repair-calendar":
+        from decision_kernel.application.daily_calendar_repair import load_grant
+        repair_options["calendar_repair"] = load_grant()
     now = datetime.now(timezone.utc)
     # Freeze admission to the native invocation clock, even if a queue or a
     # safe quota wait later crosses midnight. Only schedule/recover-late may
@@ -435,7 +476,7 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         guard=lambda current: check_private(current, selected), progress=progress,
         calendar_client_factory=lambda: RelayHTTP(credential=env.get(SECRET_ENV, ""), request_timeout_seconds=90),
         admission_at=created.isoformat(),
-        allow_late=selected["invocation"] in {"schedule", "recover-late"})
+        allow_late=selected["invocation"] in {"schedule", "recover-late"}, **repair_options)
     check_private(api, selected)
     progress(executed["receipt"], executed["control"])
     print(json.dumps({**executed["receipt"], **selected}, ensure_ascii=False))

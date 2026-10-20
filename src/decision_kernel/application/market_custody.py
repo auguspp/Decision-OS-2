@@ -282,6 +282,9 @@ def market_reading_projection(payload, registry):
     if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
         from decision_kernel.application.global_public_custody import public_reading_projection
         return public_reading_projection(payload)
+    if isinstance(payload, dict) and payload.get("schema") == "ftshare-auction-minute-reading-v1":
+        from decision_kernel.application.auction_minute_custody import minute_reading_projection
+        return minute_reading_projection(payload)
     require(len(encoded(payload)) <= MAX_BYTES, "MARKET_CUSTODY_INPUT_BOUND")
     read_market_payload(payload, registry)
     def project(result, _path):
@@ -374,6 +377,10 @@ def retain_market_reading(payload, registry, store, *, fresh_reader, custody_aut
     if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
         from decision_kernel.application.global_public_custody import retain_public_reading
         return retain_public_reading(payload, store, fresh_reader=fresh_reader,
+            custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
+    if isinstance(payload, dict) and payload.get("schema") == "ftshare-auction-minute-reading-v1":
+        from decision_kernel.application.auction_minute_custody import retain_minute_reading
+        return retain_minute_reading(payload, registry, store, fresh_reader=fresh_reader,
             custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
     authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
@@ -476,6 +483,9 @@ def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity
     if ref.manifest.path.startswith(PUBLIC_ROOT_PREFIX):
         return read_public_reading(ref, store, offset=offset, limit=limit, entity_id=entity_id)
     require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100, "PAGE_INVALID")
+    if ref.manifest.path.startswith("source-views/market-auction-minute-"):
+        from decision_kernel.application.auction_minute_custody import read_minute_reading
+        return read_minute_reading(ref, registry, store, offset=offset, limit=limit, entity_id=entity_id)
     restored = restore_market_reading_inputs(reference, registry, store)
     payload, failed = restored["payload"], restored["unavailable_queries"]
     if payload.get("schema") == "relay-three-market-reading-v1":

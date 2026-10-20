@@ -37,6 +37,8 @@ def preflight(operation, payload, *, public=True):
             "ROOM_PUBLIC_GLOBAL_NOT_CONFIRMED")
     require(not plan.get("auction") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_AUCTION_NOT_CONFIRMED")
+    require(not plan.get("auction_minute") or payload.get("public_sources_custody_confirmed") is True,
+            "ROOM_PUBLIC_MINUTE_NOT_CONFIRMED")
     require(not plan.get("discovery") or payload.get("public_sources_custody_confirmed") is True,
             "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
     require(not plan.get("participants") or payload.get("public_sources_custody_confirmed") is True,

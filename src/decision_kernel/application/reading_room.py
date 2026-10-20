@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -59,6 +59,9 @@ def plan_input(value):
     if value.get("auction") is not None:
         from decision_kernel.application.reading_auction import auction_plan
         result["auction"] = auction_plan(value["auction"])
+    if value.get("auction_minute") is not None:
+        from decision_kernel.application.reading_auction_minute import minute_plan_input
+        result["auction_minute"] = minute_plan_input(value["auction_minute"])
     if value.get("discovery") is not None:
         from decision_kernel.application.reading_discovery import discovery_plan
         result["discovery"] = discovery_plan(value["discovery"])
@@ -166,6 +169,7 @@ class ReadingRoom:
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         require(not plan.get("global_context") or market_export is True, "ROOM_PUBLIC_GLOBAL_NOT_CONFIRMED")
         require(not plan.get("auction") or market_export is True, "ROOM_PUBLIC_AUCTION_NOT_CONFIRMED")
+        require(not plan.get("auction_minute") or market_export is True, "ROOM_PUBLIC_MINUTE_NOT_CONFIRMED")
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
         require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
         require(not plan.get("event_calendar") or industry_export is True, "ROOM_PUBLIC_CALENDAR_NOT_CONFIRMED")
@@ -323,6 +327,11 @@ class ReadingRoom:
             auction = open_auction(self.store, plan["auction"], registry=self.market_registry)
             result["auction"] = auction
             partial = partial or auction["status"] != "readable"
+        if plan.get("auction_minute"):
+            from decision_kernel.application.reading_auction_minute import open_auction_minute
+            minute = open_auction_minute(self.store, plan["auction_minute"], registry=self.market_registry)
+            result["auction_minute"] = minute
+            partial = partial or minute["status"] != "readable"
         if plan.get("discovery"):
             from decision_kernel.application.reading_discovery import open_discovery
             from decision_kernel.observations.market_daily import MarketInputError

@@ -34,6 +34,7 @@ VENUES = ("SSE", "SZSE")
 ZONE = timezone(timedelta(hours=8))
 MAX_RECORDS = 4096
 MAX_CONTROL_BYTES = 16 * 1024 * 1024
+MAX_LATE_SECONDS = 24 * 3600
 SUCCESS = {"complete", "no-new-session"}
 LIMITATIONS = (
     "GENERATED_DAILY_CALENDAR_INTENT_NOT_PROVIDER_RESPONSE",
@@ -230,13 +231,45 @@ def next_state(item, *, at, **changes):
     return validate_cycle(value)
 
 
-def initial_cycle(approved, store, registry, *, at):
+def admission_slot(approved, *, at, allow_late=False):
+    """Separate one due business date from the actual invocation clock.
+
+    Only the native schedule and the explicit recover-late host use the most
+    recent elapsed weekday slot. Exchange calendars still decide whether that
+    business date contains a new completed session.
+    """
     approved = policy(approved)
+    require(type(allow_late) is bool, "DAILY_MARKET_ADMISSION_MODE")
     stamp = _stamp(at).astimezone(ZONE)
+    hour, minute = map(int, approved["not_before_local"].split(":"))
+    slot = stamp.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if allow_late:
+        if slot > stamp:
+            slot -= timedelta(days=1)
+        while slot.weekday() >= 5:
+            slot -= timedelta(days=1)
+        require(0 <= (stamp - slot).total_seconds() < MAX_LATE_SECONDS,
+                "DAILY_MARKET_NO_RECENT_SCHEDULE")
+    else:
+        require(stamp >= slot, "DAILY_MARKET_BEFORE_CLOSE")
+    return {"mode": "latest-elapsed-schedule" if allow_late else "same-local-day",
+        "admitted_at": at, "business_date": slot.strftime("%Y%m%d"),
+        "scheduled_for": slot.isoformat(), "delay_seconds": (stamp - slot).total_seconds(),
+        "max_delay_seconds": MAX_LATE_SECONDS if allow_late else None}
+
+
+def initial_cycle(approved, store, registry, *, at, admission_at=None, allow_late=False):
+    approved = policy(approved)
     require(approved["enabled"], "DAILY_MARKET_PAUSED")
-    require(stamp.strftime("%H:%M") >= approved["not_before_local"], "DAILY_MARKET_BEFORE_CLOSE")
+    admitted = admission_slot(approved, at=at if admission_at is None else admission_at,
+                              allow_late=allow_late)
+    require(_stamp(at) >= _stamp(admitted["admitted_at"]), "DAILY_MARKET_CLOCK_ROLLBACK")
+    # The slot chooses only date/window/generation. Never rewrite the real
+    # source-intent creation time to impersonate execution on the business day.
+    stamp = _stamp(admitted["scheduled_for"]).astimezone(ZONE)
     with market_read_scope(store) as reader:
-        return _initial_cycle(approved, reader, registry, at=at, stamp=stamp)
+        result = _initial_cycle(approved, reader, registry, at=at, stamp=stamp)
+    return {**result, "admission": admitted}
 
 
 def _initial_cycle(approved, store, registry, *, at, stamp):

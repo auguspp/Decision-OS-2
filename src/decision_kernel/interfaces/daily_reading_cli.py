@@ -29,7 +29,7 @@ from decision_kernel.interfaces.reading_commands import perform
 from decision_kernel.interfaces.reading_page import render_page
 
 OUTPUTS = ("reading-room.html", "reading-room.json", "reading-summary.md")
-UPDATE_FIELDS = ("operation", "status", "reason_code", "reading_reason_code", "cycle_date", "cycle_status",
+UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code", "reading_reason_code", "cycle_date", "cycle_status",
     "source_requests", "calendar_source_requests", "price_source_requests", "expected_completed_session",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
@@ -90,6 +90,11 @@ def _summary_lines(model):
     status = receipt.get("status")
     lines = ["阅读时点：" + context["read_as_of"],
              "本次行情更新：" + STATES.get(status, "状态尚未确认") + "。"]
+    admission = receipt.get("admission")
+    if isinstance(admission, dict):
+        day = admission.get("business_date")
+        if isinstance(day, str) and re.fullmatch(r"[0-9]{8}", day):
+            lines.append("本次计划更新日期：" + day[:4] + "-" + day[4:6] + "-" + day[6:] + "。")
     for key, title in (("reason_code", "更新原因"), ("reading_reason_code", "原行情读回限制")):
         if receipt.get(key):
             lines.append(title + "：" + str(receipt[key]))

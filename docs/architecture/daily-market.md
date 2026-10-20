@@ -6,15 +6,30 @@
 
 可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。保留原市场 5226 只分母；六只日常更新不能代签全市场完成。
 
-[daily-market.yml](../../.github/workflows/daily-market.yml) 使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。时区换算固定 UTC+8，没有自建时钟服务。手动 `update` 与自动调用使用同一合同；18:35 之前只生成 `not-due` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
+[daily-market.yml](../../.github/workflows/daily-market.yml) 使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。时区换算固定 UTC+8，没有自建时钟服务。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
 
-一天至多推进一个正常日更周期，每周期最多 **2 个实际交易日历请求 + 12 个 FTShare 单股整段请求**。两所 `trade_cal` 返回全部开闭市日，按实际完整日历决定最后已完成交易日，不凭星期推定开市。休市且没有新增交易日时只保留实际日历与原市场引用，不重抓价格。新开市日使用最长 119 自然日整段窗口；是否足够 5/20/60 交易日比较由实际会话及价格点判定，119 天不是保证，缺点继续显示 partial。
+每个业务日期至多建立一个正常日更周期，一次调用最多推进一个既存或新周期，每周期最多 **2 个实际交易日历请求 + 12 个 FTShare 单股整段请求**。两所 `trade_cal` 返回全部开闭市日，按实际完整日历决定最后已完成交易日，不凭星期推定开市。休市且没有新增交易日时只保留实际日历与原市场引用，不重抓价格。新开市日使用最长 119 自然日整段窗口；是否足够 5/20/60 交易日比较由实际会话及价格点判定，119 天不是保证，缺点继续显示 partial。
+
+### 延迟调度与显式补更
+
+原生 `schedule` 和显式手动 `recover-late` 从该次运行真实 `created_at` 之前最近的工作日 18:35 选择业务槽，创建时刻距该槽必须严格小于 24 小时。选择只决定业务日期、日历窗口和确定的 generation，来源授权与旧预算不变。例如原生创建于 `2026-10-19T17:07:33Z`，北京时间已到 10/20 01:07:33，仍选择 10/19 18:35 的槽。周五迟到周六且不足 24 小时可以选择周五；到周六 18:35、周日或周一 18:35 前已没有符合窗口的旧槽，返回 `not-due / DAILY_MARKET_NO_RECENT_SCHEDULE`，不取来源、不写新周期。
+
+| 原生调用 | 日期准入与记录 |
+|---|---|
+| 手动 `status` | 只读原状态，无来源凭据；不选择新周期。 |
+| 手动 `update` | 保留当日本地 18:35 门槛，不自动补上一日。 |
+| 自动 `schedule` | 按原生创建时刻选择最近且不足 24 小时的已到期工作日槽。 |
+| 手动 `recover-late` | 显式补同一有限窗口内的最近槽；执行行为为 `update`，回执保留 `invocation=recover-late`。 |
+
+`recover-late` 没有任意日期、旧 run、额外来源额度或强制跳过状态的输入。已有同一业务日完成记录时只读；旧周期未结束时先恢复原链，安全 pending 只继续剩余工作，失败、hold 和未知预留仍停止。该入口可补一个仍在最近槽窗口内的实际遗漏，不能选择更早历史日，也不能把后来的新周期或包含旧日的整段行情称作已恢复那个遗漏周期。
+
+新周期的 `cycle.date` 与 `calendar_end` 固定为选中的业务日；接续旧周期时保留旧日期与窗口。实际 `created_at`、`updated_at`、来源 `acquired_at` 和正常读取时间各自照实记录。日历不能扩大到凌晨或盘中的当前自然日，否则其最后开市日可能尚未收盘。价格截止日继续由业务日内的两所真实日历决定；当前读取所需日期缺少日历或价格资格时，freshness 保留 `unknown`。补更成功不构成此前按自然日连续运行、准点更新或及时发现的证据。
 
 日历只复用既有 Relay 元数据通路；价格只使用固定 FTShare v1 `stock-candlesticks`、`close`、`none/forward`。没有 v2 批量资格、供应商自动切换、盘中行情、隐式全市场回填、新的 Full / Brief 生成、主动通知、公开部署、第三方保管或旧 Kernel 停用。
 
 ## 继承、预留和停止
 
-首次从配置内确切的六股终态 FTShare SourceRef 接续，以后使用前一成功日更引用。原 `plan_ftshare_single_collection` / `run_collection` 继续持有价格计划、单股预留、原文、资格、累计旧额度及每个 generation 的唯一前驱。只在实际新增完成交易日时生成确定的 `daily-YYYYMMDD`；换 run、重跑、换日期或更新配置不能把耗尽请求再变成 pending。
+首次从配置内确切的六股终态 FTShare SourceRef 接续，以后使用前一成功日更引用。原 `plan_ftshare_single_collection` / `run_collection` 继续持有价格计划、单股预留、原文、资格、累计旧额度及每个 generation 的唯一前驱。周期使用业务日期确定 `daily-YYYYMMDD`，只有实际新增完成交易日时才生成该 FTShare 后继计划；换 run、重跑、换日期、选择 `recover-late` 或更新配置不能把耗尽请求再变成 pending。
 
 新日历的两次预留使用同一个 `VersionedStore.put_source` 写成小型 `SourceInput / SourceRef`。`daily-market-cycle-YYYYMMDD-rNNN` 是原 Store 内不可变的来源工作记录：先独立保管一次预留，再发一次 HTTP，再保管实际成功或失败。它不保存另一套价格，不是新的业务主库、后台任务队列或手工同步状态看板。真实日历查询自身仍通过原 `retain_market_query` 保管和独立恢复。
 
@@ -36,7 +51,9 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
   --out "$RUNNER_TEMP/dos2-daily-market"
 ```
 
-自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；手动输入只接受 `operation=update|status` 和确切 `code_sha`。宿主重新核原生仓库 ID / private、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。原生运行创建时刻控制当次周期日期，实际采集和正常读取继续记录各自真实时刻；延迟超过 24 小时的运行不取得新来源额度。
+自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；手动输入只接受 `operation=update|status|recover-late` 和确切 `code_sha`。宿主重新核原生仓库 ID / private、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。回执分别记录真实 `invocation=schedule|update|status|recover-late` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
+
+周期准入固定使用原生运行创建时刻，不能因队列或同次安全 quota 等待跨过午夜、甚至下一次 18:35，就领取另一天的预算。进入宿主时，真实当前时间必须不早于该原生创建时刻，且相差严格小于 24 小时；这个队列年龄上限与原生创建时刻距业务槽的不足 24 小时上限分别成立。新建周期的实际创建时间不早于其原生准入时间；采集和正常读取仍使用当时真实时钟，不回填成槽的时刻。
 
 日更与现役市场来源共同使用 `decision-os-relay-source` 串行组，`cancel-in-progress: false`。GitHub 这个组不是分布式原子锁或无限 FIFO 队列；原 CAS、唯一前驱、独立读回继续防止混写。每个有限单元使用同一原 API / writer / reader，沿用来源前 240 次准入、单元 512 次硬上限及跨单元共享的原生 quota 观察。每个单元的真实容量须预留可保管和读回空间，日更不扩大根、8192 版本、Git 下载或树响应边界。
 
@@ -54,7 +71,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 | 输出 | 含义 |
 |---|---|
-| `result.json` | 安全计数、周期状态、实际请求与失败、原生代码身份、正常 reader 的 freshness / coverage；`store_quota_wait` 保留同次运行的原生等待和额度观察。没有研究执行或通知。 |
+| `result.json` | 安全计数、周期状态、实际请求与失败、原生代码身份及 invocation、正常 reader 的 freshness / coverage；`admission` 保留准入模式、原生准入时刻、业务日、计划槽、延迟及适用上限，`store_quota_wait` 保留同次运行的原生等待和额度观察。没有研究执行或通知。 |
 | `control.json` | 同 private 产物内的确切 `cycle_reference`、`market_reference`、generation 和已保管日历引用，供现役正常消费者使用。 |
 | `reading-room.html` | 原统一阅读室的离线页面，显示本次更新状态、自动发现并固定的已存 Brief、研究、待复核问题与实际市场覆盖。 |
 | `reading-room.json` | 与 HTML 对应的只读模型及实际日更状态，保留原精确引用、内容截止与失败。 |
@@ -62,7 +79,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 完成或失败之后均尝试原 `read_ftshare_collection_version`，采用最新真实尝试及其缺口，不安静换成较早的成功快照。工作台可以调用 `daily_market_reference(store, registry, policy(...))` 取得相同精确引用及日更状态，再进入自己的正常读取；此 resolver 不调用来源、不写 records。正式报告、研究采用和人工决定仍按原版本独立进行。
 
-`status` 作业只有 contents / actions 读取权限，没有来源 Secret。`update` 作业用现有来源 Secret 和原 `records` 写入权限，Secret 不交给后续阅读步骤。产物发布前再核一次原生 private / main。读取和操作失败保留本次 failure / partial，不能用上一份成功报表代替。Actions 产物有到期日；持久真源仍是原 records。
+`status` 作业只有 contents / actions 读取权限，没有来源 Secret。`update`、`recover-late` 与自动调度沿用同一个更新作业，使用现有来源 Secret 和原 `records` 写入权限，Secret 不交给后续阅读步骤。产物发布前再核一次原生 private / main。读取和操作失败保留本次 failure / partial，不能用上一份成功报表代替。Actions 产物有到期日；持久真源仍是原 records。
 
 正常阅读步骤运行 `python -m decision_kernel.interfaces.daily_reading_cli --out "$RUNNER_TEMP/dos2-daily-market"`，只取得 Store 读取凭据，复用原 `reading_commands.perform` 的单次权限/预算作用域。它核对同目录 `result.json` 的原生本次 run、代码与事件身份，通过 `daily_market_reference` 取得最新实际尝试，再使用 `brief={"select":"latest-saved"}` 从原发行目录发现并固定简报。读失败、坏控制链或旧内容继续显示原缺口，不借重新生成 HTML 声称今日已发行新 Brief。该步骤不取得新闻或行情，不写 records，也不自动更新研究判断。
 
@@ -72,7 +89,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 可以在 GitHub 原生界面停用本工作流，或经普通 PR 将本专属配置 `enabled` 置为 false。暂停不删除历史、不清除失败、不取消已有在途操作；在途结果仍按原引用核对。恢复 enabled 只恢复原合同，不能解锁已失败周期。代码回退使用普通反向 PR；新增 records 原件与它们的现役只读支持继续保留，不强制回退业务分支。
 
-工程测试包括同日零重放、真实日历休市、新日期继承累计额度、日历拒绝 / 历史冲突 / FTShare hold 跨日阻断、未知预留以及独立 Git 恢复；原生 Git/API 模型另核普通 1000 core / 1000 GraphQL 额度下的同 run 完整 2 + 12、独立新窗口响应、五次刷新上限、陈旧 headers 与拒绝停止、完成后的消费者余量。合成数据和合成时间测试只证明工程语义，不是已经等待未来五小时或已经连续更新多日的证据。首次真实运行、原生 schedule 启用、每个后续自然交易日、人工工作台体验和长期持续性分别记录；一轮成功不能签未来 uptime 或全市场可用。
+工程测试包括同日零重放、真实日历休市、新日期继承累计额度、日历拒绝 / 历史冲突 / FTShare hold 跨日阻断、未知预留以及独立 Git 恢复。延迟回归另核原生午夜创建、显式补更与普通早盘更新的区别、周五至周六及严格 24 小时边界、周日和周一早盘无窗口、队列跨下一槽仍固定原日、真实创建与采集时钟、旧周期剩余预留及 hold、日历不包含当前未收盘日和下游 invocation 一致性。原生 Git/API 模型另核普通 1000 core / 1000 GraphQL 额度下的同 run 完整 2 + 12、独立新窗口响应、五次刷新上限、陈旧 headers 与拒绝停止、完成后的消费者余量。合成数据和合成时间测试只证明工程语义，不是已经等待未来五小时或已经连续更新多日的证据。首次真实运行、原生 schedule 启用、显式补更、每个后续自然交易日、人工工作台体验和长期持续性分别记录；一轮成功不能签未来 uptime 或全市场可用。
 
 ## 组件复用与退出
 

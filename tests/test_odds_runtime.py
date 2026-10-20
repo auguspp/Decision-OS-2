@@ -121,3 +121,7 @@ def exercise_installed_odds(command, outside, python, env, executable, store_pat
     # Same original cold wheel: finite explicit Watch, no new installation.
     from test_odds_watch_runtime import exercise_installed_watch
     exercise_installed_watch(command, outside, executable, env)
+
+    # The Book extends this same installation and store; no second pilot.
+    from test_odds_book_host import exercise_installed_odds_book
+    exercise_installed_odds_book(command, outside, executable, env, store_path)

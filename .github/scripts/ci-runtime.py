@@ -107,10 +107,16 @@ def run_query(sha, event):
     return f"actions/workflows/ci.yml/runs?head_sha={sha}&event={event}&per_page=100{suffix}"
 
 
-def artifact(ident, name):
+def artifact_inventory(ident):
     payload = api(f"actions/runs/{ident['run_id']}/artifacts?per_page=100")
     require(payload["total_count"] == len(payload["artifacts"]), "INCOMPLETE_ARTIFACTS")
-    matches = [a for a in payload["artifacts"] if a["name"] == name]
+    return payload["artifacts"]
+
+
+def artifact(ident, name, *, inventory=None):
+    if inventory is None:
+        inventory = artifact_inventory(ident)
+    matches = [a for a in inventory if a["name"] == name]
     require(len(matches) == 1, "NO_UNIQUE_ARTIFACT")
     meta = matches[0]
     E["artifact_identity"](meta, ident, name)
@@ -299,9 +305,9 @@ def prepare(out):
     print("CI_SCOPE=" + plan["scope"])
 
 
-def restore(out):
+def restore(out, *, inventory=None):
     ident = identity()
-    raw, meta = artifact(ident, f"dos2-plan-{ident['run_id']}-{ident['attempt']}")
+    raw, meta = artifact(ident, f"dos2-plan-{ident['run_id']}-{ident['attempt']}", inventory=inventory)
     with E["verified_archive"](raw, meta) as z:
         plan = json.loads(z.read("plan.json"))
         require(plan["identity"] == ident, "PLAN_IDENTITY")
@@ -337,14 +343,17 @@ def execute(out, group):
 
 def gate(out):
     scope = E["check_needs"](json.loads(os.environ["CI_NEEDS"]))
-    plan = restore(out)
+    # Completed prerequisites share one complete native inventory in this gate.
+    # Downloads stay pinned to immutable artifact IDs; failures never reselect.
+    inventory = artifact_inventory(identity())
+    plan = restore(out, inventory=inventory)
     require(plan["scope"] == scope, "SCOPE_MISMATCH")
     durations = plan["durations"]
     if scope == "full":
         sources = {}
         ident = plan["identity"]
         for group in E["GROUPS"]:
-            raw, meta = artifact(ident, f"dos2-part-{group}-{ident['run_id']}-{ident['attempt']}")
+            raw, meta = artifact(ident, f"dos2-part-{group}-{ident['run_id']}-{ident['attempt']}", inventory=inventory)
             sources[group] = (raw, meta)
             (out / f"part-{group}.zip").write_bytes(raw)
         durations = E["verify_full"](plan, sources, fresh=True)

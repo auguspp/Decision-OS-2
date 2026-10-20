@@ -285,6 +285,10 @@ def market_reading_projection(payload, registry):
     if isinstance(payload, dict) and payload.get("schema") == "ftshare-auction-minute-reading-v1":
         from decision_kernel.application.auction_minute_custody import minute_reading_projection
         return minute_reading_projection(payload)
+    from decision_kernel.application.auction_next_session_inputs import READING_SCHEMA as NEXT_SCHEMA
+    if isinstance(payload, dict) and payload.get('schema') == NEXT_SCHEMA:
+        from decision_kernel.application.auction_next_session_custody import project_payload
+        return project_payload(payload, registry)
     require(len(encoded(payload)) <= MAX_BYTES, "MARKET_CUSTODY_INPUT_BOUND")
     read_market_payload(payload, registry)
     def project(result, _path):
@@ -382,6 +386,11 @@ def retain_market_reading(payload, registry, store, *, fresh_reader, custody_aut
         from decision_kernel.application.auction_minute_custody import retain_minute_reading
         return retain_minute_reading(payload, registry, store, fresh_reader=fresh_reader,
             custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
+    from decision_kernel.application.auction_next_session_inputs import READING_SCHEMA as NEXT_SCHEMA
+    if isinstance(payload, dict) and payload.get('schema') == NEXT_SCHEMA:
+        from decision_kernel.application.auction_next_session_custody import retain
+        return retain(payload, registry, store, fresh_reader=fresh_reader,
+                      custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
     authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
     require(callable(fresh_reader), "MARKET_CUSTODY_STORE_REQUIRED")
@@ -435,6 +444,11 @@ def restore_market_reading_inputs(reference, registry, store):
 
 def _restore_market_reading_inputs(reference, registry, store):
     ref, content = _read_manifest(store, reference, READING_SCHEMA)
+    from decision_kernel.application.auction_next_session_inputs import READING_SCHEMA as NEXT_SCHEMA
+    if isinstance(content.get('reading'), dict) and content['reading'].get('schema') == NEXT_SCHEMA:
+        from decision_kernel.application.auction_next_session_custody import restore_root, _scope
+        with _scope(store) as reader:
+            return restore_root(ref, content, registry, reader)
     require(set(content) == {"schema", "reading", "queries"} and isinstance(content["queries"], dict)
             and len(content["queries"]) <= MAX_QUERIES, "MARKET_CUSTODY_READING_MANIFEST")
     require(isinstance(content["reading"], dict), "MARKET_CUSTODY_READING_MANIFEST")
@@ -487,6 +501,9 @@ def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity
         from decision_kernel.application.auction_minute_custody import read_minute_reading
         return read_minute_reading(ref, registry, store, offset=offset, limit=limit, entity_id=entity_id)
     restored = restore_market_reading_inputs(reference, registry, store)
+    if 'next_session_view' in restored:
+        from decision_kernel.application.auction_next_session_custody import readout
+        return readout(restored, offset=offset, limit=limit, entity_id=entity_id)
     payload, failed = restored["payload"], restored["unavailable_queries"]
     if payload.get("schema") == "relay-three-market-reading-v1":
         require(entity_id is None, "MARKET_RELAY_COMBINED_FILTER_USE_SINGLE_SURFACE")

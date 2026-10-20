@@ -1,4 +1,4 @@
-"""Shared dispatch for local and restored market reading; no storage or source I/O."""
+"""Shared source-free dispatch; exact-reference purposes reuse the supplied store."""
 from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, SESSION_REQUIRED, read_session_coverage
 from decision_kernel.application.global_index_inputs import (
     US_INDEX_READING_SCHEMA, US_INDEX_REQUIRED, read_us_index_context,
@@ -62,11 +62,15 @@ def _route(payload):
     return reader
 
 
-def read_market_payload(payload, registry, *, offset=0, limit=50, entity_id=None):
+def read_market_payload(payload, registry, *, offset=0, limit=50, entity_id=None, store=None):
     """One dispatcher for existing local and custody readers; no input mutation."""
     from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA, read_global_public_payload
     if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
         return read_global_public_payload(payload, offset=offset, limit=limit, entity_id=entity_id)
+    from decision_kernel.application.auction_next_session_inputs import READING_SCHEMA as NEXT_SCHEMA
+    if isinstance(payload, dict) and payload.get('schema') == NEXT_SCHEMA:
+        from decision_kernel.application.auction_next_session_custody import read_payload
+        return read_payload(payload, registry, store, offset=offset, limit=limit, entity_id=entity_id)
     reader = _route(payload)
     args = {k: v for k, v in payload.items() if k != "schema"}
     if "horizons" in args:

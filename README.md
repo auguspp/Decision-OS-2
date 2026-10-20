@@ -6,9 +6,9 @@
 
 ## 日常阅读
 
-打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，选择最近一次运行，在 Summary 查看更新情况、内容日期与行情覆盖。完整离线页面在该次运行的 `dos2-daily-market-*` 产物中，下载后打开 `reading-room.html`，集中阅读最新已存 Brief、研究原文和到期待复核问题。新生成的页面不代表已存 Brief 已更新。
+打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，手动选择 `status` 并填写当前 `main` 的确切代码版本。**现仓 Public 时，Summary 返回可见性和运行限制的元数据诊断，不读取 records，不生成完整阅读页，也不把旧内容说成今日更新。** 公开模式及限制见[运行适配](docs/engineering/public-runtime.md)。
 
-现有六股池在北京时间工作日 18:35 启动原价和前复权日线更新，完成后生成本次阅读页。交易日以实际交易所日历为准；GitHub 调度可能延迟，接口额度不足时会等待真实额度刷新，整轮可能需要数小时，累计等待最多五小时。查看最近一次运行的实际状态与数据日期即可判断是否已更新。需要提前阅读时，可以在该工作流选择 `status` 并填写当前 `main` 的确切代码版本，只读取已存内容。范围、暂停及接续方式见[日常更新合同](docs/architecture/daily-market.md)；直接使用原阅读宿主见[统一阅读室](docs/delivery/reading-room.md)。
+原生核验 Private 并通过既有准入时，原 status/daily 作业仍可读取已存 Brief、研究与行情，生成 `reading-room.html`。原六股周期保持北京时间工作日18:35、每周期至多2个日历请求和12个价格请求；真实交易日、延迟补更、失败/hold及额度规则不变。Public 下的更新/补更/定时在缺少公开数据授权时明确拒绝，不以全作业 skipped 充成功。已有明确公开权利的手动资料入口仍见[统一阅读室](docs/delivery/reading-room.md)，原日更规则见[日常更新合同](docs/architecture/daily-market.md)。
 
 ## 从这里开始
 
@@ -52,4 +52,4 @@ decision-os info --json
 
 首个代码责任是完整 CI 与可安装骨架；共同保管的必要合同可用后，直接 Full/Quick 与市场雷达、产业商品、披露资料及日常交付按依赖并行。首发可用不等于全部雷达或500+覆盖完成，未完成责任须明确接续。文档/规则已落地、CI已配置、产品已使用分别成立，实际结果读对应任务。
 
-本仓已沿[#10原任务](https://github.com/auguspp/Decision-OS-2/issues/10)整体转为 private；`main` 仍只提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，同仓独立 `records` 分支保管原范围获准资料与研究，默认[只读绑定](config/store-binding.json)；保留原 repository_id、store_id、anchor 和历史公开建仓标记，运行时另核真实可见性。私有化不增加来源、研究、公开再分发或人工 Decision 权限；数据分支不是角色隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。
+用户于2026-10-20将现仓切回 Public，沿[#164](https://github.com/auguspp/Decision-OS-2/issues/164)直接适配现仓；`main` 仍只提交工程内容与合成/获准样例。按[#6路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)，同仓独立 `records` 分支保管原范围获准资料与研究，默认[只读绑定](config/store-binding.json)；保留原 repository_id、store_id、anchor 和历史公开建仓标记，运行时另核真实可见性。可见性变化不增加来源、研究、公开再分发或人工 Decision 权限；同仓 records 与历史产物不会因代码检查重新隐藏，数据分支不是隐私或角色隔离。旧 Kernel/OS 业务状态和格式不兼容，技术/成功验收/失败反例按适用范围复用。

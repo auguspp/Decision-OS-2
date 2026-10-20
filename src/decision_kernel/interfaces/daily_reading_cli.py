@@ -31,6 +31,8 @@ from decision_kernel.interfaces.reading_page import render_page
 OUTPUTS = ("reading-room.html", "reading-room.json", "reading-summary.md")
 UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code", "reading_reason_code", "frontier_reason_code", "cycle_date", "cycle_status",
     "source_requests", "calendar_source_requests", "price_source_requests", "expected_completed_session",
+    "calendar_last_failure", "calendar_source_budget", "calendar_original_source_budget",
+    "calendar_additional_source_budget", "calendar_reserved_requests", "calendar_repair",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
     "no-new-session": "没有新增交易日", "paused": "更新已暂停", "not-due": "尚未到约定更新时间",
@@ -103,6 +105,14 @@ def _summary_lines(model):
     for key, title in (("reason_code", "更新原因"), ("reading_reason_code", "原行情读回限制")):
         if receipt.get(key):
             lines.append(title + "：" + str(receipt[key]))
+    failure = receipt.get("calendar_last_failure")
+    if isinstance(failure, dict):
+        from decision_kernel.application.daily_calendar_repair import TRANSPORT_CLASSES
+        category = failure.get("classification")
+        if isinstance(category, str) and category in TRANSPORT_CLASSES | {"unclassified"}:
+            lines.append("日历传输分类：" + category + "；本次没有自动重试。")
+    if receipt.get("calendar_additional_source_budget") == 1:
+        lines.append("日历恢复：原2次预算之外显式追加1次；原失败与已用请求仍保留。")
     cycle = context["market_cycle"]
     if cycle is not None:
         lines.append("已存日更任务：" + str(cycle["date"]) + "，" + STATES.get(cycle["status"], cycle["status"]) + "。")

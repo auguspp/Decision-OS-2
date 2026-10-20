@@ -4,17 +4,19 @@ from decision_kernel.application.industry_reading import read_industry
 from decision_kernel.application.vehicle_flows import read_vehicle_flows
 from decision_kernel.application.livestock_weekly import read_livestock_weekly
 from decision_kernel.application.industry_uses import read_industry_uses
+from decision_kernel.application.industry_goods import read_industry_goods
+from decision_kernel.application.industry_reading import _clock
 from decision_kernel.domain.records import Selection, SourceRef, identifier, require
 
 OPERATION = "industry-read"
-VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses")
+VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses", "industry-goods")
 
 
 def checked_payload(payload):
     """Fail before store access or public artifact creation; no caller URLs or code."""
     require(isinstance(payload, dict) and {"reference", "view", "public_sources_custody_confirmed"}
             <= set(payload) <= {"reference", "view", "public_sources_custody_confirmed",
-                               "subject_id", "company_id"}, "INDUSTRY_HOST_PAYLOAD")
+                               "subject_id", "company_id", "evaluation_at"}, "INDUSTRY_HOST_PAYLOAD")
     require(payload["public_sources_custody_confirmed"] is True, "INDUSTRY_HOST_PUBLIC_SOURCES_REQUIRED")
     require(isinstance(payload["view"], str) and payload["view"] in VIEWS, "INDUSTRY_HOST_VIEW")
     reference = SourceRef.from_dict(payload["reference"])
@@ -26,7 +28,13 @@ def checked_payload(payload):
             identifier(value)
     require(payload["view"] != "operating-cycle" or company is None,
             "OPERATING_COMPANY_QUERY_USE_ORIGINAL_INDUSTRY_READER")
-    return reference, payload["view"], {"subject_id": subject, "company_id": company}
+    query = {"subject_id": subject, "company_id": company}
+    if payload["view"] == "industry-goods":
+        _clock(payload.get("evaluation_at"))
+        query["evaluation_at"] = payload["evaluation_at"]
+    else:
+        require("evaluation_at" not in payload, "INDUSTRY_HOST_EVALUATION_VIEW")
+    return reference, payload["view"], query
 
 
 def preflight(operation, payload):
@@ -37,6 +45,8 @@ def preflight(operation, payload):
 def perform(store, payload):
     """Return the original consumer result unchanged, after every scope exit check."""
     reference, view, query = checked_payload(payload)
+    if view == "industry-goods":
+        return read_industry_goods(reference, store, **query)
     if view == "industry-uses":
         return read_industry_uses(reference, store, **query)
     if view == "livestock-weekly":

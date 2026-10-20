@@ -61,6 +61,54 @@ function renderIndustryUses(pane,part){
  }
  subject.addEventListener('change',()=>{company.value='';render();});company.addEventListener('change',()=>{subject.value='';render();});render();
 }
+function renderIndustryGoods(pane,part){
+ const v=part.view,ip=part.plan,val=x=>x===null||x===undefined?'未知':String(x);
+ const terms={'fresh-qualified':'本批合格且在时效内','qualified-not-fresh':'本批合格，当前已过期','qualified-freshness-unknown':'本批合格，时效未知','unresolved':'资格待核','excluded':'明确排除','source-blocked':'来源受阻'};
+ const sourceButton=ref=>button('导出此来源读取请求',()=>request('industry-goods-source.json',{operation:'read-source',payload:ref}));
+ pane.append(el('h3','独立商品资格'),el('p',`评估时刻 ${v.evaluation_at} · 原包截止 ${v.as_of}`,'banner'),
+  el('p',`本批 ${v.scope.candidate_records} 条候选记录，${v.scope.comparable_series} 个可比系列，${v.scope.distinct_qualified_goods} 个去重合格商品；确认 ${v.scope.fresh_goods} 个在规则时效内，${v.scope.freshness_unknown_goods} 个时效未知。`),
+  el('p','全范围商品数仍未知，500 目标尚未成立。名称、地区、系列、统计通道、修订和重读不增加商品；资料保管与权利声明不认证第三方权利。'),
+  el('p',v.coverage_note),
+  details('整批资格集合、全部处置与原输入范围（筛选不会缩小分母）',{scope:v.scope,sets:v.sets,outcomes:v.outcomes,input_outcomes:v.input_outcomes,source_qualifications:v.source_qualifications,quantity_milestone:v.quantity_milestone,reference:v.reference,view_version:v.view_version,limitations:v.limitations}),
+  button('下载本次商品资格结果 JSON',()=>save('industry-goods-result.json',JSON.stringify(v,null,2),'application/json')));
+ const controls=el('div',undefined,'industry-controls'),wrap=el('div'),search=el('input'),searchLabel=el('label','在本次返回范围搜索商品、系列或缺项');
+ search.id='industry-goods-search';search.type='search';searchLabel.htmlFor=search.id;wrap.append(searchLabel,search);controls.append(wrap);
+ function select(id,title,options){const box=el('div'),label=el('label',title),s=el('select');label.htmlFor=id;s.id=id;s.append(el('option','全部'));s.firstChild.value='';
+  for(const [value,title] of options){const o=el('option',title);o.value=value;s.append(o);}box.append(label,s);controls.append(box);return s;}
+ const subject=select('industry-goods-subject','原主体 / 归并商品',[...new Map(v.entries.filter(e=>e.subject_id).map(e=>[e.commodity_id||e.subject_id,e.title])).entries()]);
+ const companies=v.entries.flatMap(e=>e.relations),company=select('industry-goods-company','有原证据的公司角色',[...new Map(companies.map(r=>[r.company.entity_id,r.company.name])).entries()]);
+ const state=select('industry-goods-status','资格处置',Object.entries(terms)),summary=el('p'),body=el('div');
+ pane.append(controls,summary,button('导出当前筛选的原商品读取请求',()=>request('industry-goods-query.json',{operation:'industry-read',payload:{...ip,
+  subject_id:subject.value||(company.value?null:ip.subject_id),company_id:company.value||(subject.value?null:ip.company_id)}})),
+  el('p','搜索和资格处置筛选只改变本地显示；导出的读取请求保留原评估时刻及主体 / 公司查询。'),body);
+ function card(e){const box=el('section',undefined,'industry-use');box.append(el('h3',`${e.title} · ${terms[e.status]||e.status}`),
+  el('p',`原主体 ${val(e.subject_id)} · 归并商品 ${val(e.commodity_id)}`),
+  details('资格处置、未决项和重开条件',{candidate_id:e.candidate_id,disposition:e.disposition,identity_resolution:e.identity_resolution,reasons:e.reasons,missing:e.missing,reopen_when:e.reopen_when}));
+  for(const proof of e.identity_evidence){box.append(details('原身份说明与核验边界',proof),sourceButton(proof.reference));}
+  for(const s of e.selections){box.append(el('h4',s.series_id),details('本次资格比较、原输入与时效',{input_id:s.input_id,packet_reference:s.packet_reference,series_key:s.series_key,comparison:s.comparison,reasons:s.reasons,freshness:s.freshness,source_qualification:s.source_qualification}));
+   if(!s.series){box.append(el('p','原系列未恢复；不会从目录补值。'));continue;}
+   const scroll=el('div',undefined,'industry-scroll'),table=el('table',undefined,'industry-table'),head=el('tr');
+   for(const title of ['原期间','原数值','单位','读取状态'])head.append(el('th',title));table.append(head);
+   for(const p of s.series.observations){const row=el('tr');for(const text of [p.period_start&&p.period_end?`${p.period_start} — ${p.period_end}`:'期间未恢复',val(p.value),val(p.unit),p.reason_code||p.status])row.append(el('td',text));table.append(row);}
+   scroll.append(table);box.append(scroll,details('原系列比较（资格计算不覆盖原结果）',s.series.changes));
+   for(const p of s.series.observations){box.append(details('原观察、口径与来源限制',p));if(p.reference)box.append(sourceButton(p.reference));}
+  }
+  for(const role of e.relations){box.append(details('原公司角色与历史适用期（不推导净暴露）',role),sourceButton(role.evidence.reference));}
+  return box;
+ }
+ function render(){const needle=search.value.trim().toLocaleLowerCase();let shown=v.entries;
+  if(subject.value)shown=shown.filter(e=>[e.subject_id,e.commodity_id].includes(subject.value));
+  if(company.value)shown=shown.map(e=>{const relations=e.relations.filter(r=>r.company.entity_id===company.value),inputs=new Set(relations.map(r=>r.input_id));
+   return {...e,relations,selections:e.selections.filter(s=>inputs.has(s.input_id))};}).filter(e=>e.relations.length);
+  if(state.value)shown=shown.filter(e=>e.status===state.value);
+  if(needle)shown=shown.filter(e=>JSON.stringify({title:e.title,subject_id:e.subject_id,commodity_id:e.commodity_id,series:e.selections.map(s=>s.series_id),reasons:e.reasons,missing:e.missing}).toLocaleLowerCase().includes(needle));
+  summary.textContent=`本地显示 ${shown.length} / 本次返回 ${v.entries.length} 条候选；整批 ${v.scope.candidate_records} 条候选的资格和失败仍见上方。`;
+  body.replaceChildren(...shown.map(card));if(!shown.length)body.append(el('p','当前返回范围没有匹配；全范围覆盖和公司暴露不能据此记零。'));
+ }
+ for(const proof of v.source_qualifications.flatMap(s=>s.evidence)){pane.append(details('保存的来源资格说明（不是新的公开输出授权）',proof),sourceButton(proof.reference));}
+ search.addEventListener('input',render);state.addEventListener('change',render);
+ subject.addEventListener('change',()=>{company.value='';render();});company.addEventListener('change',()=>{subject.value='';render();});render();
+}
 function renderIndustry(){
  const pane=$('industry-content'),part=D.industry;
  if(!part){pane.append(el('p','未指定产业阅读包；不会按公司名自动匹配来源、研究或简报。'));return;}
@@ -70,6 +118,7 @@ function renderIndustry(){
  }
  const v=part.view,ip=part.plan,retained=v.retained||v,mode=ip.view;
  if(mode==='industry-uses'){renderIndustryUses(pane,part);return;}
+ if(mode==='industry-goods'){renderIndustryGoods(pane,part);return;}
  const adoption=part.brief_adoption,adopted=new Map((adoption?.rows||[]).map(r=>[r.series_id,r]));
  const adoptionTerms={'included':'指定简报已采用此选择','considered-not-included':'列入范围但本期未采用','not-considered-in-this-brief':'不在指定简报产业范围','industry-not-tracked-in-this-brief':'该简报未跟踪产业','brief-capacity':'本期容量省略（不是人工否决）','previously-included-same-selection':'前版已采用同一选择，本期省略','unreadable-or-outside-cutoff':'交付时不可读、超限或晚于截止','same-displayed-series-and-roles':'本页系列与可见角色和交付时一致','differs-from-delivery':'本页内容与交付时不同，不能套用原采用结论','unknown':'无法核对，不等于未采用'};
  const adoptionLabel=x=>adoptionTerms[x]||x;

@@ -19,7 +19,7 @@ on:
       custody_authorized:
         type: boolean
         default: false
-        description: 'Explicit authorization to retain in the natively verified private records store; no public redistribution grant'
+        description: 'Authorize the selected records custody; public scope comes from the reviewed deployment grant or separate per-call rights'
       public_rights_confirmed:
         type: boolean
         default: false
@@ -42,7 +42,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   read:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.event.repository.private == true && github.ref == 'refs/heads/main' && (inputs.operation == 'read' || inputs.operation == 'discovery-build' || inputs.operation == 'discovery-read')
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && (inputs.operation == 'read' || inputs.operation == 'discovery-build' || inputs.operation == 'discovery-read')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -59,7 +59,7 @@ jobs:
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.market_custody_cli runtime --out "$RUNNER_TEMP/dos2-market-custody"
-      - name: Recheck native private visibility before releasing exact inputs and results
+      - name: Recheck native visibility and publication authority before releasing exact inputs and results
         id: release
         if: always()
         env:
@@ -73,7 +73,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   save:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.event.repository.private == true && github.ref == 'refs/heads/main' && (inputs.operation == 'save' || inputs.operation == 'discovery-save')
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && (inputs.operation == 'save' || inputs.operation == 'discovery-save')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -90,7 +90,7 @@ jobs:
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.market_custody_cli runtime --out "$RUNNER_TEMP/dos2-market-custody"
-      - name: Recheck native private visibility before releasing exact inputs and results
+      - name: Recheck native visibility and publication authority before releasing exact inputs and results
         id: release
         if: always()
         env:

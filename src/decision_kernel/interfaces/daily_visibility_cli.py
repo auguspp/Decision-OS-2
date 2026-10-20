@@ -15,6 +15,7 @@ import sys
 
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.github_store import GitHubAPI
+from decision_kernel.infrastructure.runtime_publication import native_publication_basis
 
 REPOSITORY = "auguspp/Decision-OS-2"
 REPOSITORY_ID = 1420041744
@@ -77,7 +78,7 @@ def _repository(api):
     return visibility
 
 
-def preflight(event, env, api):
+def preflight(event, env, api, *, use_authorization=False):
     """Use only three native metadata GETs; never query records, artifacts or data."""
     selected = selection(event, env)
     visibility = _repository(api)
@@ -92,13 +93,20 @@ def preflight(event, env, api):
         "DAILY_VISIBILITY_NATIVE_RUN")
     require(_repository(api) == visibility, "DAILY_VISIBILITY_CHANGED")
     public = visibility == "public"
-    blocked = public and selected["operation"] != "status"
+    require(type(use_authorization) is bool, "DAILY_VISIBILITY_INPUT")
+    basis = native_publication_basis(selected, env=env) if public and use_authorization else None
+    allowed = not public or basis is not None
+    blocked = public and not allowed and selected["operation"] != "status"
     report = {"schema": SCHEMA, "scope": "native-metadata-only", **selected,
         "repository_visibility": visibility,
         "status": "blocked" if blocked else "metadata-only" if public else "private-runtime-pending",
         "reason_code": PUBLIC_REASON if public else None,
         "source_requests": 0, "records_read": False, "records_written": False,
         "data_freshness": "not-checked", "historical_exposure_remediated": False}
+    if use_authorization:
+        report.update(runtime_authorized=allowed, publication_authority=basis)
+        if public and allowed:
+            report.update(status="public-runtime-pending", reason_code=None)
     return report, 2 if blocked else 0
 
 
@@ -108,6 +116,8 @@ def summary(report):
         return "## 日常运行准入检查失败\n\n未取得可用准入回执；未读取资料或调用来源。\n\n原因：`" + report["reason_code"] + "`\n"
     if report["repository_visibility"] == "private":
         note = "已核仓库为 Private；后续作业仍须通过原有权限、代码、来源及输出检查。此回执不证明数据已更新。"
+    elif report.get("runtime_authorized") is True:
+        note = "已核仓库为 Public，并采用已登记的用户公开授权；后续正常行情、研究与 Brief 作业获准接续。此预检不代表数据已更新。"
     elif report["status"] == "blocked":
         note = "仓库为 Public；本次更新未执行，未注入来源密钥。仓库公开不授予第三方数据的公开再分发权。"
     else:
@@ -146,16 +156,21 @@ def main(argv=None, *, env=None, api_factory=GitHubAPI):
     env = os.environ if env is None else env
     try:
         require(isinstance(env, Mapping), "DAILY_VISIBILITY_CONTEXT")
-        require(not (sys.argv[1:] if argv is None else argv), "DAILY_VISIBILITY_INPUT")
+        args = sys.argv[1:] if argv is None else argv
+        require(args in ([], ["--use-runtime-authorization"]), "DAILY_VISIBILITY_INPUT")
+        use_authorization = bool(args)
         event = _event(env.get("GITHUB_EVENT_PATH"))
         selection(event, env)  # Reject malformed contexts before creating a client.
         token = env.get(TOKEN_ENV)
         require(isinstance(token, str) and bool(token), "DAILY_VISIBILITY_TOKEN")
-        report, exit_code = preflight(event, env, api_factory(token))
+        report, exit_code = preflight(event, env, api_factory(token), use_authorization=use_authorization)
         _append(env, "GITHUB_STEP_SUMMARY", summary(report))
         # Emit the two-value enum only after both live visibility reads agree.
         # Routing is necessary, not sufficient: the existing jobs recheck again.
-        _append(env, "GITHUB_OUTPUT", "visibility=" + report["repository_visibility"] + "\n")
+        output = "visibility=" + report["repository_visibility"] + "\n"
+        if use_authorization:
+            output += "runtime_authorized=" + ("true" if report["runtime_authorized"] else "false") + "\n"
+        _append(env, "GITHUB_OUTPUT", output)
     except Exception as exc:
         code = str(exc) if isinstance(exc, RecordError) and str(exc) in ERROR_CODES else "DAILY_VISIBILITY_FAILED"
         token = env.get(TOKEN_ENV) if isinstance(env, Mapping) else None

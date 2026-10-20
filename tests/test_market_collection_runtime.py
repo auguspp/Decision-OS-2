@@ -43,6 +43,17 @@ STORE_TOKEN = "SYNTHETIC_PRIVATE_STORE_TOKEN"
 SHA = "a" * 40
 
 
+@pytest.fixture(autouse=True)
+def explicit_legacy_publication_scope(tmp_path, monkeypatch):
+    """These original no-grant cases must not inherit the real deployment grant.
+
+    Enabled/disabled owner grants and normal Public routing are independently
+    covered by test_runtime_publication. No source/write boundary is removed.
+    """
+    from decision_kernel.infrastructure import runtime_publication
+    monkeypatch.setattr(runtime_publication, "AUTHORIZATION_FILE", tmp_path / "not-authorized.json")
+
+
 class InventoriedBackend(MemoryBackend):
     repository = PRIVATE_LOCATION
 
@@ -631,7 +642,7 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
             assert "inputs.operation == '" + name + "'" in job["if"]
     rejected = flow["jobs"]["rejected-sync"]
     assert rejected["permissions"] == {"contents": "read"}
-    assert rejected["if"].count("!= true") == 8
+    assert rejected["if"].count("!= true") == 6
     assert rejected["if"].count("inputs.public_rights_confirmed != false") == 2
     for operation in ("sync", "repair", "ftshare-check", "ftshare-check-continue", "ftshare-check-kernel",
                       "ftshare-adopt-kernel", "ftshare-calendar", "ftshare-sync", "ftshare-status"):
@@ -641,14 +652,20 @@ def test_workflow_exposes_only_explicit_main_operations_and_count_receipt():
     assert "secrets." not in str(rejected) and "actions/checkout" not in str(rejected)
     assert flow["jobs"]["sync"]["permissions"] == {"contents": "write"}
     assert flow["jobs"]["status"]["permissions"] == {"contents": "read"}
-    assert "inputs.public_rights_confirmed == true" in flow["jobs"]["sync"]["if"]
-    assert "github.event.repository.private == true" in flow["jobs"]["sync"]["if"]
+    assert "inputs.access_and_custody_confirmed == true" in flow["jobs"]["sync"]["if"]
+    assert "github.event.repository.private" not in flow["jobs"]["sync"]["if"]
     for operation in ("sync", "status"):
         steps = flow["jobs"][operation]["steps"]
         runtime = next(step for step in steps if "python -m decision_kernel.interfaces.market_collection_cli runtime" in step.get("run", ""))
         assert cli.MARKET_TOKEN_ENV in runtime["env"]
         assert runtime["env"][cli.MARKET_TOKEN_ENV] == "${{ github.token }}"
         assert (SECRET_ENV in runtime["env"]) is (operation == "sync")
+        if operation == "sync":
+            check = next(step for step in steps if step.get("run") ==
+                         "python -m decision_kernel.infrastructure.runtime_publication check sources")
+            assert check["if"] == "inputs.public_rights_confirmed != true"
+            assert check["env"] == {"DECISION_OS_STORE_TOKEN": "${{ github.token }}"}
+            assert steps.index(check) < steps.index(runtime) and "secrets." not in str(check)
         upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
         assert upload["with"]["path"] == "${{ runner.temp }}/dos2-ashare-data/result.json"
         assert upload["if"] == "always()"
@@ -681,19 +698,29 @@ def test_ftshare_workflow_default_cannot_open_an_implicit_legacy_plan(tmp_path, 
 ])
 def test_workflow_ftshare_production_scopes_credentials_and_live_private_release(
         monkeypatch, operation, source_env, module, directory, minutes):
-    from decision_kernel.infrastructure import github_store
+    from decision_kernel.infrastructure import github_store, runtime_publication
     from test_ftshare_check_cli import FakeGitHubAPI
 
     flow = yaml.load((ROOT_DIR / ".github/workflows/ashare-data.yml").read_text(), Loader=yaml.BaseLoader)
     job = flow["jobs"][operation]
+    normal_public = operation in {"ftshare-sync", "ftshare-status"}
     expected_gate = ("github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && "
                      "inputs.operation == '" + operation + "' && ")
     if operation != "ftshare-status":
         expected_gate += "inputs.access_and_custody_confirmed == true && "
-    expected_gate += "github.event.repository.private == true && inputs.public_rights_confirmed == false"
+    if not normal_public:
+        expected_gate += "github.event.repository.private == true && "
+    expected_gate += "inputs.public_rights_confirmed == false"
     assert job["if"] == expected_gate
     assert job["timeout-minutes"] == minutes
-    checkout, environment, runtime, release, upload = job["steps"]
+    if normal_public:
+        checkout, environment, admission, runtime, release, upload = job["steps"]
+        scope = "sources" if operation == "ftshare-sync" else "market"
+        assert admission["run"] == "python -m decision_kernel.infrastructure.runtime_publication check " + scope
+        assert admission["env"] == {"DECISION_OS_STORE_TOKEN": "${{ github.token }}"}
+        assert "secrets." not in str(admission)
+    else:
+        checkout, environment, runtime, release, upload = job["steps"]
     assert checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
     assert environment["uses"] == "./.github/actions/ci-python"
@@ -713,13 +740,11 @@ def test_workflow_ftshare_production_scopes_credentials_and_live_private_release
         "path": "${{ runner.temp }}/" + directory + "/",
         "if-no-files-found": "error", "retention-days": "30"}
     assert all(not step.get("continue-on-error") for step in job["steps"])
-    assert [step.get("id") for step in job["steps"] if step.get("env")] == ["runtime", "release"]
+    assert [step.get("id") for step in job["steps"] if step.get("env")] == (
+        [None, "runtime", "release"] if normal_public else ["runtime", "release"])
 
-    # Run the actual release body against native GET fixtures: visibility or
-    # main movement must fail this step before the artifact condition can pass.
-    lines = release["run"].splitlines()
-    assert lines[0] == "python - <<'PY'" and lines[-1] == "PY"
-    code = compile("\n".join(lines[1:-1]), ".github/workflows/ashare-data.yml", "exec")
+    # Execute the actual selected release entrypoint with native GET fixtures.
+    # No grant remains private-only; a normal grant is covered independently.
     api = FakeGitHubAPI()
     monkeypatch.setenv("DECISION_OS_STORE_TOKEN", STORE_TOKEN)
     monkeypatch.setenv("GITHUB_SHA", api.main_sha)
@@ -728,15 +753,35 @@ def test_workflow_ftshare_production_scopes_credentials_and_live_private_release
         assert token == STORE_TOKEN
         return api
 
-    monkeypatch.setattr(github_store, "GitHubAPI", open_api)
-    exec(code, {})
-    assert api.calls == ["/repos/auguspp/Decision-OS-2", "/repos/auguspp/Decision-OS-2/git/ref/heads/main"]
-    api.metadata["private"] = False
-    with pytest.raises(RecordError, match="^FTSHARE_PRIVATE_REPOSITORY_REQUIRED$"):
+    if normal_public:
+        assert release["run"] == "python -m decision_kernel.infrastructure.runtime_publication check market"
+        env = {"GITHUB_REPOSITORY": "auguspp/Decision-OS-2", "GITHUB_REPOSITORY_ID": "1420041744",
+               "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
+               "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": api.main_sha,
+               "DECISION_OS_STORE_TOKEN": STORE_TOKEN}
+        def backend(bound, client):
+            assert not bound.write_enabled and client is api
+            return SimpleNamespace(binding=bound, live_visibility=lambda:
+                "private" if api.metadata["private"] else "public")
+        monkeypatch.setattr(github_store, "GitHubStore", backend)
+        assert runtime_publication.main(["check", "market"], env=env, api_factory=open_api) == 0
+        api.metadata["private"] = False
+        assert runtime_publication.main(["check", "market"], env=env, api_factory=open_api) == 2
+        api.metadata["private"], api.main_sha = True, "b" * 40
+        assert runtime_publication.main(["check", "market"], env=env, api_factory=open_api) == 2
+    else:
+        lines = release["run"].splitlines()
+        assert lines[0] == "python - <<'PY'" and lines[-1] == "PY"
+        code = compile("\n".join(lines[1:-1]), ".github/workflows/ashare-data.yml", "exec")
+        monkeypatch.setattr(github_store, "GitHubAPI", open_api)
         exec(code, {})
-    api.metadata["private"], api.main_sha = True, "b" * 40
-    with pytest.raises(RecordError, match="^FTSHARE_MAIN_MOVED$"):
-        exec(code, {})
+        assert api.calls == ["/repos/auguspp/Decision-OS-2", "/repos/auguspp/Decision-OS-2/git/ref/heads/main"]
+        api.metadata["private"] = False
+        with pytest.raises(RecordError, match="^FTSHARE_PRIVATE_REPOSITORY_REQUIRED$"):
+            exec(code, {})
+        api.metadata["private"], api.main_sha = True, "b" * 40
+        with pytest.raises(RecordError, match="^FTSHARE_MAIN_MOVED$"):
+            exec(code, {})
 
 
 def test_runtime_private_upgrade_without_public_rights_still_requires_live_verification(tmp_path, monkeypatch):

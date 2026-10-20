@@ -1,0 +1,11 @@
+{
+  "schema": "public-runtime-authorization-v1",
+  "enabled": true,
+  "repository": "auguspp/Decision-OS-2",
+  "repository_id": 1420041744,
+  "branch": "records",
+  "anchor": "06588c36e5a9ac6010e0ca858a95ef7519ee8e45",
+  "store_id": "decision-os-runtime",
+  "authorization_ref": "https://github.com/auguspp/Decision-OS-2/issues/164#issuecomment-6282012674",
+  "scopes": ["market", "sources", "research", "reading", "brief", "watch", "backup", "handoff", "decision-preparation"]
+}

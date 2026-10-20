@@ -10,6 +10,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.runtime_publication import checked_output_visibility
 from decision_kernel.interfaces.store_cli import _load
 from decision_kernel.observations.market_daily import MarketInputError
 
@@ -29,10 +30,10 @@ def main(argv=None):
         else:
             binding = replace(GitHubBinding.from_dict(_load(args.binding)), write_enabled=False)
             backend = GitHubStore(binding, GitHubAPI.from_environment())
-            require(backend.live_visibility() == "private", "OUTCOME_PRIVATE_READING_REQUIRED")
+            checked_output_visibility(backend, "reading", "OUTCOME_PRIVATE_READING_REQUIRED")
         result = open_outcome_review(VersionedStore(backend), plan, registry=RelayRegistry(args.registry))
         if args.binding is not None:
-            require(backend.live_visibility() == "private", "OUTCOME_PRIVATE_READING_REQUIRED")
+            checked_output_visibility(backend, "reading", "OUTCOME_PRIVATE_READING_REQUIRED")
         print(encoded(result).decode(), end="")
         return 0
     except (RecordError, MarketInputError) as exc:

@@ -28,6 +28,7 @@ jobs:
       actions: read
     outputs:
       visibility: ${{ steps.visibility.outputs.visibility }}
+      runtime_authorized: ${{ steps.visibility.outputs.runtime_authorized }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -40,10 +41,10 @@ jobs:
         id: visibility
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.daily_visibility_cli
+        run: python -m decision_kernel.interfaces.daily_visibility_cli --use-runtime-authorization
   status:
     needs: visibility
-    if: needs.visibility.outputs.visibility == 'private' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
+    if: needs.visibility.outputs.runtime_authorized == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -67,16 +68,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.daily_reading_cli --out "$RUNNER_TEMP/dos2-daily-market"
-      - name: Recheck native private visibility before releasing exact references
+      - name: Recheck native visibility and publication authority before releasing exact references
         id: release
         if: always()
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.daily_market_cli release
-      - name: Show the private daily reading summary
+      - name: Show the authorized daily reading summary
         if: always() && steps.release.outcome == 'success' && steps.reading.outcome == 'success'
         run: cat "$RUNNER_TEMP/dos2-daily-market/reading-summary.md" >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain the private daily status and exact consumer input
+      - name: Retain the authorized daily status and exact consumer input
         if: always() && steps.release.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -86,7 +87,7 @@ jobs:
           retention-days: 30
   daily:
     needs: visibility
-    if: needs.visibility.outputs.visibility == 'private' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late')))
+    if: needs.visibility.outputs.runtime_authorized == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:
@@ -118,16 +119,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.daily_reading_cli --out "$RUNNER_TEMP/dos2-daily-market"
-      - name: Recheck native private visibility before releasing exact references
+      - name: Recheck native visibility and publication authority before releasing exact references
         id: release
         if: always()
         env:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.interfaces.daily_market_cli release
-      - name: Show the private daily reading summary
+      - name: Show the authorized daily reading summary
         if: always() && steps.release.outcome == 'success' && steps.reading.outcome == 'success'
         run: cat "$RUNNER_TEMP/dos2-daily-market/reading-summary.md" >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain the private daily status and exact consumer input
+      - name: Retain the authorized daily status and exact consumer input
         if: always() && steps.release.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from decision_kernel.infrastructure.runtime_publication import checked_output_visibility
 import sys
 
 from decision_kernel.application.market_custody import retain_market_reading, market_reading_projection
@@ -145,8 +146,7 @@ def main(argv=None):
         try:
             binding = GitHubBinding.from_dict(_load(Path("config/store-binding.json")))
             backend = GitHubStore(replace(binding, write_enabled=False), GitHubAPI.from_environment())
-            if backend.live_visibility() != "private":
-                raise RecordError("MARKET_CUSTODY_PRIVATE_RELEASE_REQUIRED")
+            checked_output_visibility(backend, "market", "MARKET_CUSTODY_PRIVATE_RELEASE_REQUIRED")
             return 0
         except (RecordError, OSError, ValueError, TypeError, KeyError):
             print('{"error":"MARKET_CUSTODY_PRIVATE_RELEASE_REQUIRED"}', file=sys.stderr)

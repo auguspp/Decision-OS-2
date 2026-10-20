@@ -16,6 +16,8 @@ python -m decision_kernel --version
 
 本地已安装工程依赖后运行 `python -m pytest -q`。`tests/test_distribution.py` 在独立目录构建 wheel，再离线安装进新虚拟环境，从仓库外调用 CLI/导入；不访问 PyPI 发布接口。该测试需要 `uv` 在 PATH 中。
 
+CI 沿 Python/pytest 默认行为，在每个新 runner 内生成临时字节码，让同一分片收集后的两个 worker 及同次安装的后继 CLI 进程复用编译结果。完整测试仍重新收集并实际执行，断言重写继续；没有保存或恢复跨 run 的字节码、虚拟环境或测试结果。源码复制继续排除 `__pycache__`，冷构建、离线安装、仓库外消费者和 tracked tree 检查保持。这里退出的是全局 `PYTHONDONTWRITEBYTECODE=1` 引起的重复编译，不改变分片算法或合并资格；如需回退可恢复该设置。[pytest 的字节码说明](https://docs.pytest.org/en/stable/how-to/assert.html#assertion-rewriting-caches-files-on-disk)解释此默认行为，性能结果只以相关 PR 的同版本实测为准。
+
 ## 实现归属
 
 - `.github/workflows/ci.yml`：原生事件、并发、prepare、合同小环境、八个 runner、最终 `CI Gate`。每个剩余分片由 pytest-split 分配，pytest-xdist 执行两个 worker；没有自建调度器或影响图。
@@ -46,6 +48,8 @@ pytest 保留致命信号的 faulthandler，显式 `faulthandler_timeout=0` 停�
 
 产物名绑定 `run_id` 与 `run_attempt`：`dos2-plan-*`、`dos2-part-{contracts,1,2,3,4,5,6,7,8}-*`、`dos2-ci-*`。最终产物保留计划、实际 summary、九组原始 ZIP/API 元数据及时长。下载须通过原生归属、唯一产物、大小、SHA-256、CRC、安全路径和展开上限；只读取固定数据名。最终 full 可重新验证所有原始分片。原生最新失败或 rerun 不被旧成功替代；读取不确定不产生复用资格。
 
+最终 gate 在必需 jobs 成功后，只读取一次本 run 的完整原生产物目录，供 plan 与九组分片共同使用；原来的十次相同目录读取减为一次。每件原件仍按固定 artifact ID 下载并逐件验证；目录缺项、重名、不完整，目录读取后原 ID 被删除导致的下载失败，以及下载字节与原摘要不符均会失败，不重新按名称寻找替代物。目录只存于本次 gate 调用，路由、baseline 和 merge_reuse 的读取及最新运行复核保持独立。[GitHub 的 artifact 迁移说明](https://github.com/actions/upload-artifact/blob/main/docs/MIGRATION.md)说明新版本产物不可变，覆盖会删除旧 ID 并产生新 ID。此窄适配由现役 CI owner 维护，可恢复逐件目录读取；不会删除原件/历史或退出共享身份、集合和失败保护。
+
 GH_TOKEN 仅给必要 Git/Actions 只读步骤，不给安装、collect 或测试；checkout 不保留凭据。CI 不接收业务 secrets，不配置外发/研究任务。最终 gate 的 `always()` 只保证验证失败路径也被执行，不把前置失败转成功。原始失败日志保留，不循环 rerun 换绿。
 
 ## 复用与来源
@@ -64,6 +68,6 @@ Python CLI 使用标准库 argparse，打包使用 setuptools；CI 使用 GitHub
 
 ## 原生设置与回退
 
-`CI Gate` 必须以本仓实际 check-run 名称和实际来源读回后配置 required check；main 经 PR、普通 merge、force/delete 及自动关 Issue 设置按专项合同处理。工作流不能自称这些管理设置已经生效；具体配置成功/拒绝/工具缺口在 #5 留真实回执。未配置前继续使用无自动关闭词的 `Refs #5`，不得宣传主线强保护。
+按用户已采纳的[CI 合同第5节](ci-contract.md#settings)，本仓不启用主线保护，也不通过 ruleset 或 required-check 设置变相启用。`CI Gate` 仍必须实际执行并按当前 head 核验；main 经 PR、普通 merge，force/delete 及自动关 Issue 设置按专项合同处理。工作流不能自称这些管理设置已经生效；具体配置成功/拒绝/工具缺口在 #5 留真实回执。继续使用无自动关闭词的 `Refs` 关联，不宣传主线强保护。
 
 回退是对本责任组提交做普通反向 PR；不 force main，不改旧系统或私人数据。删除 CI 能力不能留下指向不存在 check 的保护配置，须由获准管理员同步处理并读回；已生成运行/失败/产物不能因代码回退被宣传为撤销。工程交付不签研究质量或人工接受。

@@ -8,6 +8,7 @@ from decision_kernel.application.conditional_odds import (
 )
 from decision_kernel.domain.conditional_odds import shape, validate_spec
 
+BOOK_OPERATION = "read-odds-book"
 PROBABILITY_WRITES = ("freeze-odds-assessment", "save-probability-odds")
 PROBABILITY_RECONCILES = ("reconcile-odds-assessment", "reconcile-probability-odds")
 PROBABILITY_READS = ("read-odds-assessment", "calculate-probability-odds", "read-probability-odds")
@@ -17,7 +18,7 @@ CONDITIONAL_REGISTRIES = ("calculate-odds", "save-odds", "reconcile-odds", "read
 REFERENCE_COMMANDS = ("read-valuation", "read-odds", "read-odds-assessment", "read-probability-odds") + watch_commands.REFERENCES
 WRITE_COMMANDS = ("freeze-valuation", "save-odds") + PROBABILITY_WRITES + watch_commands.WRITES
 RECONCILE_COMMANDS = ("reconcile-valuation", "reconcile-odds") + PROBABILITY_RECONCILES + watch_commands.RECONCILES
-READ_COMMANDS = ("read-valuation", "calculate-odds", "read-odds") + PROBABILITY_READS + watch_commands.READS
+READ_COMMANDS = ("read-valuation", "calculate-odds", "read-odds", BOOK_OPERATION) + PROBABILITY_READS + watch_commands.READS
 COMMANDS = WRITE_COMMANDS + READ_COMMANDS
 
 
@@ -32,6 +33,9 @@ def configure(actions):
 
 
 def preflight(operation, payload):
+    if operation == BOOK_OPERATION:
+        from decision_kernel.application.odds_book import validate_plan
+        return validate_plan(payload)
     if operation in watch_commands.COMMANDS:
         return watch_commands.preflight(operation, payload)
     if operation in ("freeze-odds-assessment", "reconcile-odds-assessment"):
@@ -47,6 +51,20 @@ def preflight(operation, payload):
 
 def perform(store, operation, payload, submission_id="", registry=None):
     preflight(operation, payload)
+    if operation == BOOK_OPERATION:
+        from decision_kernel.application.odds_book import read_book
+        from decision_kernel.infrastructure.github_store import GitHubStore
+        from decision_kernel.infrastructure.runtime_publication import checked_odds_book_visibility
+        # The normal CLI and host share this gate on their original native
+        # adapter. Recreating it would discard a private-upgrade observation.
+        backend = store.backend
+        remote = isinstance(backend, GitHubStore)
+        if remote:
+            checked_odds_book_visibility(backend)
+        result = read_book(store, payload, registry=registry)
+        if remote:
+            checked_odds_book_visibility(backend)
+        return result
     if operation in watch_commands.COMMANDS:
         return watch_commands.perform(store, operation, payload, submission_id, _registry(operation, registry))
     if operation in PROBABILITY_COMMANDS:

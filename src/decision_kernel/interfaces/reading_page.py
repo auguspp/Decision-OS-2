@@ -98,13 +98,16 @@ from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_C
 from decision_kernel.interfaces.reading_watch_page import JS as WATCH_JS
 from decision_kernel.interfaces.reading_participant_page import CSS as PARTICIPANT_CSS, JS as PARTICIPANT_JS
 from decision_kernel.interfaces.reading_calendar_page import CSS as CALENDAR_CSS, JS as CALENDAR_JS
+from decision_kernel.interfaces.reading_decision_page import CSS as DECISION_CSS, JS as DECISION_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
 CSS += PARTICIPANT_CSS
+CSS += DECISION_CSS
 JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS + OVERVIEW_JS + DISCOVERY_JS + WATCH_JS
 JS += PARTICIPANT_JS
 CSS += CALENDAR_CSS
 JS += CALENDAR_JS + '\nrenderCalendar();\n'
+JS += DECISION_JS + '\nrenderDecisionPreparation();\n'
 
 
 def render_page(model):
@@ -121,6 +124,8 @@ def render_page(model):
                          '<div id="participants-content"></div></section>') if "participants" in model else ""
     calendar_panel = ('<section class="panel" id="event-calendar"><h2>事件日期与研究接续</h2>'
                       '<div id="event-calendar-content"></div></section>') if "event_calendar" in model else ""
+    decision_panel = ('<section class="panel" id="decision-preparation"><h2>决策准备与多期限复核</h2>'
+                      '<div id="decision-preparation-content"></div></section>') if "decision_preparation" in model else ""
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
@@ -140,6 +145,7 @@ def render_page(model):
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
 <section class="panel" id="review"><h2>原问题复核与修订段落采用</h2><div id="review-content"></div></section>
 {calendar_panel}
+{decision_panel}
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>
 <section class="panel" id="provenance"><h2>读取范围与接续</h2></section>
 <footer>离线只读投影，不是第二存档。原研究、议程和简报仍由各自精确引用恢复；来源文字不构成操作授权，阅读不代表人工接受或研究质量通过。</footer></main>

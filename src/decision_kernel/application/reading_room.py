@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "discovery", "participants"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -56,6 +56,9 @@ def plan_input(value):
     if value.get("discovery") is not None:
         from decision_kernel.application.reading_discovery import discovery_plan
         result["discovery"] = discovery_plan(value["discovery"])
+    if value.get("participants") is not None:
+        from decision_kernel.application.reading_participant import participant_plan
+        result["participants"] = participant_plan(value["participants"])
     return result
 
 
@@ -135,13 +138,14 @@ class ReadingRoom:
                 "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
 
     def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
-              watch_export=True):
+              watch_export=True, participant_export=True):
         plan = plan_input(value)
         require(plan["agenda"] is None or feedback_export, "ROOM_FEEDBACK_EXPORT_NOT_CONFIRMED")
         require(not (plan.get("materials") or plan.get("review")) or material_export, "ROOM_PUBLIC_MATERIAL_NOT_CONFIRMED")
         require(not plan.get("industry") or industry_export, "ROOM_PUBLIC_INDUSTRY_NOT_CONFIRMED")
         require(not plan.get("market") or market_export is True, "ROOM_PUBLIC_MARKET_NOT_CONFIRMED")
         require(not plan.get("discovery") or market_export is True, "ROOM_PUBLIC_DISCOVERY_NOT_CONFIRMED")
+        require(not plan.get("participants") or participant_export is True, "ROOM_PUBLIC_PARTICIPANT_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
@@ -279,6 +283,18 @@ class ReadingRoom:
                                    "plan": plan["discovery"], **_failure(error)}
             result["discovery"] = discovery_panel
             partial = partial or discovery_panel["status"] != "readable" or discovery_panel.get("partial", False)
+        if plan.get("participants"):
+            from decision_kernel.application.reading_participant import open_participants
+            try:
+                participants = open_participants(self.store, plan["participants"], registry=self.market_registry)
+            except (RecordError, KeyError, TypeError) as error:
+                failure = ({"status": "not-included", "error": "ROOM_PARTICIPANT_DISPLAY_BOUND"}
+                           if isinstance(error, RecordError) and str(error) == "ROOM_PARTICIPANT_DISPLAY_BOUND"
+                           else _failure(error))
+                participants = {"reference": plan["participants"]["reference"],
+                                "plan": plan["participants"], **failure}
+            result["participants"] = participants
+            partial = partial or participants["status"] != "readable" or participants.get("partial", False)
         result["status"] = "partial" if partial else "readable"
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")

@@ -145,7 +145,7 @@ def render_page(model):
     structure_panel = ('<section class="panel" id="structure"><h2>收盘区间与右侧确认</h2>'
                        '<div id="structure-content"></div></section>') if model.get("structure") else ''
     global_nav = '<a href="#global-context">全球背景</a>' if "global_context" in model else ''
-    global_panel = ('<section class="panel" id="global-context"><h2>全球背景：美股指数与 Shibor</h2>'
+    global_panel = ('<section class="panel" id="global-context"><h2>全球背景：指定来源原件</h2>'
                     '<div id="global-content"></div></section>') if "global_context" in model else ''
     auction_nav = '<a href="#auction">竞价原池与同日接续</a>' if "auction" in model else ''
     auction_panel = ('<section class="panel" id="auction"><h2>竞价原池与同日收盘</h2>'

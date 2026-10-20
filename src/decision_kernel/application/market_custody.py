@@ -278,6 +278,10 @@ def _reading_envelope(data, pages):
 
 def market_reading_projection(payload, registry):
     """Remove unretained diagnostics before a public host writes any input artifact."""
+    from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA
+    if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
+        from decision_kernel.application.global_public_custody import public_reading_projection
+        return public_reading_projection(payload)
     require(len(encoded(payload)) <= MAX_BYTES, "MARKET_CUSTODY_INPUT_BOUND")
     read_market_payload(payload, registry)
     def project(result, _path):
@@ -366,6 +370,11 @@ def retain_market_reading(payload, registry, store, *, fresh_reader, custody_aut
     Any failed/unknown write stops immediately. Reinvoke the identical payload to
     reconcile with the existing journal. Earlier saved sources are not deleted.
     """
+    from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA
+    if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
+        from decision_kernel.application.global_public_custody import retain_public_reading
+        return retain_public_reading(payload, store, fresh_reader=fresh_reader,
+            custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
     authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
     require(callable(fresh_reader), "MARKET_CUSTODY_STORE_REQUIRED")
@@ -462,6 +471,10 @@ def _restore_market_reading_inputs(reference, registry, store):
 
 def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity_id=None):
     """Exact stored versions only. A lost query degrades its dependants, not peers."""
+    from decision_kernel.application.global_public_custody import PUBLIC_ROOT_PREFIX, read_public_reading
+    ref = reference if isinstance(reference, SourceRef) else SourceRef.from_dict(reference)
+    if ref.manifest.path.startswith(PUBLIC_ROOT_PREFIX):
+        return read_public_reading(ref, store, offset=offset, limit=limit, entity_id=entity_id)
     require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100, "PAGE_INVALID")
     restored = restore_market_reading_inputs(reference, registry, store)
     payload, failed = restored["payload"], restored["unavailable_queries"]

@@ -181,7 +181,7 @@ def test_signed_zero_shibor_different_source_date_and_missing_baseline_remain_ex
 def test_plan_rejection_and_source_permission_precede_all_io(saved, monkeypatch):
     store, _, refs = saved
     monkeypatch.setattr(store.backend, "head", lambda: pytest.fail("invalid plan/permission reached store"))
-    plans = [{}, {"fx": {"reference": refs["us_indices"]}}, {"us_indices": None}]
+    plans = [{}, {"unknown-family": {"reference": refs["us_indices"]}}, {"us_indices": None}]
     for changes in ({"offset": -1}, {"offset": True}, {"limit": 0}, {"limit": 51}, {"limit": True},
                     {"entity_id": "HSI"}, {"entity_id": []}, {"registry": "caller-path"}, {"url": "https://invalid"}):
         plans.append({"us_indices": {"reference": refs["us_indices"], **changes}})
@@ -209,6 +209,7 @@ def test_wrong_family_and_count_receipt_stop_before_queries_and_ashare_guard_sur
         return original(owner, ref)
     monkeypatch.setattr(VersionedStore, "read_source", read)
     for name, reference in (("us_indices", refs["shibor"]), ("shibor", refs["us_indices"]),
+                            ("fx", refs["us_indices"]),
                             ("us_indices", asdict(counts))):
         calls.clear()
         result = reading_global.open_global(store, {name: {"reference": reference}}, registry=REGISTRY)

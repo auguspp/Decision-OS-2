@@ -32,7 +32,7 @@ Full从原委托默认实际执行信息池与接口取材，并按[来源使用
 
 ## 不得越过的边界
 
-首版沿用[#6已采纳的路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)：同仓 `main` 负责工程代码/规则，独立 `records` 负责获准资料与研究成果。本仓现已整体转为 private；沿[#10原任务](https://github.com/auguspp/Decision-OS-2/issues/10)核当前原生可见性，保留同一 repository_id、分支、store_id、anchor 和历史公开建仓标记，不新建数据仓或第二套保管平台。[只读绑定](config/store-binding.json)仍不授权自动写入。已授权的来源访问、保管与研究委托按原范围接续；私有化不增加来源许可或研究写权限，具体运行及读取按[工作协议](WORKING-PROTOCOLS.md#permissions)。
+首版沿用[#6已采纳的路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)：同仓 `main` 负责工程代码/规则，独立 `records` 负责获准资料与研究成果。用户于2026-10-20将现仓切回 public，沿[#164](https://github.com/auguspp/Decision-OS-2/issues/164)做[现仓公开模式适配](docs/engineering/public-runtime.md)，不默认另建代码仓或迁移资料。每次核当前原生可见性，保留同一 repository_id、分支、store_id、anchor 和历史建仓标记；同仓 records 与历史附件不因代码检查变为私有。[只读绑定](config/store-binding.json)仍不授权自动写入。已授权的来源访问、保管与研究委托按原范围接续；仓库公开不代签第三方资料公开许可，旧私有验收不授予当前公开输出权。Public 日常 status 仅作元数据诊断，未获公开输出授权的日更明确拒绝；既有合格公开手动入口仍按[工作协议](WORKING-PROTOCOLS.md#permissions)执行。
 
 对外公开资料仍须单独具备相应权利，不能把 private 或原保管授权填成公开再分发确认。凭据、账号/个人识别信息、第三方隐私、无再分发权的付费原文及正式人工 Decision 均不得公开；既有私人材料不自动迁出，历史公开内容无法保证被收回。数据分支和共享仓库凭据不构成角色隔离，读取成功也不代签研究或市场可用性。
 

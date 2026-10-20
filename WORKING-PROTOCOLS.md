@@ -109,7 +109,9 @@ Draft供本组迭代；Ready表示范围收口，后续仅修本组问题。同S
 <a id="permissions"></a>
 ## 7. 工具、隐私和副作用
 
-本仓已整体转为 private，`main` 仍只承载工程材料，独立 `records` 仍是原资料、研究及议程保管目标。此为用户在[#6采纳路线A](https://github.com/auguspp/Decision-OS-2/issues/6#issuecomment-6187561836)后沿[#10](https://github.com/auguspp/Decision-OS-2/issues/10)接续的同仓可见性变化；原 repository_id、分支、store_id、anchor 和公开建仓标记保留。[可信只读绑定](config/store-binding.json)中的历史 `visibility=public` 不代表当前 GitHub 可见性，受信入口须用原生元数据核验允许的同仓单向私有化；不能改写锚点或创建第二数据真源来绕过核验。已经授权的研究与来源保管在原范围接续，当前 A 股取材沿原委托及来源许可执行，不因跨对话或私有化重置请求、保管或研究权限。
+用户于2026-10-20将现仓由 private 切回 public，并要求沿[#164](https://github.com/auguspp/Decision-OS-2/issues/164)直接适配现仓代码；不再以新代码仓或资料迁移作为本次工程前置。`main` 只承载工程材料，独立 `records` 仍是原保管目标；同仓可见性也适用于数据分支，代码不能隐藏已经公开的历史。原 repository_id、分支、store_id、anchor 和建仓标记保留。[可信只读绑定](config/store-binding.json)中的历史 `visibility=public` 不是当前许可，仍须核原生可见性及具体读写/发布资格；不改写锚点、历史或 source 权利字段求通过。已授权研究和来源访问按原范围接续，但旧私有保管授权不等于公开再分发授权，不能因换可见性重置请求、失败或预算。
+
+公开工程 CI 与业务数据操作分别处理。[现仓公开模式](docs/engineering/public-runtime.md)的日更预检只取得原生仓库/运行元数据，不读取 records，不注入来源 Secret；Public 的 status 成功仅表示诊断完成，更新/补更/定时未获公开数据授权时明确失败，不以全作业 skipped 充成功。原生 private 的后续作业继续原授权与最终输出复核；既有明确公开权利的手动入口不被该私有日更门禁替代。
 
 私有化不等于取得第三方资料的任意用途或公开再分发权。公开目标仍需逐来源、逐内容的独立公开权利；凭据、账户/个人识别信息、第三方隐私、无再分发许可的第三方原文及正式人工Decision不得公开或放入Issue/PR/日志。历史公开内容无法保证被收回，既有私人材料不自动迁出。`records` 分支与宽仓库凭据不构成角色隔离；实际数据写入、GPT消费、备份恢复和运行任务各自验收，不因仓库变私有而扩大采集/通知/部署权限。
 

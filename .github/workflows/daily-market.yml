@@ -19,8 +19,31 @@ concurrency:
   group: decision-os-relay-source
   cancel-in-progress: false
 jobs:
+  visibility:
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      visibility: ${{ steps.visibility.outputs.visibility }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Check live visibility without reading records or injecting source secrets
+        id: visibility
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_visibility_cli
   status:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.event.repository.private == true && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
+    needs: visibility
+    if: needs.visibility.outputs.visibility == 'private' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -62,7 +85,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   daily:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late')))
+    needs: visibility
+    if: needs.visibility.outputs.visibility == 'private' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:

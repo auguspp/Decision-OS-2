@@ -15,6 +15,9 @@ from decision_kernel.observations.market_daily import MarketInputError
 from decision_kernel.application.market_collection_inputs import (
     COLLECTION_READING_SCHEMA, COLLECTION_REQUIRED, read_collection_payload,
 )
+from decision_kernel.application.auction_inputs import (
+    AUCTION_READING_SCHEMA, AUCTION_REQUIRED, AUCTION_OPTIONAL, read_auction_context,
+)
 
 
 def _route(payload):
@@ -23,7 +26,10 @@ def _route(payload):
     schema = payload.get("schema")
     required = {"schema", "calendar_result", "stock_results", "exchange", "start", "end"}
     optional = {"horizons"}
-    if schema == COLLECTION_READING_SCHEMA:
+    if schema == AUCTION_READING_SCHEMA:
+        required, optional = AUCTION_REQUIRED | {'schema'}, AUCTION_OPTIONAL
+        reader = read_auction_context
+    elif schema == COLLECTION_READING_SCHEMA:
         required, optional = COLLECTION_REQUIRED | {"schema"}, {"reference_policy", "read_as_of", "freshness_results"}
         reader = read_collection_payload
     elif schema == SESSION_SCHEMA:
@@ -58,6 +64,9 @@ def _route(payload):
 
 def read_market_payload(payload, registry, *, offset=0, limit=50, entity_id=None):
     """One dispatcher for existing local and custody readers; no input mutation."""
+    from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA, read_global_public_payload
+    if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
+        return read_global_public_payload(payload, offset=offset, limit=limit, entity_id=entity_id)
     reader = _route(payload)
     args = {k: v for k, v in payload.items() if k != "schema"}
     if "horizons" in args:

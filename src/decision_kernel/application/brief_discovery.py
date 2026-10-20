@@ -35,7 +35,16 @@ def cutoff_age(cutoff, as_of):
             "basis": "declared-delivery-cutoff-not-source-or-storage-time"}
 
 
-def discover_latest(store, *, snapshot, as_of):
+def operation_failure(error):
+    """A native access/scope failure is not a bad edition to skip past."""
+    return isinstance(error, StoreUnavailable) or str(error).startswith(("READING_SCOPE_", "SNAPSHOT_")) or str(error) in {
+        "COMMIT_OUTSIDE_BINDING", "FOREIGN_REPOSITORY", "PATH_OUTSIDE_STORE",
+        "PUBLIC_BINDING_MISMATCH", "PRIVATE_BINDING_MISMATCH",
+        "PRIVATE_UPGRADE_REVERSED", "STORE_MARKER_MISMATCH", "COMMIT_NOT_REACHABLE",
+    }
+
+
+def discover_editions(store, *, snapshot, as_of, strict=False):
     """Inspect all candidates or return an explicit incomplete discovery.
 
     Native news delivery owns the news-edition-* path family. Other arbitrary
@@ -54,7 +63,7 @@ def discover_latest(store, *, snapshot, as_of):
               "repository": backend.repository, "scope": "normal-news-host-editions",
               "prefix": PREFIX, "total_candidates": len(paths), "scanned": 0,
               "valid_candidates": 0, "failures": [], "reference": None, "choices": [],
-              "complete": False, "selection": "greatest-declared-delivery-cutoff",
+              "complete": False, "candidates": [], "selection": "greatest-declared-delivery-cutoff",
               "dependency_replay": "not-performed-by-discovery", "persistence": "not-written"}
     if len(paths) > MAX_EDITIONS:
         return {**result, "status": "not-included", "error": "BRIEF_DISCOVERY_INVENTORY_BOUND"}
@@ -80,8 +89,11 @@ def discover_latest(store, *, snapshot, as_of):
                             for item in doc["plan"].get("research", {}).get("items", [])})
             candidates.append({"reference": reference, "cutoff": doc["plan"]["cutoff"],
                                "kind": doc["plan"]["kind"], "research_cases_in_plan": cases,
-                               "edition_sha256": doc["edition_sha256"]})
+                               "edition_sha256": doc["edition_sha256"],
+                               "window": doc["plan"]["window"]})
         except (RecordError, KeyError, TypeError) as error:
+            if strict and operation_failure(error):
+                raise
             status = ("missing" if isinstance(error, MissingObject) else
                       "unavailable" if isinstance(error, StoreUnavailable) else
                       "invalid" if isinstance(error, (IntegrityError, RecordError)) else "invalid")
@@ -91,7 +103,7 @@ def discover_latest(store, *, snapshot, as_of):
     # Stable ordering is only a tie rule; path order is not economic priority.
     candidates.sort(key=lambda row: row["reference"]["path"])
     candidates.sort(key=lambda row: clock(row["cutoff"]), reverse=True)
-    result.update(valid_candidates=len(candidates), choices=candidates[:MAX_CHOICES],
+    result.update(valid_candidates=len(candidates), candidates=candidates, choices=candidates[:MAX_CHOICES],
                   choices_omitted=max(0, len(candidates) - MAX_CHOICES))
     if result["failures"]:
         # A broken candidate might be newer. Do not silently fall back to an
@@ -103,3 +115,12 @@ def discover_latest(store, *, snapshot, as_of):
             "reference": chosen["reference"], "latest_cutoff": chosen["cutoff"],
             "same_cutoff_count": ties, "tie_rule": "artifact-path-ascending-not-storage-order",
             "age": cutoff_age(chosen["cutoff"], as_of)}
+
+
+def discover_latest(store, *, snapshot, as_of):
+    """Keep the original small Room projection; history uses the same inventory."""
+    result = discover_editions(store, snapshot=snapshot, as_of=as_of)
+    result.pop("candidates")
+    result["choices"] = [{k: v for k, v in row.items() if k != "window"}
+                         for row in result["choices"]]
+    return result

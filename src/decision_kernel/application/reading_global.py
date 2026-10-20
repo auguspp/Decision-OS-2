@@ -1,14 +1,17 @@
-"""Two retained global-context families in the existing read-only room.
+"""Explicit retained global-context families in the existing read-only room.
 
 The original custody and family readers own all qualification and arithmetic.
 This consumer restores their complete bounded models once, then projects a
 separate navigation page. It has no collector, clock substitution or writer.
 """
-from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 import json
 from pathlib import Path
+
+from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA, PUBLIC_VIEW_SCHEMA
+from decision_kernel.observations.global_public import FAMILIES as PUBLIC_FAMILIES, series_info
+from decision_kernel.application.market_reading_scope import SourceReads as _SourceReads, operation_failure
 
 from decision_kernel.application.global_index_inputs import US_INDEX_CODES, US_INDEX_READING_SCHEMA
 from decision_kernel.application.market_custody import (
@@ -17,13 +20,14 @@ from decision_kernel.application.market_custody import (
 from decision_kernel.application.relay_registry import RelayRegistry
 from decision_kernel.application.shibor_inputs import SHIBOR_READING_SCHEMA, SHIBOR_TENORS
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, Selection, SourceRef, StoreUnavailable, encoded, require
+from decision_kernel.domain.records import RecordError, Selection, SourceRef, encoded, require
 from decision_kernel.observations.market_daily import MarketInputError
 
 MAX_GLOBAL_BYTES = 2 * 1024 * 1024
 FAMILIES = {
     "us_indices": (US_INDEX_READING_SCHEMA, "relay-us-index-context-v1", US_INDEX_CODES),
     "shibor": (SHIBOR_READING_SCHEMA, "relay-shibor-context-v1", SHIBOR_TENORS),
+    **{name: (PUBLIC_READING_SCHEMA, PUBLIC_VIEW_SCHEMA, tuple(series_info(name))) for name in PUBLIC_FAMILIES},
 }
 
 
@@ -49,63 +53,13 @@ def global_plan(value):
     return result
 
 
-def operation_failure(error):
-    """Original access, scope and transport limits terminate the whole room."""
-    code = str(error)
-    return isinstance(error, StoreUnavailable) or code in {
-        "PRIVATE_BINDING_MISMATCH", "PUBLIC_BINDING_MISMATCH", "PRIVATE_UPGRADE_REVERSED",
-        "COMMIT_OUTSIDE_BINDING", "COMMIT_NOT_REACHABLE", "FOREIGN_REPOSITORY",
-        "STORE_MARKER_MISMATCH", "STORE_BINDING_REQUIRED", "COMPLETE_SNAPSHOT_REQUIRED",
-        "EXTERNAL_OBJECTS_FORBIDDEN", "DEDICATED_BARE_STORE_REQUIRED", "INVALID_SNAPSHOT",
-        "INVALID_SNAPSHOT_TREE", "MARKET_CUSTODY_READ_SCOPE_REQUIRED",
-        "MARKET_CUSTODY_READ_SCOPE_REPOSITORY_CHANGED",
-    } or code.startswith(("REMOTE_", "MARKET_SNAPSHOT_", "SNAPSHOT_", "READING_SCOPE_", "SOURCE_SCAN_"))
-
-
-class _SourceReads:
-    """Latch the original failure around an already pinned original backend.
-
-    Like the existing close-structure consumer, nested market scopes retain this
-    read-only facade. The enclosing market_read_scope owns admission and its
-    final native check. This consumer preserves the original exception object.
-    """
-    def __init__(self, backend):
-        self.owner, self.failure, self.active = backend, None, True
-        self.repository = backend.repository
-
-    def check(self):
-        if self.failure is not None:
-            raise self.failure
-        require(self.active, "READING_SCOPE_CLOSED")
-
-    @contextmanager
-    def market_read_scope(self):
-        self.check()
-        yield self
-        self.check()
-
-    def __getattr__(self, name):
-        if name not in ("head", "check_commit", "read", "paths", "reference", "resolve", "last_change"):
-            raise AttributeError(name)
-        return lambda *args, **kwargs: self._read(name, *args, **kwargs)
-
-    def _read(self, name, *args, **kwargs):
-        self.check()
-        try:
-            return getattr(self.owner, name)(*args, **kwargs)
-        except RecordError as error:
-            if operation_failure(error):
-                self.failure = error
-            raise
-
-    def commit(self, files, *, expected):
-        raise RecordError("READING_SCOPE_READ_ONLY")
-
 
 def _partial(name, restored):
     view = restored["view"]
     if restored["status"] != "restored" or view is None:
         return True
+    if name in PUBLIC_FAMILIES:
+        return view["status"] != "AVAILABLE"
     if name == "us_indices":
         return any(entry["source_qualification"]["status"] != "checked"
                    or entry["observation"] is None or entry["observation"]["status"] != "observed"
@@ -120,10 +74,15 @@ def _partial(name, restored):
 
 def _open_family(reader, name, plan, registry):
     ref = SourceRef.from_dict(plan["reference"])
-    _, root = _read_manifest(reader, ref, READING_SCHEMA)
+    if name in PUBLIC_FAMILIES:
+        from decision_kernel.application.global_public_custody import read_public_root
+        _, root = read_public_root(reader, ref)
+        require(root["reading"]["family"] == name, "ROOM_GLOBAL_FAMILY_ROOT_REQUIRED")
+    else:
+        _, root = _read_manifest(reader, ref, READING_SCHEMA)
     require(isinstance(root.get("reading"), dict)
             and root["reading"].get("schema") == FAMILIES[name][0], "ROOM_GLOBAL_FAMILY_ROOT_REQUIRED")
-    # At most four supported indices or eight tenors: this original full result
+    # Each bounded family keeps its full declared denominator: this original result
     # is deliberately independent of the room's separate navigation projection.
     restored = read_stored_market(ref, registry, reader, offset=0, limit=100)
     result = {"reference": deepcopy(plan["reference"]), "plan": deepcopy(plan),
@@ -134,7 +93,8 @@ def _open_family(reader, name, plan, registry):
     if view is None:
         return result
     require(view.get("schema") == FAMILIES[name][1], "ROOM_GLOBAL_VIEW_INVALID")
-    declared = view["declared_indices" if name == "us_indices" else "declared_tenors"]
+    declared = view["declared_entities" if name in PUBLIC_FAMILIES else
+                    "declared_indices" if name == "us_indices" else "declared_tenors"]
     require(view["scope_count"] == len(view["entries"]) == len(declared)
             and view["pagination"]["next_offset"] is None, "ROOM_GLOBAL_FULL_SCOPE_REQUIRED")
     require(plan["entity_id"] is None or plan["entity_id"] in declared, "ROOM_GLOBAL_ENTITY_NOT_DECLARED")
@@ -154,7 +114,8 @@ def open_global(store, value, *, registry=None):
     from decision_kernel.application.reading_room import _failure
 
     plan = global_plan(value)
-    registry = registry if registry is not None else RelayRegistry(Path("docs/sources/relay-registry.json"))
+    if registry is None and any(name in plan for name in ("us_indices", "shibor")):
+        registry = RelayRegistry(Path("docs/sources/relay-registry.json"))
     with market_read_scope(store) as scoped:
         backend = _SourceReads(scoped.backend)
         try:
@@ -173,7 +134,7 @@ def open_global(store, value, *, registry=None):
             result = {"schema": "reading-global-v1", "plan": plan, "families": families,
                       "status": "partial" if any(f["status"] != "readable" or f.get("partial", False)
                                                    for f in families.values()) else "readable",
-                      "coverage": "specified-retained-US-indices-and-Shibor-not-six-family-global-coverage",
+                      "coverage": "explicit-retained-family-roots-not-current-or-complete-global-market-coverage",
                       "source_requests": 0, "writes": 0,
                       "freshness": "original-explicit-source-dates-not-latest-update-certification",
                       "research_assessment": "not-performed", "human_acceptance": "not-established"}

@@ -77,7 +77,7 @@ def test_end_binding_failure_prevents_export(sources,monkeypatch,tmp_path):
 def test_new_host_options_keep_same_workflow_read_write_separation():
     path=Path(__file__).parents[1]/'.github/workflows/news-rolling.yml'
     text=path.read_text()
-    assert 'options: [build, read, desk, read-desk]' in text
+    assert 'options: [build, read, desk, read-desk, latest-desk]' in text
     assert "inputs.operation != 'read' && inputs.operation != 'read-desk'" in text
     assert 'public_feedback_custody_confirmed' in text
     assert 'schedule:' not in text and 'contents: write' in text
@@ -119,6 +119,18 @@ assert actual['quick_candidates'][0]['research_started'] is False
 page=render_page(page_model(actual,rows,ref))
 assert '新闻工作台' in page and '此版本已保管' in page
 Path('installed-news-desk.html').write_text(page,encoding='utf-8')
+from decision_kernel.application.news_desk_navigation import build_navigation
+from decision_kernel.interfaces.news_page import navigation_summary
+entry_window=save('news-roll-installed-entry',rolling_index(store.read_source,[batch],as_of='2026-10-16T12:00:00Z'))
+entry_plan={**plan,'window':asdict(entry_window)}
+entry_doc,entry_rows=build_edition(store.read_source,artifacts,entry_plan)
+entry_ref=artifacts.put('installed-entry',ArtifactInput.from_bytes('news-edition-installed-entry','news-edition.json','application/json',encoded(entry_doc)))
+navigation,entry=build_navigation(fresh,fresh.read_source,{},now='2026-10-20T10:00:00Z')
+assert entry['edition']==entry_doc and entry['saved_reference']['path']==entry_ref.path
+assert navigation['display']['clocks']['window_age']['status']=='older-than-24h'
+assert navigation['history']['total_candidates']==2 and navigation['records_write']=='not-requested'
+Path('installed-news-entry.html').write_text(render_page(entry),encoding='utf-8')
+Path('installed-news-summary.md').write_text(navigation_summary(entry),encoding='utf-8')
 print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['entries'])}))
 '''
     result = subprocess.run([str(python), '-I', '-c', script, str(store)], cwd=outside,
@@ -145,6 +157,14 @@ print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['
 
     from test_global_room import exercise_installed_global_room
     exercise_installed_global_room(outside, python, env, store)
+
+    from test_auction_room import exercise_installed_auction_room
+    exercise_installed_auction_room(outside, python, env, store)
+    from test_auction_minute_room import exercise_installed_auction_minute_room
+    exercise_installed_auction_minute_room(outside, python, env, store)
+
+    from test_global_public_room import exercise_installed_global_public_room
+    exercise_installed_global_public_room(outside, python, env, store)
 
     from test_recovery_commands import exercise_installed_recovery
     exercise_installed_recovery(outside, python, env, store)

@@ -32,12 +32,17 @@ from decision_kernel.application.shibor_inputs import SHIBOR_FIELDS, SHIBOR_READ
 from decision_kernel.application.market_session_inputs import SESSION_SCHEMA, SESSION_REQUIRED
 
 from decision_kernel.application.market_suspension_inputs import SUSPENSION_FIELDS
+from decision_kernel.application.auction_inputs import (
+    AUCTION_READING_SCHEMA, AUCTION_REQUIRED, AUCTION_OPTIONAL, POOL_FIELDS, AUCTION_FIELDS,
+)
 
 QUERY_SCHEMA = "market-query-custody-v1"
 READING_SCHEMA = "market-reading-custody-v1"
 MAX_QUERIES = 32
 MAX_PAGES = 100
 MARKET_FIELDS = {
+    "limit_list_d": POOL_FIELDS,
+    "stk_auction": AUCTION_FIELDS,
     "suspend_d": SUSPENSION_FIELDS,
     "shibor": SHIBOR_FIELDS,
     "us_tradecal": US_CALENDAR_FIELDS,
@@ -69,6 +74,8 @@ def _map_results(payload, transform):
             required = SHIBOR_REQUIRED
         if kind == "us-index":
             required = US_INDEX_REQUIRED
+        if kind == "auction":
+            required = AUCTION_REQUIRED
         if kind == "raw":
             required = {"calendar_result", "stock_results", "exchange", "start", "end", "declared_entities", "coverage"}
         extras = {"horizons"} | ({"benchmark"} if kind in ("sector", "concept") else set())
@@ -76,11 +83,18 @@ def _map_results(payload, transform):
             extras |= {"suspension_results", "factor_supplements"}
         if kind == "session":
             extras |= {"suspension_result"}
+        if kind == "auction":
+            extras = AUCTION_OPTIONAL
         if kind in ("stock", "sector", "concept", "session"):
             extras |= {"reference_policy"}
         require(isinstance(value, dict) and required <= value.keys() <= required | extras, "MARKET_CUSTODY_SURFACE")
-        for field in ("calendar_result", "catalog_result", "rate_result", "suspension_result"):
+        fields = ("calendar_result", "catalog_result", "rate_result", "suspension_result")
+        if kind == "auction":
+            fields += ("pool_result", "auction_result", "close_result")
+        for field in fields:
             if field in value:
+                if kind == "auction" and value[field] is None:
+                    continue
                 value[field] = transform(value[field], prefix + [field])
         for field in ("stock_results", "master_results", "factor_results", "member_results", "index_results", "calendar_results", "session_results", "suspension_results"):
             if field not in value:
@@ -112,8 +126,9 @@ def _map_results(payload, transform):
             "session" if schema == SESSION_SCHEMA else
             "shibor" if schema == SHIBOR_READING_SCHEMA else
             "us-index" if schema == US_INDEX_READING_SCHEMA else
+            "auction" if schema == AUCTION_READING_SCHEMA else
             "raw" if schema == "relay-stock-reading-v1" else "stock")
-        require(kind in ("raw", "stock", "sector", "concept", "us-index", "shibor", "session"), "MARKET_CUSTODY_KIND")
+        require(kind in ("raw", "stock", "sector", "concept", "us-index", "shibor", "session", "auction"), "MARKET_CUSTODY_KIND")
         one(output, kind, [])
         output["schema"] = schema
         if schema == "relay-ths-group-reading-v1":
@@ -263,6 +278,13 @@ def _reading_envelope(data, pages):
 
 def market_reading_projection(payload, registry):
     """Remove unretained diagnostics before a public host writes any input artifact."""
+    from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA
+    if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
+        from decision_kernel.application.global_public_custody import public_reading_projection
+        return public_reading_projection(payload)
+    if isinstance(payload, dict) and payload.get("schema") == "ftshare-auction-minute-reading-v1":
+        from decision_kernel.application.auction_minute_custody import minute_reading_projection
+        return minute_reading_projection(payload)
     require(len(encoded(payload)) <= MAX_BYTES, "MARKET_CUSTODY_INPUT_BOUND")
     read_market_payload(payload, registry)
     def project(result, _path):
@@ -351,6 +373,15 @@ def retain_market_reading(payload, registry, store, *, fresh_reader, custody_aut
     Any failed/unknown write stops immediately. Reinvoke the identical payload to
     reconcile with the existing journal. Earlier saved sources are not deleted.
     """
+    from decision_kernel.application.global_public_inputs import PUBLIC_READING_SCHEMA
+    if isinstance(payload, dict) and payload.get("schema") == PUBLIC_READING_SCHEMA:
+        from decision_kernel.application.global_public_custody import retain_public_reading
+        return retain_public_reading(payload, store, fresh_reader=fresh_reader,
+            custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
+    if isinstance(payload, dict) and payload.get("schema") == "ftshare-auction-minute-reading-v1":
+        from decision_kernel.application.auction_minute_custody import retain_minute_reading
+        return retain_minute_reading(payload, registry, store, fresh_reader=fresh_reader,
+            custody_authorized=custody_authorized, public_rights_confirmed=public_rights_confirmed)
     authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
     require(callable(fresh_reader), "MARKET_CUSTODY_STORE_REQUIRED")
@@ -447,7 +478,14 @@ def _restore_market_reading_inputs(reference, registry, store):
 
 def read_stored_market(reference, registry, store, *, offset=0, limit=50, entity_id=None):
     """Exact stored versions only. A lost query degrades its dependants, not peers."""
+    from decision_kernel.application.global_public_custody import PUBLIC_ROOT_PREFIX, read_public_reading
+    ref = reference if isinstance(reference, SourceRef) else SourceRef.from_dict(reference)
+    if ref.manifest.path.startswith(PUBLIC_ROOT_PREFIX):
+        return read_public_reading(ref, store, offset=offset, limit=limit, entity_id=entity_id)
     require(type(offset) is int and offset >= 0 and type(limit) is int and 1 <= limit <= 100, "PAGE_INVALID")
+    if ref.manifest.path.startswith("source-views/market-auction-minute-"):
+        from decision_kernel.application.auction_minute_custody import read_minute_reading
+        return read_minute_reading(ref, registry, store, offset=offset, limit=limit, entity_id=entity_id)
     restored = restore_market_reading_inputs(reference, registry, store)
     payload, failed = restored["payload"], restored["unavailable_queries"]
     if payload.get("schema") == "relay-three-market-reading-v1":

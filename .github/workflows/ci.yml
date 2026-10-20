@@ -14,7 +14,6 @@ concurrency:
 env:
   CI_CODE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-  PYTHONDONTWRITEBYTECODE: '1'
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -104,7 +103,7 @@ jobs:
         timeout-minutes: 10
         with:
           profile: dev
-      - name: Execute native pytest-split with two workers
+      - name: Execute native pytest-split with up to four workers
         timeout-minutes: 6
         env:
           CI_GROUP: ${{ matrix.group }}

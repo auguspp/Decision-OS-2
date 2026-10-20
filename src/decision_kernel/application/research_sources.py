@@ -26,6 +26,79 @@ COMMON_PARAMETERS = frozenset({'ts_code', 'ann_date', 'f_ann_date', 'end_date', 
     'inst_csname', 'name', 'symbol', 'industry', 'level', 'is_new', 'is_open', 'nav_date', 'cal_date',
     'start_time', 'end_time', 'status', 'fund_type', 'is_hs', 'curr_type'})
 FORBIDDEN_PARAMS = {'url', 'host', 'endpoint', 'proxy', 'callback', 'redirect', 'method', '__probe'}
+AUCTION_OPTIONAL_FIELDS = {
+    'limit_list_d': frozenset({'name', 'close', 'turnover_ratio', 'limit_times'}),
+    'stk_auction': frozenset({'price', 'pre_close'}),
+}
+# Daily retains the same finite clock for the auction's completed-session use;
+# no existing daily reader gains a new required field or timing qualification.
+REQUEST_CLOCK_APIS = frozenset(AUCTION_OPTIONAL_FIELDS) | {'daily'}
+PAGE_COUNTS = ('count', 'total')
+PAGE_FLAGS = ('has_more', 'has_next', 'truncated', 'next', 'next_page', 'next_cursor')
+
+
+def _page_evidence(body, rows):
+    """Finite response metadata, without retaining cursor text or diagnostics."""
+    out = {'schema': 'relay-page-coverage-v1', 'body': {}, 'data': {}}
+    for name, obj in (('body', body), ('data', body['data'])):
+        for key in PAGE_COUNTS:
+            if key in obj:
+                require(type(obj[key]) is int and obj[key] >= rows, 'SOURCE_COUNT_INVALID')
+                out[name][key] = obj[key]
+        for key in PAGE_FLAGS:
+            if key not in obj:
+                continue
+            value = obj[key]
+            if key in ('has_more', 'has_next', 'truncated'):
+                require(value is None or type(value) is bool, 'SOURCE_PAGE_METADATA_INVALID')
+            else:
+                require(value is None or type(value) is bool or type(value) is int and value >= 0
+                        or isinstance(value, str) and len(value.encode()) <= 128
+                        and not any(ord(c) < 32 or ord(c) == 127 for c in value),
+                        'SOURCE_PAGE_METADATA_INVALID')
+            out[name][key] = value not in (None, False, '')
+    for key in PAGE_COUNTS:
+        values = [obj[key] for obj in (out['body'], out['data']) if key in obj]
+        require(len(set(values)) <= 1, 'SOURCE_PAGE_COUNT_CONFLICT')
+    counts = [obj['count'] for obj in (out['body'], out['data']) if 'count' in obj]
+    totals = [obj['total'] for obj in (out['body'], out['data']) if 'total' in obj]
+    require(not counts or not totals or max(counts) <= min(totals), 'SOURCE_PAGE_COUNT_CONFLICT')
+    return out
+
+
+def _declared_rows(table):
+    evidence = table.get('coverage_evidence') or {}
+    return max([table['reported_count'] or 0] + [obj[key]
+        for name in ('body', 'data') for obj in [evidence.get(name, {})]
+        for key in PAGE_COUNTS if key in obj])
+
+
+def _consistent_total(tables):
+    # Only these finite evidence-bearing pages declare total. A per-page count
+    # may shrink on the tail; an explicit total cannot change or be overrun.
+    totals = {obj['total'] for table in tables for name in ('body', 'data')
+              for obj in [table.get('coverage_evidence', {}).get(name, {})] if 'total' in obj}
+    require(len(totals) <= 1, 'SOURCE_PAGE_COUNT_CONFLICT')
+    return next(iter(totals)) if totals else None
+
+
+def _more_rows(table):
+    evidence = table.get('coverage_evidence') or {}
+    return any(evidence.get(name, {}).get(key, False)
+               for name in ('body', 'data') for key in PAGE_FLAGS)
+
+
+def _request_clock(value, captured_at):
+    require(isinstance(value, dict) and set(value) == {'requested_at', 'received_at'},
+            'SOURCE_REQUEST_CLOCK_INVALID')
+    stamps = []
+    for item in (value['requested_at'], value['received_at'], captured_at):
+        source_time(item)
+        stamp = datetime.fromisoformat(item.replace('Z', '+00:00'))
+        require(stamp.utcoffset() is not None, 'SOURCE_REQUEST_CLOCK_INVALID')
+        stamps.append(stamp)
+    require(stamps[0] <= stamps[1] <= stamps[2], 'SOURCE_REQUEST_CLOCK_INVALID')
+    return deepcopy(value)
 
 
 def _field_name(api, value):
@@ -61,6 +134,8 @@ def parameters_for(registry, api, parameters):
     require(isinstance(parameters, dict) and parameters, 'SOURCE_PARAMETERS_REQUIRED')
     result = {}
     allowed = COMMON_PARAMETERS | set(item['required'] or []) | {k for g in (item['required_any'] or []) for k in g}
+    if api == 'stk_auction':
+        allowed |= {'ts_type'}
     for key, value in parameters.items():
         require(isinstance(key, str) and NAME.fullmatch(key) and key in allowed and key not in FORBIDDEN_PARAMS
                 and not SENSITIVE.search(key), 'SOURCE_PARAMETER_NOT_ALLOWED')
@@ -68,6 +143,8 @@ def parameters_for(registry, api, parameters):
                 and len(str(value)) <= 8192 and not any(ord(c) < 32 or ord(c) == 127 for c in str(value)),
                 'SOURCE_PARAMETER_VALUE_INVALID')
         result[key] = str(value)
+    if api == 'stk_auction':
+        require(result.get('ts_type') == 'STK', 'SOURCE_AUCTION_STOCK_TYPE_REQUIRED')
     fields = result.get('fields', '').split(',')
     require(1 <= len(fields) <= 128 and len(set(fields)) == len(fields)
             and all(_field_name(api, f) and not SENSITIVE.search(f) for f in fields),
@@ -102,7 +179,7 @@ def validate_plan(plan, registry):
             'authority': 'caller-mandate-required', 'economic_assessment': 'not-performed'}
 
 
-def _table(api, params, body):
+def _table(api, params, body, *, preserve_coverage=True):
     require(isinstance(body, dict) and type(body.get('code')) is int and body['code'] == 0
             and body.get('ok', True) is True and body.get('success', True) is True
             and body.get('error') in (None, '') and body.get('api_name') in (None, api), 'SOURCE_BUSINESS_FAILED')
@@ -113,7 +190,8 @@ def _table(api, params, body):
             and all(_field_name(api, f) for f in fields) and len(set(fields)) == len(fields), 'SOURCE_FIELDS_INVALID')
     require(isinstance(rows, list) and len(rows) <= int(params['limit']), 'SOURCE_ROWS_INVALID')
     requested = params['fields'].split(',')
-    require(not rows or set(requested) <= set(fields), 'SOURCE_REQUESTED_FIELDS_MISSING')
+    required = set(requested) - AUCTION_OPTIONAL_FIELDS.get(api, set())
+    require(not rows or required <= set(fields), 'SOURCE_REQUESTED_FIELDS_MISSING')
     selected = [f for f in fields if f in requested]
     indices = [fields.index(f) for f in selected]
     projected = []
@@ -140,6 +218,8 @@ def _table(api, params, body):
              'omitted_unrequested_columns': len(fields) - len(selected),
              'representation': 'requested-column-projection-not-original-http',
              'units': 'NOT_ESTABLISHED_BY_GENERIC_READER', 'business_semantics': 'REQUIRES_SOURCE_SPECIFIC_CHECK'}
+    if api in AUCTION_OPTIONAL_FIELDS and preserve_coverage:
+        value['coverage_evidence'] = _page_evidence(body, len(rows))
     encoded(value)  # Reject non-finite numeric cells without converting or rounding them.
     return value
 
@@ -166,7 +246,7 @@ def capture_registered(request, registry, session, *, max_pages=100, checkpoint=
         seen.add(digest(encoded({'fields': table['fields'], 'items': table['items']})))
         offset += len(table['items'])
         total += len(encoded(table))
-        declared = max(declared, table['reported_count'] or 0)
+        declared = max(declared, _declared_rows(table))
     for page_number in range(len(result['pages']) + 1, max_pages + 1):
         page_params = {**params, 'offset': str(offset)} if offset else dict(params)
         if controller is not None and controller.control['retry'] is None:
@@ -187,12 +267,26 @@ def capture_registered(request, registry, session, *, max_pages=100, checkpoint=
             seen.add(fingerprint)
             total += len(encoded(table))
             require(total <= 8 * 1024 * 1024, 'SOURCE_CAPTURE_MEMORY_LIMIT')
-            result['pages'].append({'offset': offset, 'captured_at': session.clock(), 'table': table,
-                'transport': deepcopy(session.client.last_response_meta), 'attempts': deepcopy(session.last_attempts)})
+            captured_at = session.clock()
+            transport = deepcopy(session.client.last_response_meta)
+            if request['api'] in REQUEST_CLOCK_APIS and session.last_attempts:
+                last = session.last_attempts[-1]
+                require(last.get('error') is None and last.get('transport') == transport,
+                        'SOURCE_REQUEST_CLOCK_INVALID')
+                transport['request_clock'] = _request_clock(
+                    {k: last.get(k) for k in ('requested_at', 'received_at')}, captured_at)
+            expected_total = _consistent_total([p['table'] for p in result['pages']] + [table])
+            require(expected_total is None or offset + len(table['items']) <= expected_total,
+                    'SOURCE_PAGE_COUNT_CONFLICT')
+            result['pages'].append({'offset': offset, 'captured_at': captured_at, 'table': table,
+                'transport': transport, 'attempts': deepcopy(session.last_attempts)})
             offset += len(table['items'])
-            declared = max(declared, table['reported_count'] or 0)
+            declared = max(declared, _declared_rows(table))
+            evidence = table.get('coverage_evidence') or {}
+            require(not any(evidence.get(name, {}).get('truncated', False) for name in ('body', 'data')),
+                    'SOURCE_EXPLICIT_TRUNCATION')
             if len(table['items']) < int(params['limit']):
-                require(declared <= offset, 'SOURCE_COUNT_SUGGESTS_TRUNCATION')
+                require(declared <= offset and not _more_rows(table), 'SOURCE_COUNT_SUGGESTS_TRUNCATION')
                 result['complete'] = True
                 if controller is not None:
                     controller.accepted(complete=True)
@@ -274,30 +368,55 @@ def _inspect_result(result, registry):
         require(stamp.utcoffset() is not None and (previous is None or stamp >= previous), 'SOURCE_PAGE_CLOCK_INVALID')
         previous = stamp
         table = page['table']
-        require(isinstance(table, dict) and set(table) == {'fields', 'items', 'reported_count',
-            'missing_requested_fields', 'omitted_unrequested_columns', 'representation', 'units', 'business_semantics'},
+        table_keys = {'fields', 'items', 'reported_count', 'missing_requested_fields',
+                      'omitted_unrequested_columns', 'representation', 'units', 'business_semantics'}
+        require(isinstance(table, dict) and table_keys <= set(table)
+                <= table_keys | ({'coverage_evidence'} if checked['api'] in AUCTION_OPTIONAL_FIELDS else set()),
             'SOURCE_PROJECTED_TABLE_INVALID')
         require(type(table['omitted_unrequested_columns']) is int and 0 <= table['omitted_unrequested_columns'] <= 512,
                 'SOURCE_PROJECTION_COUNT_INVALID')
-        rebuilt = _table(checked['api'], params, {'code': 0,
-            'data': {'fields': table['fields'], 'items': table['items']}, 'count': table['reported_count']})
+        body = {'code': 0, 'data': {'fields': table['fields'], 'items': table['items']}}
+        evidence = table.get('coverage_evidence')
+        if evidence is not None:
+            require(isinstance(evidence, dict) and set(evidence) == {'schema', 'body', 'data'}
+                    and evidence['schema'] == 'relay-page-coverage-v1'
+                    and all(isinstance(evidence[k], dict) and set(evidence[k]) <= set(PAGE_COUNTS + PAGE_FLAGS)
+                            for k in ('body', 'data')), 'SOURCE_PAGE_METADATA_INVALID')
+            body.update(evidence['body'])
+            body['data'].update(evidence['data'])
+        else:
+            body['count'] = table['reported_count']
+        rebuilt = _table(checked['api'], params, body, preserve_coverage=evidence is not None)
         require(all(table[k] == rebuilt[k] for k in table if k != 'omitted_unrequested_columns'),
                 'SOURCE_PROJECTION_CHANGED')
         meta = page['transport']
-        require(isinstance(meta, dict) and set(meta) == {'http_status','x_request_id','x_cache','wire_sha256'}
+        meta_keys = {'http_status','x_request_id','x_cache','wire_sha256'}
+        require(isinstance(meta, dict) and meta_keys <= set(meta)
+                <= meta_keys | ({'request_clock'} if checked['api'] in REQUEST_CLOCK_APIS else set())
                 and type(meta['http_status']) is int and meta['http_status'] == 200
                 and isinstance(meta['wire_sha256'], str) and re.fullmatch(r'[a-f0-9]{64}', meta['wire_sha256']),
                 'SOURCE_TRANSPORT_RECEIPT_INVALID')
         for name in ('x_request_id', 'x_cache'):
             require(meta[name] is None or isinstance(meta[name], str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', meta[name]),
                     'SOURCE_TRANSPORT_RECEIPT_INVALID')
+        if 'request_clock' in meta:
+            _request_clock(meta['request_clock'], page['captured_at'])
+            # Source inspection consumes only the finite saved projection.
+            # Execution diagnostics are discarded, not an alternate clock or
+            # an admission condition. Capture/checkpoint owners bind attempts.
         fingerprint = digest(encoded({'fields': table['fields'], 'items': table['items']}))
         require(not table['items'] or fingerprint not in seen, 'SOURCE_PAGINATION_STALLED')
         seen.add(fingerprint)
         require(index == len(pages)-1 or len(table['items']) == int(params['limit']), 'SOURCE_PAGE_AFTER_TERMINAL')
         offset += len(table['items']); count += len(table['items'])
-        declared = max(declared, table['reported_count'] or 0)
+        declared = max(declared, _declared_rows(table))
+    expected_total = _consistent_total([page['table'] for page in pages])
+    require(expected_total is None or offset <= expected_total, 'SOURCE_PAGE_COUNT_CONFLICT')
     complete = bool(pages) and capture['error'] is None and len(pages[-1]['table']['items']) < int(params['limit']) and declared <= offset
+    if checked['api'] in AUCTION_OPTIONAL_FIELDS and pages:
+        complete = complete and not _more_rows(pages[-1]['table']) and not any(
+            page['table'].get('coverage_evidence', {}).get(name, {}).get('truncated', False)
+            for page in pages for name in ('body', 'data'))
     require(capture['complete'] == complete, 'SOURCE_COMPLETENESS_MISMATCH')
     return {'query_key': checked['query_key'], 'stage': checked['stage'], 'purpose': checked['purpose'],
         'api': checked['api'], 'parameters': params, 'complete': complete, 'row_count': count,

@@ -315,3 +315,99 @@ def test_pytest_child_has_no_read_token(runtime, monkeypatch, tmp_path):
         return subprocess.CompletedProcess(argv, 0)
     monkeypatch.setattr(runtime.subprocess, "run", fake)
     assert runtime.pytest_run(tmp_path, "synthetic", [], collect=True)[0] == 0
+
+
+@pytest.fixture
+def gate_case(runtime, evidence, bundle, monkeypatch):
+    """Exercise the real gate/ZIP verifier, replacing only native I/O."""
+    plan = bundle["plan"]
+    plan_archive = bundle["archive"]({"plan.json": evidence.encoded(plan)}, "dos2-plan-100-1")
+    inventory, downloads = [], {}
+    for index, (raw, metadata) in enumerate([plan_archive, *bundle["sources"].values()], 1):
+        metadata = {**deepcopy(metadata), "id": index}
+        inventory.append(metadata)
+        downloads[f"repos/{runtime.REPO}/actions/artifacts/{index}/zip"] = raw
+    payload = dict(total_count=len(inventory), artifacts=inventory)
+    queries, fetched = [], []
+
+    def api(path):
+        queries.append(path)
+        assert path == "actions/runs/100/artifacts?per_page=100"
+        return deepcopy(payload)
+
+    def command(*args, **kw):
+        assert args[:2] == ("gh", "api") and len(args) == 3 and kw == {"token": True}
+        fetched.append(args[2])
+        result = downloads[args[2]]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(runtime, "identity", lambda: deepcopy(plan["identity"]))
+    monkeypatch.setattr(runtime, "api", api)
+    monkeypatch.setattr(runtime, "command", command)
+    monkeypatch.setenv("CI_NEEDS", json.dumps(dict(
+        prepare=dict(result="success", outputs=dict(scope="full")),
+        contracts=dict(result="success"), remaining=dict(result="success"))))
+    return dict(plan=plan, inventory=inventory, payload=payload, downloads=downloads,
+                queries=queries, fetched=fetched)
+
+
+def test_full_gate_uses_one_inventory_and_preserves_every_original(runtime, evidence, bundle, gate_case, tmp_path):
+    runtime.gate(tmp_path)
+    assert gate_case["queries"] == ["actions/runs/100/artifacts?per_page=100"]
+    assert gate_case["fetched"] == list(gate_case["downloads"])
+    assert runtime.read(tmp_path, "durations.json") == dict.fromkeys(gate_case["plan"]["collection"], 0.01)
+    assert runtime.read(tmp_path, "summary.json") == dict(identity=gate_case["plan"]["identity"],
+        scope="full", merge_eligible=True, executed_full_count=len(gate_case["plan"]["collection"]), source=None)
+    metadata = runtime.read(tmp_path, "sources.json")
+    for group, original in bundle["sources"].items():
+        assert (tmp_path / f"part-{group}.zip").read_bytes() == original[0]
+        assert metadata[group] in gate_case["inventory"]
+    assert evidence.verify_full(gate_case["plan"], {
+        group: ((tmp_path / f"part-{group}.zip").read_bytes(), metadata[group])
+        for group in evidence.GROUPS}, fresh=True) == runtime.read(tmp_path, "durations.json")
+
+
+@pytest.mark.parametrize("fault, error", [
+    ("truncated", "INCOMPLETE_ARTIFACTS"), ("empty", "NO_UNIQUE_ARTIFACT"),
+    ("duplicate", "NO_UNIQUE_ARTIFACT"), ("attempt", "NO_UNIQUE_ARTIFACT"),
+    ("head", "ARTIFACT_IDENTITY"), ("run", "ARTIFACT_IDENTITY"), ("expired", "ARTIFACT_ID"),
+    ("deleted", None), ("replaced-bytes", "ARCHIVE_DIGEST"),
+])
+def test_gate_inventory_failure_never_reselects_or_emits_success(runtime, gate_case, tmp_path, fault, error):
+    case = gate_case
+    last = case["inventory"][-1]
+    download = f"repos/{runtime.REPO}/actions/artifacts/{last['id']}/zip"
+    if fault == "truncated":
+        case["payload"]["total_count"] += 1
+    elif fault == "empty":
+        case["payload"].update(total_count=0, artifacts=[])
+    elif fault == "duplicate":
+        case["inventory"].append(deepcopy(last))
+        case["payload"]["total_count"] += 1
+    elif fault == "attempt":
+        last["name"] = last["name"].removesuffix("-1") + "-2"
+    elif fault in ("head", "run"):
+        last["workflow_run"]["head_sha" if fault == "head" else "id"] = "f" * 40 if fault == "head" else 101
+    elif fault == "expired":
+        last["expired"] = True
+    elif fault == "deleted":
+        case["downloads"][download] = subprocess.CalledProcessError(1, ["gh", "api", "synthetic-deleted-id"])
+    else:
+        original = case["downloads"][download]
+        case["downloads"][download] = original[:-1] + bytes([original[-1] ^ 1])
+    with pytest.raises(subprocess.CalledProcessError if fault == "deleted" else ValueError, match=error):
+        runtime.gate(tmp_path)
+    assert case["queries"] == ["actions/runs/100/artifacts?per_page=100"]
+    assert len(case["fetched"]) == len(set(case["fetched"]))
+    assert not (tmp_path / "summary.json").exists()
+
+
+def test_gate_failed_prerequisite_stops_before_inventory(runtime, gate_case, monkeypatch, tmp_path):
+    monkeypatch.setenv("CI_NEEDS", json.dumps(dict(
+        prepare=dict(result="success", outputs=dict(scope="full")),
+        contracts=dict(result="success"), remaining=dict(result="failure"))))
+    with pytest.raises(ValueError, match="REQUIRED_JOBS_NOT_PASSED"):
+        runtime.gate(tmp_path)
+    assert gate_case["queries"] == gate_case["fetched"] == []

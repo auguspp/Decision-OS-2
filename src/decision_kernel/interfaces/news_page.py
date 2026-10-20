@@ -17,6 +17,7 @@ CSS = r"""
 JS = r"""
 'use strict';
 const DATA=JSON.parse(document.getElementById('data').textContent), E=DATA.edition;
+if(E){
 const $=id=>document.getElementById(id), rows=DATA.articles, drafts=new Map();
 const state=new Map(E.attention_state.map(c=>[c.entry_id,c]));
 const included=new Set(E.included.map(c=>c.entry_id));
@@ -84,7 +85,89 @@ $('export-quick').addEventListener('click',()=>{try{validChanges();const selecte
  save('news-quick-candidates.json',JSON.stringify(result,null,2),'application/json');}catch(e){$('notice').textContent=e.message;}});
 $('download-brief').addEventListener('click',()=>save('news-brief.md',E.brief_markdown,'text/markdown'));
 window.addEventListener('beforeunload',e=>{if(drafts.size){e.preventDefault();e.returnValue='';}});render();
+}
 """
+
+NAVIGATION_JS = r"""
+(()=>{
+ const D=JSON.parse(document.getElementById('data').textContent),N=D.navigation;
+ if(!N)return;
+ const root=document.getElementById('navigation');root.hidden=false;
+ if(!D.edition)document.getElementById('desk-content').hidden=true;
+ const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
+ const fmt=s=>s?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Singapore',dateStyle:'short',timeStyle:'medium',hour12:false}).format(new Date(s)):'未建立';
+ const ages={unknown:'未知','older-than-24h':'已超过24小时','within-24h':'未超过24小时（不证明连续覆盖）','read-clock-before-original-time':'读取时钟早于原时点'};
+ const labels={'saved-edition':'读取确切已保存发行版','retained-window-preview-not-saved':'已保管窗口的未保存预览','no-retained-desk':'本范围尚无已保管工作台',unavailable:'当前版本未能确认；没有回退较旧成功版'};
+ function request(name,value){const button=el('button',name);button.addEventListener('click',()=>{
+  const data={...value,save:false,submission_id:'',expected_head:''};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='news-desk-request.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  document.getElementById('navigation-notice').textContent='只导出了请求，未执行读取或保存。请在原新闻工作流用对应 operation 和 plan 显式运行；高级原操作仍需要确切代码 SHA。';});return button;}
+ root.append(el('h2','已保管新闻入口'),el('p',labels[N.display.status]||N.display.status,'banner'));
+ root.append(el('p',`评估时点 ${fmt(N.read_as_of)}；页面生成 ${fmt(N.rendered_at)}。两者都不是新捕获或新闻发布时间。`,'muted'));
+ const link=el('a','打开固定 News Desk 工作流入口');link.href='https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml';link.target='_blank';link.rel='noopener noreferrer';root.append(link);
+ const dual=el('div',undefined,'grid');
+ for(const [title,obj,field] of [['最新正常宿主保管窗口',N.latest_window,'latest_as_of'],['最后已保存发行版',N.latest_saved_edition,'latest_cutoff']]){
+  const box=el('article',undefined,'card');box.append(el('h3',title),el('p',`原时点 ${fmt(obj[field])} · 状态 ${obj.status}`));
+  box.append(el('p',`候选 ${obj.total_candidates}，已扫描 ${obj.scanned}，无效 ${obj.failures.length}；完整枚举 ${obj.complete?'是':'否'}。`,'muted'));
+  if(obj.error)box.append(el('p',obj.error,'banner'));
+  if(obj.clocks){const c=obj.clocks;box.append(el('p',`原窗口截止 ${fmt(c.window_as_of)} · ${ages[c.window_age.status]}`),el('p',`成功捕获回执 ${fmt(c.last_successful_capture_at)} · ${ages[c.capture_age.status]}`));}
+  if(obj.open_request)box.append(request('导出该确切发行版读取请求',obj.open_request));
+  const detail=el('details');detail.append(el('summary','确切引用与选择范围'),el('pre',JSON.stringify(obj,null,2)));box.append(detail);dual.append(box);
+ }root.append(dual);
+ const c=N.display.clocks;
+ if(c){root.append(el('h3','本页五种时间分别保留'),el('p',`① 成功捕获回执：${fmt(c.last_successful_capture_at)}（${c.capture_clock_basis}）· ${ages[c.capture_age.status]}`),
+  el('p',`旧版观察时钟：${fmt(c.latest_legacy_observation_at)}；没有捕获回执时不能冒称真实接收时刻。`,'muted'),
+  el('p',`② 原观察窗口：${fmt(c.window_start)} → ${fmt(c.window_as_of)} · ${ages[c.window_age.status]}`),
+  el('p',`③ 本页交付截止：${fmt(c.delivery_cutoff)} · ${ages[c.delivery_age.status]}`),
+  el('p',`④ 当前评估／渲染：${fmt(c.read_as_of)} ／ ${fmt(c.rendered_at)}`),
+  el('p','⑤ 媒体原时间声明：逐条保留原值、精度与未核状态；观察时间不是发布时间。'));
+ }
+ const h=N.history;root.append(el('h3','历史版本与完整候选范围'),el('p',`完整候选 ${h.total_candidates}；扫描 ${h.scanned_candidates}；已列出 ${h.listed_candidates}；无效 ${h.invalid_candidates}。本页 offset ${h.offset}，返回 ${h.returned}，仅本页覆盖。`),el('p',`固定 records 快照 ${h.snapshot}。历史候选尚未经全部依赖回放，列表存在不证明可读。`,'muted'));
+ for(const row of h.items){const box=el('div',undefined,'card');box.append(el('p',`${row.kind==='window'?'观察窗口':'已存发行版'} · ${fmt(row.original_time)} · ${row.status}`));
+  if(row.open_request)box.append(request('导出精确历史读取请求',row.open_request));else box.append(el('p',row.error||'候选不可读','banner'));
+  const d=el('details');d.append(el('summary','原引用'),el('pre',JSON.stringify(row.reference||row.path,null,2)));box.append(d);root.append(box);}
+ const bar=el('div',undefined,'bar');if(N.next_plan)bar.append(request('导出下一历史页请求',{operation:'latest-desk',plan:N.next_plan}));bar.append(request('导出显式刷新请求',{operation:'latest-desk',plan:N.refresh_plan}));root.append(bar);
+ root.append(el('p','历史翻页保持原快照。刷新才重新发现；没有自动打开、更新来源或保存选择。','muted'));
+ const runs=N.native_runs;
+ if(runs){root.append(el('h3','有限原生运行检查（不证明新新闻）'));
+  for(const item of runs.workflows){const r=item.latest_observed_attempt;const box=el('p',`${item.workflow}：${r?`${r.status} / ${r.conclusion||'未终结'}，启动 ${fmt(r.run_started_at)}，run ${r.id}/${r.run_attempt}`:'该有限列表未返回运行'}；检查 ${item.inspected_runs}/${item.total_runs}，${item.coverage}。`);if(r){const a=el('a',' 原生运行');a.href=r.url;a.target='_blank';a.rel='noopener noreferrer';box.append(a);}root.append(box);}
+  root.append(el('p','运行成功可能只重建旧窗口；较新的失败或未终结尝试保留，未以旧绿灯代替。此处未读取运行产物或验证保管结果。','muted'));}
+ const notice=el('p','请求导出不会自动执行。','muted');notice.id='navigation-notice';notice.setAttribute('role','status');root.append(notice);
+})();
+"""
+JS += NAVIGATION_JS
+
+
+def navigation_summary(model):
+    """The same bounded model projected into the native Actions Summary."""
+    value = model["navigation"]
+    lines = ["# News Desk · 已保管新闻", "", "读取状态：" + value["display"]["status"],
+        "", "评估时点：" + value["read_as_of"], "页面生成：" + value["rendered_at"],
+        "", "页面生成和 Actions 成功都不证明新采集；本次来源请求 0、records 写入 0。", ""]
+    for key, title, field in (("latest_window", "最新保管窗口原截止", "latest_as_of"),
+                              ("latest_saved_edition", "最后已存发行版声明截止", "latest_cutoff")):
+        part = value[key]
+        lines.append(f"- {title}：{part.get(field) or '未建立'}；{part['status']}；候选 {part['total_candidates']}，扫描 {part['scanned']}，无效 {len(part['failures'])}。")
+        if part.get("clocks"):
+            c = part["clocks"]
+            lines.append(f"  原窗口 {c['window_as_of']}（{c['window_age']['status']}）；成功捕获回执 {c['last_successful_capture_at'] or '未知'}（{c['capture_age']['status']}）。")
+    history = value["history"]
+    lines.extend(["", f"历史范围：候选 {history['total_candidates']}，已扫描 {history['scanned_candidates']}；本页 offset {history['offset']}，返回 {history['returned']}。固定 snapshot `{value['snapshot']}`，仅本页覆盖。", ""])
+    for part in value.get("native_runs", {}).get("workflows", []):
+        run = part["latest_observed_attempt"]
+        status = f"{run['status']}/{run['conclusion'] or '未终结'} · {run['run_started_at']}" if run else "有限列表没有返回运行"
+        lines.append(f"- `{part['workflow']}`：{status}；检查 {part['inspected_runs']}/{part['total_runs']}，不是完整历史。")
+    if model["edition"] is not None:
+        lines.extend(["", "## 有限新闻阅读清单", "", "只投影原工作台前12条；完整窗口、来源缺口、历史和选择在同包 news-desk.html。", ""])
+        for row in model["articles"][:12]:
+            # HTML escaping prevents stored Markdown headings/links from
+            # becoming a new instruction or a different external destination.
+            title = escape(row["title"], quote=True)
+            link = f'<a href="{escape(row["url"], quote=True)}" rel="noopener noreferrer">{title}</a>' if row["url"] else title
+            lines.append(f"<p>{link} · {escape(row['source'])} · 原最后观察 {escape(row['last_observed'])}</p>")
+        coverage = model["edition"]["window"]["coverage"]
+        lines.extend(["", f"整窗历史失败 {coverage['failed_source_windows']}；未定位时钟 {coverage['unlocated_source_windows']}。筛选和分页不改变分母。"])
+    return "\n".join(lines) + "\n"
 
 
 def render_page(model):
@@ -100,7 +183,7 @@ def render_page(model):
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>{title}</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0 / NEWS DESK</p><h1>新闻工作台</h1><p id="window"></p><p id="cutoff"></p></header>
-<main><div class="banner" id="health-note"></div><div class="stats"><div class="stat"><strong id="n-all"></strong>可读观察版本</div><div class="stat"><strong id="n-brief"></strong>本期简报采用</div><div class="stat"><strong id="n-fail"></strong>历史失败窗口（非来源数）</div></div>
+<main><section class="panel" id="navigation" hidden></section><div id="desk-content"><div class="banner" id="health-note"></div><div class="stats"><div class="stat"><strong id="n-all"></strong>可读观察版本</div><div class="stat"><strong id="n-brief"></strong>本期简报采用</div><div class="stat"><strong id="n-fail"></strong>历史失败窗口（非来源数）</div></div>
 <section class="panel"><h2>阅读与显式选择</h2><div class="filters">
 <label>标题搜索<input id="query" type="search" placeholder="搜索已保管的标题"></label><label>来源<select id="source"><option value="">全部来源</option></select></label>
 <label>选择状态<select id="status"><option value="">全部状态</option><option value="reset">未选择</option><option value="focus">继续关注</option><option value="defer">暂缓</option><option value="dismiss">移出</option></select></label>
@@ -111,7 +194,7 @@ def render_page(model):
 <p id="empty" class="banner" hidden>当前筛选没有匹配条目。整窗来源缺口仍在；这不是“市场没有新闻”。</p><section class="grid" id="cards" aria-label="新闻条目"></section>
 <section class="panel"><div class="bar"><h2 id="brief-title"></h2><button id="download-brief">导出原简报正文</button></div><p class="muted" id="saved"></p><pre id="brief-body"></pre></section>
 <section class="panel"><details><summary>整窗来源健康与历史失败（不随筛选改变）</summary><pre id="health"></pre></details><details><summary>窗口、简报和比较基线的精确引用</summary><pre id="provenance"></pre></details></section>
-<noscript><p class="banner">此离线阅读页需要 JavaScript。可直接阅读同包 news-brief.md；没有自动发送或后台任务。</p></noscript>
+</div><noscript><p class="banner">此离线阅读页需要 JavaScript。可直接阅读同包 news-summary.md 或 news-brief.md；没有自动发送或后台任务。</p></noscript>
 <footer>来源观察 ≠ 已验证事实 ≠ 研究结论 ≠ 人工决定。该文件是冻结阅读入口，不是已部署的全天候网站。</footer></main>
 <script id="data" type="application/json">{payload}</script><script>{JS}</script></body></html>'''
     require(len(html.encode()) <= 8 * 1024 * 1024, "NEWS_DESK_PAGE_BOUND")

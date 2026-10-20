@@ -87,19 +87,26 @@ def _exact(value, repository):
 
 
 def _source(state):
+    limitations = LIMITATIONS
+    if state["schema"] == "daily-market-cycle-v2":
+        limitations = LIMITATIONS[:2] + ("EXPLICIT_ONE_ADDITIONAL_CALENDAR_REQUEST_ORIGINAL_FAILURE_PRESERVED",) + LIMITATIONS[3:]
     return SourceInput(source_id=PREFIX + state["date"] + "-r" + str(state["revision"]).zfill(3),
         kind="content", title="每日行情日历与原集合接续 / " + state["date"],
         origin="https://github.com/auguspp/Decision-OS-2", custody="provided",
-        text=encoded(state).decode(), limitations=LIMITATIONS)
+        text=encoded(state).decode(), limitations=limitations)
 
 
 def validate_cycle(value):
     fields = {"schema", "date", "revision", "created_at", "updated_at", "predecessor",
         "policy_sha256", "base_market_reference", "calendar_start", "calendar_end",
         "calendars", "price_end", "market_generation", "market_reference", "status", "reason_code"}
-    require(isinstance(value, dict) and set(value) == fields and value["schema"] == SCHEMA
+    from decision_kernel.application.daily_calendar_repair import CYCLE_SCHEMA, proof
+    repaired = isinstance(value, dict) and value.get("schema") == CYCLE_SCHEMA
+    repair = proof(value.get("calendar_repair")) if repaired else None
+    require(isinstance(value, dict) and set(value) == fields | ({"calendar_repair"} if repaired else set())
+        and value["schema"] == (CYCLE_SCHEMA if repaired else SCHEMA)
         and isinstance(value["date"], str) and re.fullmatch(r"[0-9]{8}", value["date"])
-        and type(value["revision"]) is int and 0 <= value["revision"] <= 6
+        and type(value["revision"]) is int and (3 if repaired else 0) <= value["revision"] <= (8 if repaired else 6)
         and value["calendar_end"] == value["date"]
         and value["market_generation"] == "daily-" + value["date"]
         and isinstance(value["policy_sha256"], str)
@@ -110,11 +117,12 @@ def validate_cycle(value):
         "DAILY_MARKET_CYCLE_CLOCK")
     calendars = value["calendars"]
     require(isinstance(calendars, dict) and set(calendars) == set(VENUES), "DAILY_MARKET_CALENDARS")
-    for row in calendars.values():
+    for venue, row in calendars.items():
         require(isinstance(row, dict) and set(row) == {"status", "reserved_requests", "reference", "reason_code"}
             and row["status"] in {"pending", "in-flight", "complete", "failed"}
             and type(row["reserved_requests"]) is int
-            and row["reserved_requests"] == int(row["status"] != "pending")
+            and row["reserved_requests"] == (2 if repaired and venue == repair["venue"] else int(row["status"] != "pending"))
+            and not (repaired and venue == repair["venue"] and row["status"] == "pending")
             and (row["reference"] is not None) == (row["status"] == "complete")
             and (row["reason_code"] is not None) == (row["status"] == "failed"), "DAILY_MARKET_CALENDAR_STATE")
         if row["reference"] is not None:
@@ -141,6 +149,10 @@ def validate_cycle(value):
 
 
 def _transition(previous, current):
+    if previous["status"] == "blocked" and "calendar_repair" not in previous and "calendar_repair" in current:
+        from decision_kernel.application.daily_calendar_repair import transition
+        transition(previous, current)
+        return
     require(previous["status"] not in SUCCESS | {"blocked"}
         and current["revision"] == previous["revision"] + 1,
         "DAILY_MARKET_TERMINAL_OR_REVISION")
@@ -229,7 +241,7 @@ def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_sy
             "DAILY_MARKET_STALE_CONTROL")
         if before is not None and before["cycle"]["date"] == state["date"]:
             _transition(before["cycle"], state)
-            if any(before["cycle"]["calendars"][venue]["status"] == "pending"
+            if any(before["cycle"]["calendars"][venue]["status"] in {"pending", "failed"}
                     and state["calendars"][venue]["status"] == "in-flight" for venue in VENUES):
                 # The authority for one new calendar request and its durable
                 # reservation must use the same snapshot and original CAS.

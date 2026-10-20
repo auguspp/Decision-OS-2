@@ -24,7 +24,7 @@ STORE_ID = "decision-os-runtime"
 SCOPES = frozenset({"market", "sources", "research", "reading", "brief", "watch",
                     "backup", "handoff", "decision-preparation"})
 _NATIVE_OPERATIONS = {
-    "daily-market.yml": frozenset({"status", "update", "recover-late"}),
+    "daily-market.yml": frozenset({"status", "update", "recover-late", "repair-calendar"}),
     "ashare-data.yml": frozenset({"status", "sync", "ftshare-status", "ftshare-sync"}),
 }
 
@@ -142,12 +142,27 @@ def checked_handoff_visibility(backend, *, watch_required=False):
     return visibility
 
 
+def checked_odds_book_visibility(backend):
+    """Release the stored Book only under each original component's scope.
+
+    Price/source/market qualifications are retained declarations, but exporting
+    them still requires their scopes. This grants no new acquisition or replay.
+    Keep the caller's native adapter and its one-way private-upgrade latch.
+    """
+    scopes = ("reading", "research", "sources", "watch", "market")
+    visibility = backend.live_visibility()
+    require(visibility == "private" or visibility == "public" and all(
+        publication_basis(getattr(backend, "binding", None), scope) is not None
+        for scope in scopes), "ODDS_BOOK_PUBLICATION_NOT_CONFIRMED")
+    return visibility
+
+
 def publication_scope(operation):
     if operation in {"put-source", "reconcile-source", "read-source"}:
         return "sources"
     if operation == "agenda" or isinstance(operation, str) and "watch" in operation:
         return "watch"
-    if operation in {"reading-room", "industry-read"}:
+    if operation in {"reading-room", "industry-read", "read-odds-book"}:
         return "reading"
     if operation in {"save-hosted-handoff", "reconcile-hosted-handoff", "read-hosted-handoff", "latest-hosted-handoff"}:
         return "handoff"

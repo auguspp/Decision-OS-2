@@ -29,7 +29,7 @@ from decision_kernel.domain.records import (
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.infrastructure.runtime_publication import (
-    checked_handoff_visibility, checked_output_visibility,
+    checked_handoff_visibility, checked_odds_book_visibility, checked_output_visibility,
     publication_basis, publication_payload, publication_scope,
 )
 from decision_kernel.methods.research import research_method
@@ -217,6 +217,10 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         decision_preparation_commands.preflight(command["operation"], command["payload"])
     room_public = True
     hosted_watch_publication = False
+    if command["operation"] == odds_commands.BOOK_OPERATION:
+        if backend is None:
+            backend = _CommandStore(binding, api, command)
+        checked_odds_book_visibility(backend)
     if command["operation"] in hosted_handoff.OPERATIONS:
         if backend is None:
             backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
@@ -270,7 +274,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         # Private room reads have no write to reconcile. Defer their exact references
         # until the final native visibility check, just like the body and HTML.
         private_preparation_read = operation in PRIVATE_PREPARATION_OPERATIONS and operation not in WRITE_OPERATIONS
-        if room_public and not private_preparation_read:
+        if room_public and not private_preparation_read and operation != odds_commands.BOOK_OPERATION:
             (output / "inputs.json").write_bytes(encoded(inputs))
         persist()
         if backend is None:
@@ -312,6 +316,11 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         if authority is not None:
             # Revocation cannot turn into a successful public body/attachment.
             checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")
+        if operation == odds_commands.BOOK_OPERATION:
+            # This composite read has no write to reconcile. Its exact query
+            # references are released only with the final checked Book, after
+            # every dependency and the original native scope have completed.
+            report["repository_visibility"] = checked_odds_book_visibility(backend)
         report.update(result=result, status="completed")
         if operation == industry_commands.OPERATION and result["status"] == "partial":
             report["status"] = "industry-reading-partial"  # Keep good branches, but exit nonzero.
@@ -334,6 +343,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             report["write"] = "reconciled-without-write"
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
         persist()  # A verified store receipt and a retained report are distinct facts.
+        if operation == odds_commands.BOOK_OPERATION:
+            (output / "inputs.json").write_bytes(encoded(inputs))
         return report
     except (RecordError, OSError, TypeError, KeyError) as error:
         uncertain = isinstance(error, UnknownWrite) or (

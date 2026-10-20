@@ -103,7 +103,7 @@ jobs:
         timeout-minutes: 10
         with:
           profile: dev
-      - name: Execute native pytest-split with two workers
+      - name: Execute native pytest-split with up to four workers
         timeout-minutes: 6
         env:
           CI_GROUP: ${{ matrix.group }}

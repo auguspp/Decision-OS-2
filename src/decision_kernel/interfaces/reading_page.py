@@ -96,9 +96,12 @@ from decision_kernel.interfaces.reading_market_page import CSS as MARKET_CSS, JS
 from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
 from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_CSS, JS as DISCOVERY_JS
 from decision_kernel.interfaces.reading_watch_page import JS as WATCH_JS
+from decision_kernel.interfaces.reading_participant_page import CSS as PARTICIPANT_CSS, JS as PARTICIPANT_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
+CSS += PARTICIPANT_CSS
 JS += MATERIALS_JS + REVIEW_JS + INDUSTRY_JS + MARKET_JS + OVERVIEW_JS + DISCOVERY_JS + WATCH_JS
+JS += PARTICIPANT_JS
 
 
 def render_page(model):
@@ -111,6 +114,8 @@ def render_page(model):
         return base64.b64encode(hashlib.sha256(text.encode()).digest()).decode()
     policy = ("default-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'; "
               "script-src 'sha256-" + sha(JS) + "'; style-src 'sha256-" + sha(CSS) + "'")
+    participant_panel = ('<section class="panel" id="participants"><h2>参与者、公司与跨期观察</h2>'
+                         '<div id="participants-content"></div></section>') if "participants" in model else ""
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
@@ -126,6 +131,7 @@ def render_page(model):
 <section class="panel" id="market"><h2>A 股市场、原价与复权</h2><div id="market-content"></div></section>
 <section class="panel" id="discovery"><h2>行业、概念与独立个股状态发现</h2><div id="discovery-content"></div></section>
 <section class="panel" id="industry"><h2>产业观察与公司经营角色</h2><div id="industry-content"></div></section>
+{participant_panel}
 <section class="panel" id="materials"><h2>原附件、来源表示与前版导航</h2><div id="materials-content"></div></section>
 <section class="panel" id="review"><h2>原问题复核与修订段落采用</h2><div id="review-content"></div></section>
 <section class="panel" id="agenda"><h2>研究议程与待复核条件</h2><div id="agenda-content"></div></section>

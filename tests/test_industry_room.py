@@ -29,6 +29,8 @@ def store(tmp_path):
 
 
 def plan(ref, view='industry', **query):
+    if view == 'industry-goods':
+        query = {'evaluation_at': CLOCK, **query}
     return {'as_of': CLOCK, 'catalogue': {'limit': 1},
             'industry': {'reference': asdict(ref), 'view': view, **query}}
 
@@ -39,6 +41,9 @@ def public(value, **extra):
 
 
 def root_for(store, view):
+    if view == 'industry-goods':
+        from test_industry_goods import prepare as goods_data
+        return goods_data(store)[0]
     if view == 'industry':
         return prepare(store)[0]
     if view == 'operating-cycle':
@@ -87,7 +92,7 @@ def test_server_query_does_not_change_scope_or_infer_company_links(store, select
         assert all(r['applicability_at_cutoff'] == 'historical' for r in part['relations'])
 
 
-@pytest.mark.parametrize('view', ['industry', 'industry-uses', 'livestock-weekly'])
+@pytest.mark.parametrize('view', ['industry', 'industry-uses', 'livestock-weekly', 'industry-goods'])
 @pytest.mark.parametrize('flag', [None, False, 'true', 1])
 def test_native_permission_is_independent_before_any_output_or_store(host, tmp_path, flag, view):
     writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
@@ -246,7 +251,7 @@ def exercise_installed_industry_room(outside, python, env, store):
     """Extend the one existing wheel installation, preserving all previous consumers."""
     fixture_store = VersionedStore(GitStore(Path(store)))
     executable = Path(python).parent / 'decision-os'
-    for view in ('industry', 'livestock-weekly', 'industry-uses'):
+    for view in ('industry', 'livestock-weekly', 'industry-uses', 'industry-goods'):
         ref = root_for(fixture_store, view)
         head = fixture_store.backend.head()
         source = outside / (view + '-room-plan.json')
@@ -265,6 +270,10 @@ def exercise_installed_industry_room(outside, python, env, store):
             assert len(result['relations']) == 2 and result['relations'][0]['net_benefit'] is None
         elif view == 'livestock-weekly':
             assert result['scope']['price_points'] == 9 and not result['relations']
-        else:
+        elif view == 'industry-uses':
             assert len(result['uses']) == 6 and result['scope']['source_blocked_uses'] == 1
             assert result['uses'][3]['series'] == [] and result['uses'][0]['relations'][0]['net_benefit'] is None
+        else:
+            assert result['scope']['distinct_qualified_goods'] == result['scope']['fresh_goods'] == 1
+            assert result['scope']['global_fresh_goods'] is None
+            assert result['quantity_milestone']['status'] == 'not-established'

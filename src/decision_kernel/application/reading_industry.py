@@ -7,16 +7,18 @@ from decision_kernel.application.industry_reading import read_industry
 from decision_kernel.application.vehicle_flows import read_vehicle_flows
 from decision_kernel.application.livestock_weekly import read_livestock_weekly
 from decision_kernel.application.industry_uses import read_industry_uses
+from decision_kernel.application.industry_goods import read_industry_goods
+from decision_kernel.application.industry_reading import _clock
 from decision_kernel.domain.records import Selection, SourceRef, encoded, identifier, require
 
-VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses")
+VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses", "industry-goods")
 MAX_INDUSTRY_BYTES = 2 * 1024 * 1024
 
 
 def industry_plan(value):
     """An exact retained packet and one optional query, not a URL or acquisition plan."""
     require(isinstance(value, dict) and {"reference", "view"} <= set(value)
-            <= {"reference", "view", "subject_id", "company_id"}, "ROOM_INDUSTRY_PLAN")
+            <= {"reference", "view", "subject_id", "company_id", "evaluation_at"}, "ROOM_INDUSTRY_PLAN")
     require(isinstance(value["view"], str) and value["view"] in VIEWS, "ROOM_INDUSTRY_VIEW")
     ref = SourceRef.from_dict(value["reference"])
     require(ref.selection == Selection(), "INDUSTRY_WHOLE_PACKET_REQUIRED")
@@ -27,8 +29,14 @@ def industry_plan(value):
             identifier(selector)
     require(value["view"] != "operating-cycle" or company is None,
             "OPERATING_COMPANY_QUERY_USE_ORIGINAL_INDUSTRY_READER")
-    return {"reference": asdict(ref), "view": value["view"],
-            "subject_id": subject, "company_id": company}
+    result = {"reference": asdict(ref), "view": value["view"],
+              "subject_id": subject, "company_id": company}
+    if value["view"] == "industry-goods":
+        _clock(value.get("evaluation_at"))
+        result["evaluation_at"] = value["evaluation_at"]
+    else:
+        require("evaluation_at" not in value, "ROOM_INDUSTRY_EVALUATION_VIEW")
+    return result
 
 
 def open_industry(store, value):
@@ -36,7 +44,9 @@ def open_industry(store, value):
     plan = industry_plan(value)
     ref = SourceRef.from_dict(plan["reference"])
     query = {key: plan[key] for key in ("subject_id", "company_id")}
-    if plan["view"] == "industry-uses":
+    if plan["view"] == "industry-goods":
+        result = read_industry_goods(ref, store, evaluation_at=plan["evaluation_at"], **query)
+    elif plan["view"] == "industry-uses":
         result = read_industry_uses(ref, store, **query)
     elif plan["view"] == "livestock-weekly":
         result = read_livestock_weekly(ref, store, **query)

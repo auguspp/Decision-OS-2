@@ -18,6 +18,10 @@ SourceRef。它不采集、不保存、不刷新来源，不执行研究或通�
 畜禽、鸡蛋和配合饲料的采集日价格及公布同比/环比核对，见
 [畜禽饲料周价](livestock-weekly.md)，不把采集日值当周均价或把公布基数当独立观察。
 
+原包上的有限商品身份归并、两期资格及明确评估时刻的四组集合，见
+[商品资格读取](industry-goods.md)。候选、系列与统计总体不能作为独立商品相加；
+有限批次始终保留全市场数量未知，不据此宣称 500 目标完成。
+
 ## 使用入口
 
 先通过既有 `put-source` 保存获准资料，再保存引用这些资料的阅读包；不新增写入通道。
@@ -45,7 +49,9 @@ python -m decision_kernel.interfaces.industry_cli --binding config/store-binding
 {"reference": "替换为实际完整 SourceRef 对象", "view": "vehicle-flows", "company_id": "company-example", "public_sources_custody_confirmed": true}
 ```
 
-`view` 必须显式选 `industry`、`operating-cycle`、`vehicle-flows` 或 `livestock-weekly`。
+`view` 必须显式选 `industry`、`operating-cycle`、`vehicle-flows`、`livestock-weekly`、
+`industry-uses` 或 `industry-goods`。具名用途沿同一阅读室合同；商品资格视图另须
+`evaluation_at`，带时区且不早于该原包截止，其他视图不接受该字段。
 `subject_id/company_id` 可都省略，但不可同时非空；经营周期不支持公司过滤，
 应改用原 `industry` 或 `vehicle-flows`，不能把宏观总量映射成个股暴露。
 完整原根、行/段引用、期间、限制、比较拒绝和整包分母均由原读取器返回，

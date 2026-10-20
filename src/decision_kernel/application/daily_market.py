@@ -14,7 +14,7 @@ import re
 
 from decision_kernel.application.ftshare_collection import (
     SINGLE_PLAN_SCHEMA, _single_write_frontier, latest_ftshare_reference,
-    restore_ftshare_collection,
+    resolve_ftshare_expansion_frontier, restore_ftshare_collection,
 )
 from decision_kernel.application.market_custody import (
     authorize_market_custody, fresh_market_reader, market_read_scope,
@@ -164,7 +164,18 @@ def _transition(previous, current):
             "DAILY_MARKET_PHASE_TRANSITION")
 
 
-def latest_cycle(store):
+def _market_bridge(base_reference, through_reference, registry, store, protected_symbols):
+    if base_reference == through_reference:
+        return
+    require(registry is not None, "DAILY_MARKET_FRONTIER_PROOF_REQUIRED")
+    frontier = resolve_ftshare_expansion_frontier(base_reference, registry, store,
+        protected_symbols=protected_symbols, through_reference=through_reference)
+    require(frontier["reason_code"] is None,
+        frontier["reason_code"] or "DAILY_MARKET_BASE_REQUIRES_REVIEW")
+    require(frontier["reference"] == through_reference, "DAILY_MARKET_HISTORY_MARKET_EDGE")
+
+
+def latest_cycle(store, *, registry=None, protected_symbols=()):
     """Replay the small immutable controls; duplicate ordinals never pick a winner."""
     with market_read_scope(store) as reader:
         head = reader.backend.head()
@@ -195,31 +206,50 @@ def latest_cycle(store):
             if previous is None or previous["cycle"]["date"] != current["date"]:
                 require(current["revision"] == 0 and current["status"] == "calendar-pending"
                     and all(row["status"] == "pending" for row in current["calendars"].values())
-                    and (previous is None or previous["cycle"]["status"] in SUCCESS
-                         and previous["cycle"]["market_reference"] == current["base_market_reference"]),
+                    and (previous is None or previous["cycle"]["status"] in SUCCESS),
                     "DAILY_MARKET_PRIOR_CYCLE_NOT_COMPLETE")
+                if previous is not None:
+                    # History proves only this recorded bridge. Later children
+                    # of its endpoint cannot invalidate an already saved cycle.
+                    _market_bridge(previous["cycle"]["market_reference"], current["base_market_reference"],
+                        registry, reader, protected_symbols)
             else:
                 _transition(previous["cycle"], current)
             previous = item
         return previous
 
 
-def retain_cycle(state, store, *, fresh_reader, previous):
+def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_symbols=()):
     authorize_market_custody(store, custody_authorized=True, public_rights_confirmed=False)
     state = validate_cycle(state)
-    before = latest_cycle(fresh_market_reader(store, fresh_reader))
-    require(before == previous and state["predecessor"] == (None if before is None else before["reference"]),
-        "DAILY_MARKET_STALE_CONTROL")
-    if before is not None and before["cycle"]["date"] == state["date"]:
-        _transition(before["cycle"], state)
-    else:
-        require(state["revision"] == 0 and (before is None or before["cycle"]["status"] in SUCCESS
-            and before["cycle"]["date"] < state["date"]
-            and before["cycle"]["market_reference"] == state["base_market_reference"]),
-            "DAILY_MARKET_PRIOR_CYCLE_NOT_COMPLETE")
+    with market_read_scope(fresh_market_reader(store, fresh_reader)) as reader:
+        snapshot = reader.backend.head()
+        before = latest_cycle(reader, registry=registry, protected_symbols=protected_symbols)
+        require(before == previous and state["predecessor"] == (None if before is None else before["reference"]),
+            "DAILY_MARKET_STALE_CONTROL")
+        if before is not None and before["cycle"]["date"] == state["date"]:
+            _transition(before["cycle"], state)
+            if any(before["cycle"]["calendars"][venue]["status"] == "pending"
+                    and state["calendars"][venue]["status"] == "in-flight" for venue in VENUES):
+                # The authority for one new calendar request and its durable
+                # reservation must use the same snapshot and original CAS.
+                check_cycle_frontier(state, registry, reader, protected_symbols=protected_symbols)
+        else:
+            require(state["revision"] == 0 and (before is None or before["cycle"]["status"] in SUCCESS
+                and before["cycle"]["date"] < state["date"]), "DAILY_MARKET_PRIOR_CYCLE_NOT_COMPLETE")
+            anchor = state["base_market_reference"] if before is None else before["cycle"]["market_reference"]
+            # A valid historical bridge is insufficient here: a competing
+            # addition may have arrived after initial_cycle chose its base.
+            frontier = resolve_ftshare_expansion_frontier(anchor, registry, reader,
+                protected_symbols=protected_symbols)
+            require(frontier["reason_code"] is None,
+                frontier["reason_code"] or "DAILY_MARKET_BASE_REQUIRES_REVIEW")
+            require(frontier["reference"] == state["base_market_reference"], "DAILY_MARKET_STALE_FRONTIER")
     source = _source(state)
-    reference = store.put_source("daily-market-" + digest(encoded(asdict(source)))[:32], source)
-    restored = latest_cycle(fresh_market_reader(store, fresh_reader))
+    reference = store.put_source("daily-market-" + digest(encoded(asdict(source)))[:32], source,
+        expected_head=snapshot)
+    restored = latest_cycle(fresh_market_reader(store, fresh_reader), registry=registry,
+        protected_symbols=protected_symbols)
     expected = {"reference": json.loads(encoded(asdict(reference))), "cycle": state}
     require(restored == expected, "DAILY_MARKET_READBACK_CHANGED")
     return restored
@@ -273,14 +303,18 @@ def initial_cycle(approved, store, registry, *, at, admission_at=None, allow_lat
 
 
 def _initial_cycle(approved, store, registry, *, at, stamp):
-    previous = latest_cycle(store)
+    previous = latest_cycle(store, registry=registry, protected_symbols=approved["symbols"])
     if previous is not None:
         require(previous["cycle"]["policy_sha256"] == policy_digest(approved), "DAILY_MARKET_POLICY_CHANGED")
         require(previous["cycle"]["date"] <= stamp.strftime("%Y%m%d"), "DAILY_MARKET_CLOCK_ROLLBACK")
         if previous["cycle"]["date"] == stamp.strftime("%Y%m%d") or previous["cycle"]["status"] not in SUCCESS:
             return {"existing": previous, "candidate": None}
-    base_ref = approved["seed_reference"] if previous is None else previous["cycle"]["market_reference"]
-    base = restore_ftshare_collection(base_ref, registry, store)
+    anchor = approved["seed_reference"] if previous is None else previous["cycle"]["market_reference"]
+    frontier = resolve_ftshare_expansion_frontier(anchor, registry, store,
+        protected_symbols=approved["symbols"])
+    require(frontier["reason_code"] is None,
+        frontier["reason_code"] if frontier["successor_references"] else "DAILY_MARKET_BASE_REQUIRES_REVIEW")
+    base_ref, base = frontier["reference"], frontier["restored"]
     require(base["collection"]["plan"]["schema"] == SINGLE_PLAN_SCHEMA
         and base["collection"]["source_hold"] is None
         and all(row["status"] == "complete" for row in base["collection"]["units"].values()),
@@ -345,7 +379,7 @@ def _completed_session(cycle, registry, store):
 def price_configuration(cycle, approved, registry, store):
     require(cycle["status"] == "market-pending" and cycle["policy_sha256"] == policy_digest(approved),
         "DAILY_MARKET_PRICE_PHASE")
-    base = restore_ftshare_collection(cycle["base_market_reference"], registry, store)
+    base = check_cycle_frontier(cycle, registry, store, protected_symbols=approved["symbols"])
     proof = base["collection"]["plan"]["adoption"]["proof"]
     return {"schema": "ftshare-daily-runtime-v1", "collection_id": base["collection"]["plan"]["collection_id"],
         "generation": cycle["market_generation"],
@@ -358,6 +392,29 @@ def price_configuration(cycle, approved, registry, store):
                 for kind in ("none", "forward")], "source_budget": approved["max_price_requests"]}}
 
 
+def check_cycle_frontier(cycle, registry, store, *, protected_symbols=()):
+    """Keep an existing cycle fixed; only its own FT generation may resume."""
+    with market_read_scope(store) as reader:
+        base = restore_ftshare_collection(cycle["base_market_reference"], registry, reader)
+        _single_write_frontier(base, registry, reader, generation=cycle["market_generation"])
+        newest = latest_ftshare_reference(reader, registry,
+            collection_id=base["collection"]["plan"]["collection_id"], generation=cycle["market_generation"])
+        anchor = newest or cycle["base_market_reference"]
+        frontier = resolve_ftshare_expansion_frontier(anchor, registry, reader,
+            protected_symbols=protected_symbols)
+        require(frontier["reference"] == anchor and not frontier["successor_references"],
+            "DAILY_MARKET_PENDING_FRONTIER_CHANGED")
+        if newest is None:
+            require(frontier["reason_code"] is None,
+                frontier["reason_code"] or "DAILY_MARKET_BASE_REQUIRES_REVIEW")
+        else:
+            require(frontier["restored"]["collection"]["plan"]["base_reference"] == cycle["base_market_reference"],
+                "DAILY_MARKET_HISTORY_MARKET_EDGE")
+            # The existing FT owner decides pending, held, failed and unknown
+            # reservations. This check neither resumes nor resets those units.
+        return base
+
+
 def daily_market_reference(store, registry, approved):
     """Resolve latest attempted prices, retaining failure status for human readers."""
     approved = policy(approved)
@@ -366,13 +423,26 @@ def daily_market_reference(store, registry, approved):
 
 
 def _daily_market_reference(store, registry, approved):
-    item = latest_cycle(store)
-    if item is None:
-        return {"reference": deepcopy(approved["seed_reference"]), "cycle": None, "cycle_reference": None}
-    cycle = item["cycle"]
-    require(cycle["policy_sha256"] == policy_digest(approved), "DAILY_MARKET_POLICY_CHANGED")
-    base = restore_ftshare_collection(cycle["base_market_reference"], registry, store)
-    newest = latest_ftshare_reference(store, registry,
-        collection_id=base["collection"]["plan"]["collection_id"], generation=cycle["market_generation"])
-    reference = newest or cycle["market_reference"] or cycle["base_market_reference"]
-    return {"reference": deepcopy(reference), "cycle": deepcopy(cycle), "cycle_reference": item["reference"]}
+    item = latest_cycle(store, registry=registry, protected_symbols=approved["symbols"])
+    cycle = None if item is None else item["cycle"]
+    anchor = approved["seed_reference"]
+    if cycle is not None:
+        require(cycle["policy_sha256"] == policy_digest(approved), "DAILY_MARKET_POLICY_CHANGED")
+        base = restore_ftshare_collection(cycle["base_market_reference"], registry, store)
+        newest = latest_ftshare_reference(store, registry,
+            collection_id=base["collection"]["plan"]["collection_id"], generation=cycle["market_generation"])
+        if newest is not None:
+            owned = restore_ftshare_collection(newest, registry, store)
+            require(owned["collection"]["plan"]["base_reference"] == cycle["base_market_reference"],
+                "DAILY_MARKET_HISTORY_MARKET_EDGE")
+        anchor = newest or cycle["market_reference"] or cycle["base_market_reference"]
+    frontier = resolve_ftshare_expansion_frontier(anchor, registry, store,
+        protected_symbols=approved["symbols"])
+    reason, blocking = frontier["reason_code"], frontier["blocking_reference"]
+    if cycle is not None and cycle["status"] not in SUCCESS and frontier["successor_references"]:
+        reason = reason or "DAILY_MARKET_PENDING_FRONTIER_CHANGED"
+        blocking = blocking or frontier["successor_references"][0]
+    return {"reference": deepcopy(frontier["reference"]), "cycle": deepcopy(cycle),
+        "cycle_reference": None if item is None else item["reference"],
+        "frontier_reason_code": reason, "frontier_blocking_reference": deepcopy(blocking),
+        "frontier_successor_references": deepcopy(frontier["successor_references"])}

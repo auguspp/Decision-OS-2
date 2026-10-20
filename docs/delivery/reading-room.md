@@ -26,6 +26,26 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 原竞价名单的给定分钟原件使用可选 `auction_minute`，见[09:40 分钟观察](opening-auction-minute.md)。确切 seed、完整五组/BJ/未知和未尝试成员先恢复再分页；只接唯一 09:39–09:40 点，保留原取得时钟，跨来源收益不计算。沿原来源确认、整次终态与 2 MiB 展示上限；不增加分钟采集或实际来源额度。
 
+## Research Book
+
+原研究区以 `Research Book` 导航进入，仍使用正常 `reading-room` 操作和原 `plan`，不新增宿主参数、运行操作或保存对象。`application/research_book.py` 直接消费 `ReadingRoom._research` 已读到的研究字典，调用原 `domain.research_work.read_workpaper` 校验工作底稿；不再次读取修订或来源，也不遍历完整历史。`interfaces/reading_research_book_page.py` 仅投影原模型。
+
+本页展示原委托、问题、Quick/Full、确切版本、作者 findings、挑战、重要性声明、未完成项的 `remaining_kind` / `next_action`、`stop` / `stop_reason`、限制及 `source_changes`。问题、findings 和挑战分别沿原作者顺序，不按强弱或优先级重排。停止声明和作者结论不是独立 Review、人工接受或正式 Decision；未记录挑战不表示不存在反证。标准公司标识、研究事实截止和“最强反证”排序在原 schema 中未建立，模型返回明确空值，页面标为未建立，不从 case_id、保存时间或阅读时点推断。
+
+旧正文没有规范工作底稿时保留完整原文、原未决项和引用，并明确结构化字段未建立；有工作底稿标记但校验失败时只将 Book 结构化部分标为 invalid，原研究正文仍按原读取结果展示。`stored_at` 仅表示该版保存时钟。原 `as_of` 仍是复核评估时点，Book 不据此声称研究在该时点已经存在、获得事前保管证明或形成事实截止。
+
+Book 继承 Catalogue 的真实 `total_cases`、`snapshot`、`offset`、返回数、剩余数与下一页 cursor。失败卡片保留；额外确切版本单列，不计入当前目录案例分母。本页搜索和类型筛选不覆盖未读页。新导出的材料、前驱和 Review 计划固定本次原 Catalogue 快照与位置，不因重新打开而混入后来追加的案例；指定 Brief 的引用也保持固定。
+
+来源按钮导出原裸 SourceRef 的 `read-source` 请求，材料按钮导出原 `materials` 计划；引用可读状态仅使用本页已读的来源状态，不重试来源正文或升级资格。具名 Brief 按原 `read-desk` 请求重开，采用关系只适用于该确切 Brief，不声称完整采用历史。原研究读取、原正文下载和原议程入口继续保留。所有按钮只导出请求或在已读页面内导航，明确尚未执行；实际调用仍由原宿主核代码、来源及公开权利。
+
+逐题 Review 仅在本页已经打开同案例的直接前驱和当前版、两版工作底稿均有效时提供。用户可选前驱原问题及两版原文行段；预填各版首个合规非空行，只是可操作的字面起点，不判断段落重要性或语义对应。导出采用原 `review` 合同和 80 行边界，原宿主再核确切前驱、原文、8192 字节行段及材料权限。缺任一原件时保留前驱请求，不自动追读历史或伪造比较结果。
+
+Book 不重复放入研究完整正文，不占原 1MiB 单正文与 2MiB 正文总预算；其投影另受原 768KiB 面板边界限制，按完整卡片保留或标为 `not-included`。原模型先通过 6MiB 校验，再尝试增加 Book，并调用原页面的纯渲染器核实际转义后完整 HTML 的 8MiB 容量；不另估算转义膨胀或提高边界。Book 导致 JSON 或 HTML 空间不足时只保留相应省略标记。若连标记也无法容纳，原模型保持原样，页面明确 Book 未包含，原文和确切读取通路仍保留。最终报告 JSON 与 HTML 内嵌数据采用同一模型，渲染器不修改模型或截断正文；已有原页本身超过 HTML 边界时仍按原规则拒绝。Book 的局部缺口单独显示，不改写原研究/来源读取状态。容量准入只有纯渲染，没有额外读取，随后仍执行原最终权限复核。
+
+有限合成验证覆盖正常/旧正文/坏工作底稿/缺源、前后版精确关系、固定分页分母、评估钟不冒充 PIT、局部容量省略及无额外读取；原主 CLI 和原生 public/private 宿主消费者覆盖完整 HTML/JSON、CSP 与 Node 实际按钮请求重入。转义密集的两版原正文可正常呈现而 Book 会超过 8MiB 的反例，沿原生宿主验证只省略 Book、原正文/引用/目录分母不变，最终 JSON 与 HTML 完整一致。撤权、private 反转及最终原生 403 继续阻断结果和私有输入释放。唯一既有 wheel consumer 读取原已保存的合成混合研究验证 Book，不增加第二次安装或 cold gate。上述工程验证不证明实际公开资料使用、浏览器/移动端体验或用户接受。
+
+稳定入口当前仍是现役 Actions / store CLI 生成的同一离线阅读室；完全免填宿主参数、长期在线 Book、真实研究消费及浏览器体验仍须各自实际验收。Odds Book 属于原 #60 领域，本组不修改 Research/Odds schema、当前指针、来源保管或写入权限。退役 Book 时移除纯投影与页面调用，原 Reader、Catalogue、正文和准确引用继续可用。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。

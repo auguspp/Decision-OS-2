@@ -12,7 +12,10 @@ import binascii
 from dataclasses import asdict
 from datetime import date
 from decimal import Decimal, localcontext
+import gzip
+import json
 import re
+import zlib
 
 from decision_kernel.domain.records import (
     RecordError, SourceInput, checked_text, digest, encoded, identifier, require,
@@ -68,6 +71,9 @@ HOST_PAYLOAD_BYTES = 60 * 1024
 CAPTURE_PART_BYTES = 36 * 1024
 MAX_CAPTURE_BYTES = 2 * 1024 * 1024
 CAPTURE_PART_SCHEMA = "participant-registered-capture-part-v1"
+GZIP_PART_SCHEMA = "participant-observation-page-gzip-part-v1"
+GZIP_PART_BYTES = 36 * 1024
+MAX_GZIP_BYTES = 2 * 1024 * 1024
 MAX_PARTS = 64
 ESTIMATE_FIELDS = {"op_rt": "ten-thousand-yuan", "op_pr": "ten-thousand-yuan",
                    "tp": "ten-thousand-yuan", "np": "ten-thousand-yuan", "eps": "yuan-per-share"}
@@ -171,8 +177,44 @@ def page_sources(value, *, source_id, origin, title):
     return tuple(output)
 
 
+def gzip_page_sources(value, *, source_id, origin, title):
+    """Bounded gzip custody of the entire canonical structured page.
+
+    Compression preserves every row and the original physical-page controls.
+    It does not retain HTTP bytes or create another source request. The existing
+    page_sources producer continues to emit its original uncompressed format.
+    """
+    page = page_input(value)
+    identifier(source_id)
+    require(len(source_id) <= 85, "PARTICIPANT_SOURCE_ID_TOO_LONG")
+    raw = encoded(page)
+    require(len(raw) <= MAX_PAGE_BYTES, "PARTICIPANT_PAGE_BOUND")
+    packed = gzip.compress(raw, mtime=0)
+    require(1 <= len(packed) <= MAX_GZIP_BYTES, "PARTICIPANT_GZIP_BYTES_BOUND")
+    chunks = [packed[start:start + GZIP_PART_BYTES] for start in range(0, len(packed), GZIP_PART_BYTES)]
+    require(len(chunks) <= MAX_PARTS, "PARTICIPANT_PART_BOUND")
+    identity = {"page_sha256": digest(raw), "page_byte_size": len(raw),
+                "gzip_sha256": digest(packed), "gzip_byte_size": len(packed)}
+    sources = []
+    for index, chunk in enumerate(chunks):
+        body = {"schema": GZIP_PART_SCHEMA, **identity, "part_index": index,
+                "part_count": len(chunks), "byte_start": index * GZIP_PART_BYTES,
+                "data": base64.b64encode(chunk).decode("ascii")}
+        source = SourceInput(f"{source_id}-part{index}", "content", title, origin, encoded(body).decode(),
+            custody="excerpt", acquired_at=page["captured_at"], limitations=(
+                "STRUCTURED_REPRESENTATION_NOT_ORIGINAL_HTTP_BYTES", page["coverage"],
+                "CUSTODY_PART_NOT_NEW_PHYSICAL_PAGE_OR_ADDITIONAL_SOURCE_REQUEST",
+                "SOURCE_LABELS_NOT_AUTHENTICATED_PERSONS_OR_COMPLETE_POSITIONS",
+                "NO_PUBLICATION_RIGHTS_PIT_OR_RESEARCH_CERTIFICATION"))
+        require(len(encoded(asdict(source))) <= HOST_PAYLOAD_BYTES, "PARTICIPANT_HOST_PAYLOAD_BOUND")
+        sources.append(source)
+    return tuple(sources)
+
+
 def join_page(parts):
     require(isinstance(parts, list) and 1 <= len(parts) <= MAX_PARTS, "PARTICIPANT_PART_BOUND")
+    if isinstance(parts[0], dict) and parts[0].get("schema") == GZIP_PART_SCHEMA:
+        return _join_gzip_page(parts)
     rows, first = [], None
     for index, item in enumerate(parts):
         require(isinstance(item, dict) and set(item) == {"schema", "page", "page_sha256", "part_index",
@@ -191,6 +233,59 @@ def join_page(parts):
     page = page_input({**first["page"], "rows": rows})
     require(digest(encoded(page)) == first["page_sha256"], "PARTICIPANT_PAGE_DIGEST")
     return page
+
+
+def _join_gzip_page(parts):
+    chunks, offset, first = [], 0, None
+    identity = ("page_sha256", "page_byte_size", "gzip_sha256", "gzip_byte_size")
+    for index, part in enumerate(parts):
+        require(isinstance(part, dict) and set(part) == {"schema", *identity, "part_index",
+                "part_count", "byte_start", "data"} and part["schema"] == GZIP_PART_SCHEMA,
+                "PARTICIPANT_GZIP_PART_SHAPE")
+        require(type(part["part_index"]) is int and part["part_index"] == index
+                and type(part["part_count"]) is int and part["part_count"] == len(parts)
+                and type(part["byte_start"]) is int and part["byte_start"] == offset,
+                "PARTICIPANT_GZIP_PART_SEQUENCE")
+        require(type(part["page_byte_size"]) is int and 1 <= part["page_byte_size"] <= MAX_PAGE_BYTES
+                and type(part["gzip_byte_size"]) is int and 1 <= part["gzip_byte_size"] <= MAX_GZIP_BYTES
+                and all(isinstance(part[key], str) and re.fullmatch(r"[a-f0-9]{64}", part[key])
+                        for key in ("page_sha256", "gzip_sha256")), "PARTICIPANT_GZIP_IDENTITY")
+        if first is None:
+            first = part
+        require(all(part[key] == first[key] for key in identity), "PARTICIPANT_GZIP_IDENTITY")
+        require(isinstance(part["data"], str) and len(part["data"]) <= 4 * ((GZIP_PART_BYTES + 2) // 3),
+                "PARTICIPANT_GZIP_PART_BOUND")
+        try:
+            chunk = base64.b64decode(part["data"], validate=True)
+        except (ValueError, binascii.Error):
+            raise RecordError("PARTICIPANT_GZIP_BASE64") from None
+        require(base64.b64encode(chunk).decode("ascii") == part["data"]
+                and 1 <= len(chunk) <= GZIP_PART_BYTES, "PARTICIPANT_GZIP_BASE64")
+        chunks.append(chunk)
+        offset += len(chunk)
+        require(offset <= first["gzip_byte_size"], "PARTICIPANT_GZIP_BYTES_BOUND")
+    packed = b"".join(chunks)
+    require(len(packed) == first["gzip_byte_size"] and digest(packed) == first["gzip_sha256"],
+            "PARTICIPANT_GZIP_DIGEST")
+    try:
+        decoder = zlib.decompressobj(31)
+        raw = decoder.decompress(packed, first["page_byte_size"] + 1)
+    except zlib.error:
+        raise RecordError("PARTICIPANT_GZIP_ENCODING") from None
+    require(len(raw) <= first["page_byte_size"] and decoder.eof and not decoder.unused_data
+            and not decoder.unconsumed_tail, "PARTICIPANT_GZIP_DECOMPRESSION_BOUND")
+    require(len(raw) == first["page_byte_size"] and digest(raw) == first["page_sha256"],
+            "PARTICIPANT_PAGE_DIGEST")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+        canonical = encoded(value)
+    except (ValueError, UnicodeError, RecursionError):
+        raise RecordError("PARTICIPANT_GZIP_JSON") from None
+    require(canonical == raw, "PARTICIPANT_GZIP_JSON")
+    try:
+        return page_input(value)
+    except (KeyError, TypeError, RecursionError):
+        raise RecordError("PARTICIPANT_PAGE_SHAPE") from None
 
 
 

@@ -22,6 +22,8 @@
 
 历史ftshare-check/continue/kernel、calendar one-shot、adopt及原repair不因这项授权重开；曾经成功的来源和研究不重跑。相依实际新日、源可用、读取新鲜度和经济质量仍各自验收。
 
+正常FTShare集合的初始根、预留和结算同样接入原 `sources` 部署授权：实时可见性为Public时，仍须有原custody委托和匹配repository_id、records、store_id、anchor的有效固定授权。仅调用者传入public_rights_confirmed不能替代该条件；缺失、撤销、无sources范围或目标不匹配均拒绝。历史 `adopt_ftshare_kernel` 的private门保留。此接线不改集合前沿、CAS、未知写、来源预算或已保管失败；已完成日历而价格尚未预留的原周期可从正常pending阶段接续。
+
 ## 原生验证与密钥边界
 
 公开CI继续使用合成输入和原完整测试策略，无供应商Secret。日更元数据预检核原仓库ID/全名、main、真实run/attempt/代码/事件及前后可见性，只返回授权路由；Public不能被填成Private。缺授权时status回原诊断、更新明确blocked；原生信息错误不会放行来源。

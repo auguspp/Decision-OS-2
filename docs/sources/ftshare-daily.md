@@ -163,6 +163,8 @@
 
 ### 范围、保管与不可重置的账
 
+正常 `ftshare-sync` 的Public保管沿[#164固定部署授权](../engineering/public-runtime.md)，包括集合初始根、预留、原文与结算。集合控制写入要求原custody委托、原生真实Public可见性和精确数据绑定的有效 `sources` 授权；调用者公开确认字段不能单独放行任意公开目标。缺失或撤销授权仍拒绝，历史check/continuation/adoption的原资格及终态不变。
+
 范围继承原生主表的 5,226 项声明；5,224 项可请求，2 项主表隔离继续留在完整缺失分母。原批量计划每批 50 股，分别一次 `none` 与一次整段 `forward`，对应 210 个价格槽；当前 v1 计划只采用显式有限目标，不将该批量列表展开成逐股全回填。不得以删除隔离项、覆盖旧来源身份或拼接不同 forward 请求来增加覆盖。
 
 原 Source10 的 220 槽、原始终态、维修 grant 与预算随明确前驱保留。FTShare 使用独立 SourceInput 和集合身份，在相同 repository / records / store_id / anchor 上保管，不建立第二套数据仓。每槽先保管 `inflight` 与一次不可退回的预留；再执行至多一次 FTShare 请求。成功正文按原始字节独立读回，随后才保管完成根；错误保留 failed 及稳定原因。未知写按原键对账，未核清的 inflight 禁止重发。

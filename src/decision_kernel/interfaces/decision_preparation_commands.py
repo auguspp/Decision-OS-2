@@ -13,6 +13,20 @@ RECONCILES = ("reconcile-decision-preparation",)
 COMMANDS = READS + WRITES
 
 
+class _DefaultRegistryLoader:
+    """Pin the entry-point path; retain the real catalogue once Odds needs it."""
+
+    def __init__(self):
+        self.path = Path("docs/sources/relay-registry.json").resolve()
+        self.registry = None
+
+    def __call__(self):
+        if self.registry is None:
+            from decision_kernel.application.relay_registry import RelayRegistry
+            self.registry = RelayRegistry(self.path)
+        return self.registry
+
+
 def configure(actions):
     for name in COMMANDS:
         parser = actions.add_parser(name, help="evidence-bound AI preparation; no formal Decision or execution")
@@ -34,15 +48,14 @@ def preflight(operation, payload):
         moment(payload["at"])
 
 
-def perform(store, operation, payload, submission_id="", registry=None):
+def perform(store, operation, payload, submission_id="", registry=None, *, registry_loader=None):
     binding = getattr(store.backend, "binding", None)
     if publication_basis(binding, "decision-preparation") is not None and store.backend.live_visibility() == "public":
         payload = publication_payload(operation, payload, binding)
     preflight(operation, payload)
-    if registry is None:
-        from decision_kernel.application.relay_registry import RelayRegistry
-        registry = RelayRegistry(Path("docs/sources/relay-registry.json"))
-    service = DecisionPreparation(store, registry)
+    if registry is None and registry_loader is None:
+        registry_loader = _DefaultRegistryLoader()
+    service = DecisionPreparation(store, registry, registry_loader=registry_loader)
     if operation in WRITES + RECONCILES:
         return service.save(payload, submission_id=submission_id)
     if operation == "prepare-decision":
@@ -53,9 +66,15 @@ def perform(store, operation, payload, submission_id="", registry=None):
 def execute(args, store, load, reader_factory):
     from decision_kernel.application.relay_registry import RelayRegistry
     registry_path = getattr(args, "registry", None)
-    registry = RelayRegistry(registry_path if registry_path is not None else Path("docs/sources/relay-registry.json"))
-    result = perform(store, args.store_command, load(args.input), getattr(args, "submission_id", ""), registry)
-    return verify_fresh(result, reader_factory, registry) if args.store_command in WRITES else result
+    registry = RelayRegistry(registry_path) if registry_path is not None else None
+    loader = _DefaultRegistryLoader() if registry is None else None
+    result = perform(store, args.store_command, load(args.input), getattr(args, "submission_id", ""),
+                     registry, registry_loader=loader)
+    if args.store_command in WRITES:
+        # Use the actual catalogue already required by this document/history.
+        # Null-only histories need none, including in the independent reader.
+        return verify_fresh(result, reader_factory, registry if registry is not None else loader.registry)
+    return result
 
 
 def private_reader(binding, api):

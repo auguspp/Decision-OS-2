@@ -61,9 +61,10 @@ def _changes(before, after):
 
 
 class DecisionPreparation:
-    def __init__(self, store, registry=None, *, clock=None):
+    def __init__(self, store, registry=None, *, clock=None, registry_loader=None):
         self.store = store
         self.registry = registry
+        self.registry_loader = registry_loader
         self.artifacts = ResearchArtifacts(store)
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._reset()
@@ -144,9 +145,13 @@ class DecisionPreparation:
         selection = value["analysis_context"]
         key = encoded(selection)
         if key not in self._analysis_cache:
+            odds = selection["odds"]
+            # Every retained history version is rebuilt here. A later null
+            # context cannot remove an earlier Odds reader's trust requirement.
+            if odds is not None and self.registry is None and self.registry_loader is not None:
+                self.registry = self.registry_loader()
             conditional = ConditionalOdds(self.store, self.registry, clock=self.clock)
             frozen, result, assessment, spec_ref = None, None, None, selection["valuation_ref"]
-            odds = selection["odds"]
             if odds is not None:
                 reader = conditional if odds["kind"] == "conditional" else ProbabilityOdds(
                     self.store, self.registry, clock=self.clock)

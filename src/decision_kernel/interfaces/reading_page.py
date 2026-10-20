@@ -49,9 +49,10 @@ function show(c){
  if(r&&r.status==='readable'){
   actions.append(button('下载原研究正文',()=>save('research.md',r.body,'text/markdown')));
   pane.append(el('p',`本版保存于 ${r.stored_at}`,'muted'));
-  if(r.predecessor)actions.append(button('导出前驱版本阅读计划',()=>request('reading-room-predecessor.json',roomRequest({...D.plan,reference:r.predecessor}))));
+  if(r.predecessor)actions.append(button('导出前驱版本阅读计划',()=>request('reading-room-predecessor.json',roomRequest(researchBookPlan({reference:r.predecessor})))));
  }
  pane.append(actions,details('引用、原未决项与本页来源范围',{reference:ref,body_sha256:r?.body_sha256,recorded_unresolved:c.recorded_unresolved,continuation:c.continuation,source_page:c.source_page,brief_relation:r?r.brief_relation:null}));
+ renderResearchBook(pane,c);
  if(r&&r.status==='readable')pane.append(readingDocument(r.body));
  else pane.append(el('p',`正文未展示：${r?r.error:c.error||c.status}。未截断或重写原件，使用上面的确切读取请求。`));
 }
@@ -105,6 +106,7 @@ from decision_kernel.interfaces.reading_calendar_page import CSS as CALENDAR_CSS
 from decision_kernel.interfaces.reading_decision_page import CSS as DECISION_CSS, JS as DECISION_JS
 from decision_kernel.interfaces.reading_outcome_page import CSS as OUTCOME_CSS, JS as OUTCOME_JS
 from decision_kernel.interfaces.reading_structure_page import CSS as STRUCTURE_CSS, JS as STRUCTURE_JS
+from decision_kernel.interfaces.reading_research_book_page import CSS as BOOK_CSS, JS as BOOK_JS
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
 CSS += PARTICIPANT_CSS
@@ -126,6 +128,8 @@ CSS += MINUTE_CSS
 JS += MINUTE_JS
 CSS += AUCTION_NEXT_CSS
 JS += AUCTION_NEXT_JS
+CSS += BOOK_CSS
+JS += BOOK_JS
 
 
 def render_page(model):
@@ -166,11 +170,11 @@ def render_page(model):
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{CSS}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">研究目录与原文</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">Research Book · 研究</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
 <section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
-<div class="workspace" id="research"><aside class="panel"><h2>本页研究</h2><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
+<div class="workspace" id="research"><aside class="panel"><h2>Research Book</h2><p class="muted">本页原研究、作者问题与后续核验；沿原目录分母。</p><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>
 <p id="count" aria-live="polite"></p><div id="cases"></div><div class="actions"><button id="next">导出下一页请求</button><button id="refresh">导出刷新目录请求</button></div></aside>
 <section class="panel" id="research-detail" aria-label="研究原文"></section></div>

@@ -155,13 +155,15 @@ class ReadingRoom:
         return discover_latest(self.store, snapshot=snapshot, as_of=as_of)
 
     def _research(self, reference):
+        from decision_kernel.application.research_book import project_research
         research = self.store.read_revision(BlobRef(**reference))
         require(research["reference"] == reference, "ROOM_RESEARCH_REFERENCE_MISMATCH")
         payload = research["record"]["input"]
         body = research["body"]
         return {"case_id": payload["case_id"], "revision_id": payload["revision_id"],
                 "kind": payload["kind"], "body": body, "body_sha256": digest(body.encode("utf-8")),
-                "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"]}
+                "stored_at": research["record"]["stored_at"], "predecessor": payload["predecessor"],
+                "book_projection": project_research(research, max_bytes=MAX_PANEL_BYTES)}
 
     def build(self, value, *, feedback_export=True, material_export=True, industry_export=True, market_export=True,
               watch_export=True, participant_export=True, decision_export=True, outcome_export=True):
@@ -224,7 +226,7 @@ class ReadingRoom:
                 if not watch_export and export_required(doc.get("research") or {}):
                     brief = {"reference": plan["brief"], "status": "sources-permission-required",
                              "error": "ROOM_PUBLIC_WATCH_EVIDENCE_NOT_CONFIRMED"}
-        readings, used = [], 0
+        readings, projections, used = [], [], 0
         for ref in refs:
             row = {"reference": deepcopy(ref),
                    "origin": "catalogue-page" if any(c.get("reference") == ref for c in catalogue["items"])
@@ -232,12 +234,15 @@ class ReadingRoom:
                    "open_request": {"operation": "resume", "payload": {"reference": deepcopy(ref)}}}
             try:
                 detail = self._research(ref)
+                projection = detail.pop("book_projection", None)
                 size = len(encoded(detail))
                 if len(detail["body"].encode("utf-8")) > MAX_BODY_BYTES or used + size > MAX_BODIES_BYTES:
                     row.update(status="not-included", error="ROOM_BODY_BOUND_USE_EXACT_READER")
                 else:
                     row.update(status="readable", **detail)
                     used += size
+                    if projection is not None:
+                        projections.append(projection)
             except (RecordError, KeyError, TypeError) as error:
                 row.update(_failure(error))
             row["brief_relation"] = brief_relation(ref, brief)
@@ -428,6 +433,13 @@ class ReadingRoom:
             result["structure"] = structure
             partial = partial or structure["status"] != "readable" or structure.get("partial", False)
         result["status"] = "partial" if partial else "readable"
+        # Validate the original view first. Book has no I/O and a separate
+        # display budget; its duplicate structured fields cannot evict bodies.
+        require(len(encoded(result)) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
+        from decision_kernel.application.research_book import attach_book
+        from decision_kernel.interfaces.reading_page import render_page
+        attach_book(result, projections, max_panel_bytes=MAX_PANEL_BYTES,
+                    max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
         # Final mutable access check after every component and before any export.

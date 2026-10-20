@@ -6,10 +6,10 @@ on:
     inputs:
       operation:
         type: choice
-        options: [status, update]
+        options: [status, update, recover-late]
         default: status
         required: true
-        description: 'Read current status or advance one retained daily six-stock cycle'
+        description: 'Read status, update after close, or recover the latest elapsed weekday 18:35 slot within 24 hours; existing cycle holds and budgets apply'
       code_sha:
         type: string
         required: true
@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   daily:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'update'))
+    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:

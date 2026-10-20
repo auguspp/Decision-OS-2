@@ -133,17 +133,19 @@ def settings(event, env, approved):
     if event_name == "schedule":
         require(event.get("schedule") == approved["schedule_utc"] and not event.get("inputs"),
             "DAILY_MARKET_SCHEDULE_CHANGED")
-        operation, sha = "update", env.get("GITHUB_SHA")
+        operation, invocation, sha = "update", "schedule", env.get("GITHUB_SHA")
     else:
         inputs = event.get("inputs")
         require(isinstance(inputs, dict) and set(inputs) == {"operation", "code_sha"}
-            and inputs.get("operation") in {"status", "update"}, "DAILY_MARKET_INPUT")
-        operation, sha = inputs["operation"], inputs["code_sha"]
+            and inputs.get("operation") in {"status", "update", "recover-late"}, "DAILY_MARKET_INPUT")
+        invocation, sha = inputs["operation"], inputs["code_sha"]
+        operation = "update" if invocation == "recover-late" else invocation
     require(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha)
         and sha == env.get("GITHUB_SHA"), "DAILY_MARKET_CODE_SHA")
     run_id = env.get("GITHUB_RUN_ID")
     require(isinstance(run_id, str) and re.fullmatch(r"[1-9][0-9]{0,14}", run_id), "DAILY_MARKET_RUN_ID")
-    return {"operation": operation, "code_sha": sha, "run_id": int(run_id), "run_attempt": 1,
+    return {"operation": operation, "invocation": invocation,
+        "code_sha": sha, "run_id": int(run_id), "run_attempt": 1,
         "event": event_name}
 
 
@@ -215,10 +217,11 @@ def _reason(exc, env=None):
 def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               guard=None, calendar_client_factory=None, price_client_factory=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
-              sleep=time.sleep, execute_prices=run_collection, admission_at=None):
+              sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
+    require(type(allow_late) is bool, "DAILY_MARKET_ADMISSION_MODE")
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda api: None)
     report = {"schema": "daily-market-runtime-v1", "operation": operation, "status": "started",
@@ -226,7 +229,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         "price_source_requests": 0, "calendar_source_budget": 2,
         "price_source_budget": approved["max_price_requests"], "stock_count": len(approved["symbols"]),
         "schedule_enabled": approved["enabled"], "scheduled_time": "18:35 Asia/Shanghai Monday-Friday",
-        "started_at": clock(), "private_locations_in_receipt": False, "supplier_rows_in_receipt": False,
+        "started_at": clock(), "admission": None,
+        "private_locations_in_receipt": False, "supplier_rows_in_receipt": False,
         "research_executed": False, "notification_sent": False, "long_term_uptime_certified": False}
     item = None
     control = {"schema": "daily-market-reading-control-v1", "market_reference": None,
@@ -262,8 +266,10 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             report["status"] = "read" if approved["enabled"] else "paused"
         else:
             prepared = initial_cycle(approved, fresh_market_reader(store, fresh), registry,
-                at=admission_at or clock())
+                at=clock(), admission_at=admission_at, allow_late=allow_late)
             item = prepared["existing"]
+            report["admission"] = prepared["admission"]
+            update()
             if prepared["candidate"] is not None:
                 save(prepared["candidate"], store, fresh)
             cycle = item["cycle"]
@@ -366,7 +372,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     report["status"] = item["cycle"]["status"]
     except Exception as exc:
         reason = _reason(exc)
-        report.update(status="not-due" if reason == "DAILY_MARKET_BEFORE_CLOSE" else
+        report.update(status="not-due" if reason in {
+            "DAILY_MARKET_BEFORE_CLOSE", "DAILY_MARKET_NO_RECENT_SCHEDULE"} else
             "persistence-unconfirmed" if isinstance(exc, UnknownWrite) else "blocked", reason_code=reason)
     # Latest attempts remain visible; a failed update does not silently become
     # an older green snapshot. The normal reader keeps all 5,226 denominator gaps.
@@ -405,8 +412,9 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
     api = GitHubAPI(env[TOKEN_ENV]) if api is None else api
     proof = native_ready(api, selected)
     now = datetime.now(timezone.utc)
-    # Use the native run's date when admitting today's intent. A delayed run
-    # cannot silently turn yesterday's invocation into a new day's budget.
+    # Freeze admission to the native invocation clock, even if a queue or a
+    # safe quota wait later crosses midnight. Only schedule/recover-late may
+    # select the latest elapsed weekday slot; source timestamps stay real.
     created = _stamp(proof["native_run_created_at"])
     require(0 <= (now - created).total_seconds() < 24 * 3600, "DAILY_MARKET_NATIVE_CLOCK")
     out.mkdir(parents=False, exist_ok=False)
@@ -417,7 +425,8 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         open_unit=open_unit or remote_units(env[TOKEN_ENV], selected), operation=selected["operation"],
         guard=lambda current: check_private(current, selected), progress=progress,
         calendar_client_factory=lambda: RelayHTTP(credential=env.get(SECRET_ENV, ""), request_timeout_seconds=90),
-        admission_at=created.isoformat())
+        admission_at=created.isoformat(),
+        allow_late=selected["invocation"] in {"schedule", "recover-late"})
     check_private(api, selected)
     progress(executed["receipt"], executed["control"])
     print(json.dumps({**executed["receipt"], **selected}, ensure_ascii=False))

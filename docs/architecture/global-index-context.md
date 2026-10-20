@@ -141,6 +141,11 @@ credential access, auto-custody, notification or deployment is added.
 
 ## Ordinary market reading and exact retained recovery
 
+The normal [Reading Room global-context consumer](../delivery/reading-global.md)
+opens this exact retained family through `global_context.us_indices`. It keeps
+the original full model, denominator and US source dates beside a separate
+navigation page. The A-share `market` plan retains its original family guard.
+
 The US reader also uses the existing `read_market_payload` route. Its input
 schema is `relay-us-index-reading-v1`, with the same `calendar_result`,
 `index_results`, `declared_indices`, `start`, `end` and optional `horizons` fields.

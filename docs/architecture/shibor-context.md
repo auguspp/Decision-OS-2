@@ -85,6 +85,11 @@ filter does not change full counts, spreads or the content version.
 
 ## Existing consumers and custody
 
+The normal [Reading Room global-context consumer](../delivery/reading-global.md)
+opens this exact retained family through `global_context.shibor`. It preserves
+the full eight-tenor model, source dates, rate units and explicit comparisons;
+its navigation does not alter the original qualification or content version.
+
 ```sh
 python -m decision_kernel.interfaces.market_relay_cli \
   --input /approved/shibor-reading.json \

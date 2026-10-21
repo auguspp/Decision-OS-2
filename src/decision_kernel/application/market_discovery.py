@@ -626,7 +626,10 @@ class MarketDiscovery:
         """Save through the existing artifact journal, then a fresh source replay."""
         result = self.build(plan)
         visibility = authorize_market_custody(self.store, custody_authorized=True)
-        require(visibility in ("private", "synthetic"), "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
+        from decision_kernel.infrastructure.runtime_publication import publication_basis
+        require(visibility in ("private", "synthetic") or visibility == "public" and
+            publication_basis(getattr(self.store.backend, "binding", None), "market") is not None,
+            "DISCOVERY_PRIVATE_CUSTODY_REQUIRED")
         artifact = ArtifactInput.from_bytes(artifact_id(result), "market-discovery.json",
                                            "application/json", encoded(result))
         ref = ResearchArtifacts(self.store).put(submission_id, artifact,

@@ -170,8 +170,9 @@ Artifact reference for read. Build/read have read-only native permissions;
 save is an explicit authorized operation through the original Artifact journal.
 The runtime launches the source-free market_discovery_cli with the trusted
 binding and registry, never provider credentials or source-supplied code.
-Both jobs check the native private repository before releasing their exact
-inputs/results. A failed or interrupted child retains an unknown/partial
+Both jobs check native visibility and, when public, the existing market
+publication authority before releasing their exact inputs/results.
+A failed or interrupted child retains an unknown/partial
 receipt instead of claiming that no write happened.
 
 The same custody workflow can retain a complete THS input without trimming its
@@ -190,12 +191,17 @@ python -m decision_kernel.interfaces.market_discovery_cli read \
 ~~~
 
 An explicit save additionally uses the run owner's write-enabled binding,
-submission identifier and `--custody-authorized` private custody confirmation.
+submission identifier and `--custody-authorized` custody confirmation.
 The manual host forwards its independent `custody_authorized` input without
 setting `public_rights_confirmed`; the latter retains its actual public-rights
-meaning. Private retention does not confer public redistribution rights, and the
-discovery writer continues to require the native private target. Source input is always an
-exact SourceRef; the command cannot accept arbitrary caller prices or states.
+meaning. Private retention does not confer public redistribution rights.
+On an actual public target, saving requires the existing fixed deployment
+authorization for both sources and market on the same repository ID, records
+branch, store ID and anchor. Missing, disabled or incomplete grants reject the
+write; a caller's public-rights flag cannot substitute for this deployment grant.
+Native private custody and synthetic fixtures retain their existing behavior.
+The native backend's private-to-public reversal guard remains in force.
+Source input is always an exact SourceRef; the command cannot accept arbitrary caller prices or states.
 Normal room plans accept discovery.reference or discovery.build, exactly one,
 and an optional kind, entity_id, offset and limit (1 to 50). Filtering changes
 the displayed rows only. All three full source scopes, unknown counts and
@@ -205,7 +211,8 @@ its sources; a build preview is labelled not-written and has no saved reference.
 The existing daily-market workflow remains the sole daily source writer.
 After its source runtime, daily_discovery_cli reads that same native run's
 canonical result.json and control.json with only the existing job token. It
-verifies current private visibility, native main identity and the successful
+verifies current native visibility and, when public, publication authority,
+main identity and the successful
 main CI before work, immediately before a new state write, and before release.
 The original records anchor and permissions remain unchanged.
 
@@ -281,6 +288,10 @@ exits, left censoring, missing windows, corrections and contract changes.
 Application tests use original synthetic-qualified custody and FT adoption,
 the real Artifact journal, a temporary Git restore, rehashed tampering,
 original source loss, capacity and the actual GitHubAPI/GitMarketReader shape.
+Native public save tests retain the fixed sources/market grant, original event
+replay and shared API budget; missing or revoked grants and a private-to-public
+reversal must stop before an Artifact write. The public daily path keeps the
+same inventory-head precondition and native guard at the original CAS boundary.
 Daily tests drive the existing FT daily Host through successful and failed
 cycles, preserve all master quarantines, carry exact THS dates, reject forks and
 stale CAS, check native identity/privacy and exercise the normal saved reader.

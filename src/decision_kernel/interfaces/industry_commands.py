@@ -5,11 +5,12 @@ from decision_kernel.application.vehicle_flows import read_vehicle_flows
 from decision_kernel.application.livestock_weekly import read_livestock_weekly
 from decision_kernel.application.industry_uses import read_industry_uses
 from decision_kernel.application.industry_goods import read_industry_goods
+from decision_kernel.application.industry_goods_coverage import read_industry_goods_coverage
 from decision_kernel.application.industry_reading import _clock
 from decision_kernel.domain.records import Selection, SourceRef, identifier, require
 
 OPERATION = "industry-read"
-VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses", "industry-goods")
+VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses", "industry-goods", "industry-goods-coverage")
 
 
 def checked_payload(payload):
@@ -28,8 +29,10 @@ def checked_payload(payload):
             identifier(value)
     require(payload["view"] != "operating-cycle" or company is None,
             "OPERATING_COMPANY_QUERY_USE_ORIGINAL_INDUSTRY_READER")
+    require(payload["view"] != "industry-goods-coverage" or company is None,
+            "INDUSTRY_COVERAGE_COMPANY_QUERY_USE_BATCH")
     query = {"subject_id": subject, "company_id": company}
-    if payload["view"] == "industry-goods":
+    if payload["view"] in ("industry-goods", "industry-goods-coverage"):
         _clock(payload.get("evaluation_at"))
         query["evaluation_at"] = payload["evaluation_at"]
     else:
@@ -45,6 +48,8 @@ def preflight(operation, payload):
 def perform(store, payload):
     """Return the original consumer result unchanged, after every scope exit check."""
     reference, view, query = checked_payload(payload)
+    if view == "industry-goods-coverage":
+        return read_industry_goods_coverage(reference, store, **query)
     if view == "industry-goods":
         return read_industry_goods(reference, store, **query)
     if view == "industry-uses":

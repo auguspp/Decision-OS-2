@@ -72,6 +72,26 @@ Odds 下一页、原研究过滤与 Research Book 精确版本入口都保留实
 
 专属有限验证使用合成 Git 与原主 CLI/native host、完整 HTML/JavaScript 请求重入、固定快照/缺项/容量/权限反例。原唯一安装消费者仅扩 `exercise_installed_room`，消费同一安装先前 Odds helper 已保存的合成原件，不另建 cold 门。真实多公司消费、稳定在线托管、浏览器/窄屏采用和经济实质验收仍须各自原生证据。退出此面板时移除它的适配、页面接线、宿主 opt-in 与专属消费者，保留原 Odds Book、Research Book、Catalogue 和原精确读取操作。
 
+### 同快照跨公司总览
+
+可选 `plan.odds_book_view` 在同一正常 Room 中组合最多四个实际连续原页；它与 `plan.odds_book` 互斥，缺省或 null 均不读取。`query` 仍为原五字段查询，`page_limit` 默认 1、范围 1–4；不接受调用者提供的 pages、合并结果或读取回执。
+
+```json
+{"plan":{"as_of":"2026-10-21T01:00:00Z","odds_book_view":{"query":{"limit":4,"scan_limit":16},"page_limit":4}}}
+```
+
+`application/odds_book_overview.py` 逐次调用原 `read_book`，后页只采用上页真实 `next_cursor`；每页必须具有同一 repository、snapshot、候选总数和连续扫描范围。总览保留完整原页，不重新计算价格、概率、当前价值或 Watch 状态。跨公司与精确研究版本关系仅来自本次已读行，同一规格下多份原结果并列展示。`scan.unread_prefix` 与 `scan.unread_tail` 分别保留未读前段和尾段，`counts` 保留实际扫描、过滤、可读、失败和省略项；只有从首位扫到末端且没有失败或省略，才可给出完整读取结论。任一后页出现操作级失败，整份 Room 沿原终态失败，不能只交先前成功页。
+
+主表直接显示原研究归属、规格/结果类型、保存状态与复核缺口，以及每份原结果的 `price.kind`、`price.note`、`price.as_of`、`calculation_input.evaluated_at` 和 `market_qualification`。条件 Odds 和概率 Odds 各依原资格呈现。筛选仅作用于本次可读行；失败/省略项和扫描分母仍在。边界筛选联合匹配同一原边界的 metric、world、direction 和 distance，距离保留原单位与方向，不新增“接近”阈值或排序分数。
+
+总览可显式选择至多一个 `detail: {operation, payload: {reference}}`。选择必须与本次实际可读行的 `open_operation/open_payload` 完全相等；不在本次范围的引用显示 `ROOM_ODDS_BOOK_DETAIL_NOT_IN_VIEW`，不会派发。匹配后调用原精确 reader，沿原语义核验和原预算，未选择时不隐式重演所有结果。页面可展开已读详情、回到本页精确研究，或导出原研究/来源/Watch/议程/指定 Brief 请求；导出本身不是已执行回执。
+
+适配 `application/reading_odds_book_overview.py` 复用同一个 backend、component scope 和 API512；原五项公开范围、fail-closed、最终权限与输出释放门不变。翻页保持原 Catalogue 位置和本次 snapshot，只推进 Odds 原 cursor，并清除详情选择。明确刷新同时释放两个目录的 cursor/snapshot，保留原限额、精确过滤和显式详情引用，不把新读取时点当作原件更新。
+
+整份额外总览（含已读详情）受同一 768KiB 面板限额、6MiB 模型及实际转义后 8MiB HTML 约束。装不下则整项省略，保留原研究正文、实际扫描摘要、精确单页请求及下一次正常读取请求；连摘要也装不下时，沿原 Room 保留基础模型，并在页面给出可选总览未包含的入口。原单页查询、CLI schema 和页面继续可用。
+
+有限验证覆盖连续页与精确版本、多结果、未读首尾、失败/省略分母、正常 native 宿主的同 API 与输出延迟、后页/详情预算终态、最后撤权及实际页面 JavaScript 请求重入。唯一既有 cold wheel 消费同一合成 store，通过正常 `research-room` 独立进程读取总览和一个原结果。上述证明工程读取与交互合同；真实多公司记录、稳定在线入口、真实浏览器宽屏/窄屏体验及用户接受仍各自验收。退出总览时同时移除专属投影、适配、页面和测试接点，保留原单页 Book 与原精确 readers。
+
 ## 正常调用
 
 原 `.github/workflows/research-runtime.yml` 仅增加一个只读选项 `reading-room`。仍为手动 `main`、刚核过的 `code_sha` 和适用CI；`submission_id`、`expected_head` 留空，write job 不匹配。

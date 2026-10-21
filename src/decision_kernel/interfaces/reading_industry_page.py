@@ -2,6 +2,7 @@
 
 CSS = r"""
 .industry-scroll{max-width:100%;overflow:auto}.industry-table{width:100%;border-collapse:collapse;font-size:14px}.industry-table th,.industry-table td{padding:8px;border-bottom:1px solid #dce4e8;text-align:left;vertical-align:top;overflow-wrap:anywhere}.industry-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.industry-scope{font-size:14px}.industry-series{border-top:1px solid #dce4e8;padding-top:12px;margin-top:16px}@media(max-width:720px){.industry-controls{grid-template-columns:1fr}.industry-table{min-width:520px}}
+.industry-table button{min-width:10em}
 .industry-use{border:1px solid #dce4e8;border-radius:10px;padding:16px;margin-top:20px}.industry-use-blocked{border-left:5px solid #a66b14}.industry-use-missing{background:#fff8e9;padding:12px;border-radius:6px}
 """
 

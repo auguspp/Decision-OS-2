@@ -167,6 +167,7 @@ def render_page(model):
                          '<div id="participants-content"></div></section>') if "participants" in model else ""
     calendar_panel = ('<section class="panel" id="event-calendar"><h2>事件日期与研究接续</h2>'
                       '<div id="event-calendar-content"></div></section>') if "event_calendar" in model else ""
+    calendar_nav = '<a href="#event-calendar">事件日历</a>' if "event_calendar" in model else ""
     decision_panel = ('<section class="panel" id="decision-preparation"><h2>决策准备与多期限复核</h2>'
                       '<div id="decision-preparation-content"></div></section>') if "decision_preparation" in model else ""
     outcome_nav = '<a href="#outcome">原预测兑现</a>' if "outcome" in model else ""
@@ -194,7 +195,7 @@ def render_page(model):
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{css}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a>{ai_brief_nav}<a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">Research Book · 研究</a><a href="#odds-book">Odds Book</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a>{ai_brief_nav}<a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">Research Book · 研究</a><a href="#odds-book">Odds Book</a><a href="#agenda">待复核问题</a>{calendar_nav}<a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
 {ai_brief_panel}

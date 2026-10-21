@@ -296,6 +296,8 @@ def exercise_installed_odds_book(command, outside, executable, env, store_path):
     query.write_bytes(encoded(conditional["reference"]))
     restored = command("read-odds", "--ref", str(query))
     assert restored["recalculation"] == "matches" and restored["result"]["research_ref"] == research
+    from test_reading_odds_book_overview import exercise_installed_overview
+    exercise_installed_overview(command, outside, research)
     assert head() == before
     query.write_bytes(encoded({"rights_confirmed": True}))
     rejected = subprocess.run([str(executable), "store", "--path", str(store_path), OPERATION,

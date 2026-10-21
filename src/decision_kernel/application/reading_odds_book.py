@@ -12,7 +12,7 @@ from decision_kernel.domain.records import RecordError, encoded, require
 
 def selected(plan):
     """An explicit empty query requests a page; missing/null requests no read."""
-    return isinstance(plan, dict) and plan.get("odds_book") is not None
+    return isinstance(plan, dict) and any(plan.get(name) is not None for name in ("odds_book", "odds_book_view"))
 
 
 def bind_query(plan, catalogue):

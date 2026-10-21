@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure", "odds_book"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure", "odds_book", "odds_book_view"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -88,6 +88,10 @@ def plan_input(value):
     if value.get("odds_book") is not None:
         from decision_kernel.application.odds_book import validate_plan
         result["odds_book"] = validate_plan(value["odds_book"])
+    if value.get("odds_book_view") is not None:
+        from decision_kernel.application.reading_odds_book_overview import view_plan
+        require("odds_book" not in result, "ROOM_ODDS_BOOK_VIEW_CONFLICT")
+        result["odds_book_view"] = view_plan(value["odds_book_view"])
     return result
 
 
@@ -190,11 +194,17 @@ class ReadingRoom:
         if "odds_book" in plan:
             from decision_kernel.application.reading_odds_book import bind_query
             bind_query(plan, catalogue)
+        if "odds_book_view" in plan:
+            from decision_kernel.application.reading_odds_book_overview import bind_view
+            bind_view(plan, catalogue)
         from decision_kernel.application.brief_discovery import cutoff_age, latest_selector
         refresh_plan = {**deepcopy(plan), "catalogue": {"limit": plan["catalogue"]["limit"]}}
         if "odds_book" in plan:
             from decision_kernel.application.reading_odds_book import refresh_query
             refresh_plan["odds_book"] = refresh_query(plan["odds_book"])
+        if "odds_book_view" in plan:
+            from decision_kernel.application.reading_odds_book_overview import refresh_view
+            refresh_plan["odds_book_view"] = refresh_view(plan["odds_book_view"])
         discovery = None
         if latest_selector(plan["brief"]):
             try:
@@ -442,7 +452,7 @@ class ReadingRoom:
             result["structure"] = structure
             partial = partial or structure["status"] != "readable" or structure.get("partial", False)
         result["status"] = "partial" if partial else "readable"
-        if "odds_book" in plan and callable(getattr(self.source_reader, "usage", None)):
+        if ("odds_book" in plan or "odds_book_view" in plan) and callable(getattr(self.source_reader, "usage", None)):
             # The command adds this original news-only counter to the final model.
             # Include those same bytes before admitting the optional Odds display.
             result["news_source_reads"] = self.source_reader.usage()
@@ -458,6 +468,11 @@ class ReadingRoom:
             page = read_page(self.store, plan["odds_book"])
             attach_panel(result, page, max_panel_bytes=MAX_PANEL_BYTES,
                          max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
+        if "odds_book_view" in plan:
+            from decision_kernel.application.reading_odds_book_overview import attach_view, read_view
+            view, detail = read_view(self.store, plan["odds_book_view"], registry=self.market_registry)
+            attach_view(result, view, detail, max_panel_bytes=MAX_PANEL_BYTES,
+                        max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
         # Final mutable access check after every component and before any export.

@@ -108,6 +108,10 @@ from decision_kernel.interfaces.reading_outcome_page import CSS as OUTCOME_CSS, 
 from decision_kernel.interfaces.reading_structure_page import CSS as STRUCTURE_CSS, JS as STRUCTURE_JS
 from decision_kernel.interfaces.reading_research_book_page import CSS as BOOK_CSS, JS as BOOK_JS
 from decision_kernel.interfaces.reading_odds_book_page import CSS as ODDS_CSS, JS as ODDS_JS, ENTRY_JS as ODDS_ENTRY_JS
+from decision_kernel.interfaces.reading_odds_book_overview_page import (
+    CSS as ODDS_OVERVIEW_CSS, JS as ODDS_OVERVIEW_JS, ENTRY_JS as ODDS_OVERVIEW_ENTRY_JS,
+    DISCOVERY_JS as ODDS_OVERVIEW_DISCOVERY_JS,
+)
 
 CSS += INDUSTRY_CSS + MARKET_CSS + OVERVIEW_CSS + DISCOVERY_CSS
 CSS += PARTICIPANT_CSS
@@ -131,6 +135,7 @@ CSS += AUCTION_NEXT_CSS
 JS += AUCTION_NEXT_JS
 CSS += BOOK_CSS
 JS += BOOK_JS
+BASE_JS = JS
 JS += ODDS_ENTRY_JS
 
 
@@ -142,9 +147,14 @@ def render_page(model):
         payload = payload.replace(char, "\\u%04x" % ord(char))
     # Full Odds UI shares the optional projection's actual HTML allowance.
     # Omitting the panel also omits its renderer, preserving existing bodies.
-    odds_included = bool(model.get("odds_book", {}).get("view"))
-    js = JS + ODDS_JS if odds_included else JS
-    css = CSS + ODDS_CSS if odds_included else CSS
+    if "odds_book_view" in model.get("plan", {}):
+        odds_included = bool(model.get("odds_book_view", {}).get("view"))
+        js = BASE_JS + ODDS_OVERVIEW_ENTRY_JS + (ODDS_OVERVIEW_JS if odds_included else "")
+        css = CSS + (ODDS_OVERVIEW_CSS if odds_included else "")
+    else:
+        odds_included = bool(model.get("odds_book", {}).get("view"))
+        js = (JS + ODDS_JS if odds_included else JS) + ODDS_OVERVIEW_DISCOVERY_JS
+        css = CSS + ODDS_CSS if odds_included else CSS
     def sha(text):
         return base64.b64encode(hashlib.sha256(text.encode()).digest()).decode()
     policy = ("default-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'; "

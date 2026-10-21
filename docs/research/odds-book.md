@@ -72,7 +72,7 @@ decision-os store --binding /approved/readonly-binding.json read-odds-book --inp
 
 正常 `research-runtime.yml` 同样接受 operation=`read-odds-book` 和该查询作为 payload。沿原 code_sha、主线身份、输入／结果大小限制及只读 job；不提供 submission_id 或 expected_head，不触发 writer 或 reconcile。结果中的精确打开请求继续由现役 read-valuation、read-odds、read-odds-assessment、read-probability-odds、read-odds-watch、活动／历史读取等原入口执行。
 
-本组只交领域读取和正常宿主消费。稳定可发现页面入口、跨页组合、交互过滤、浏览器和移动端使用，仍由 #13 的正常 Book 阅读组交付，不因本组 CLI 成功自动完成。
+正常 [Reading Room](../delivery/reading-room.md#odds-book) 提供可选单页 `plan.odds_book` 与跨公司总览 `plan.odds_book_view`。后者在同一 backend、快照与预算中调用至多四个实际连续原页，保留原分页分母、未读首尾与失败项，并可显式打开本次已读行中的一个精确原件。两种入口互斥，领域 `read-odds-book` 的五字段查询不变。总览中的过滤、详情展开和请求导出仅消费实际返回值；稳定在线入口、真实多公司消费、浏览器及移动端采用仍须正常产品证据，不因 CLI 或 JavaScript 合成测试成功自动完成。
 
 ## 访问、发布和终态
 

@@ -1,7 +1,7 @@
 {
   "schema": "ftshare-daily-runtime-v1",
   "collection_id": "ftshare-cn-eod",
-  "generation": "g20261016-v2",
+  "generation": "g20261020-independent-v1",
   "legacy_reference": {
     "manifest": {
       "commit": "3fcaa33e745afa0084ff20136538a06ce8c38877",
@@ -26,10 +26,10 @@
   "kernel_sync": {
     "base_reference": {
       "manifest": {
-        "commit": "2649d19995f28399d3b3fced12ba4f86b1d5a5a9",
-        "path": "source-views/ftshare-collection-bacbf1600c88094b6e87d13b2a82f876-r002/45e1a2cc1ed8df4a6d1de11477624c988fce22c533bac6c5f891f4688466f24c/manifest.json",
+        "commit": "d8ce218889ff19fd85a1ef9dbd3d68d7d5e1fbd6",
+        "path": "source-views/ftshare-collection-7fa4428ff5ea645a694ffb0270daabe7-r024/ce47828c5b6eb9ce532cde6558751303243aaf702f968a653afe89fcff3525b2/manifest.json",
         "repository": "auguspp/Decision-OS-2",
-        "sha256": "758516c20e906debf3677828cc1abec21d5ce52d846de29c371200a9c160cd0d"
+        "sha256": "345a181424a101c6011923f7717fdf3df747b200a71001f8866657b32b10b869"
       },
       "selection": {
         "columns": [],
@@ -39,38 +39,39 @@
       }
     },
     "start": "20260701",
-    "end": "20261016",
+    "end": "20261020",
+    "completion_policy": "ashare-eod-1835-v1",
     "targets": [
       {
-        "symbol": "002384.SZ",
+        "symbol": "000530.SZ",
         "adjust_kind": "none"
       },
       {
-        "symbol": "002384.SZ",
+        "symbol": "000530.SZ",
         "adjust_kind": "forward"
       },
       {
-        "symbol": "002714.SZ",
+        "symbol": "002343.SZ",
         "adjust_kind": "none"
       },
       {
-        "symbol": "002714.SZ",
+        "symbol": "002343.SZ",
         "adjust_kind": "forward"
       },
       {
-        "symbol": "300750.SZ",
+        "symbol": "300006.SZ",
         "adjust_kind": "none"
       },
       {
-        "symbol": "300750.SZ",
+        "symbol": "300006.SZ",
         "adjust_kind": "forward"
       },
       {
-        "symbol": "688981.SH",
+        "symbol": "301052.SZ",
         "adjust_kind": "none"
       },
       {
-        "symbol": "688981.SH",
+        "symbol": "301052.SZ",
         "adjust_kind": "forward"
       }
     ],

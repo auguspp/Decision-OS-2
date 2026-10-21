@@ -116,7 +116,24 @@
 
 工程兼容与常态运行分别验收；下面固定 study / 旧 generation 的描述保持其原范围，不能据此重新派发已结束的来源核验。
 
-可信配置为 [config/ftshare-daily.json](../../config/ftshare-daily.json)，固定集合 `ftshare-cn-eod`，当前更新世代为 `g20261016-v1`。其 `kernel_sync.base_reference` 精确指向原采用世代 `g20261016` 的 FTShare 根，原 Source10 仍为不可变的 Relay 上下文前驱。当前区间为 2026-07-01 至 2026-10-16，目标仅 `600000.SH / forward`，新增预算为 1；其余三个既存价格 owner 直接继承。本配置不自动延长日期、扩大股票池或新增定时任务。
+### 当前有限配置：四个独立历史候选
+
+可信配置为 [config/ftshare-daily.json](../../config/ftshare-daily.json)，固定集合 `ftshare-cn-eod`，当前手动更新世代为 `g20261020-independent-v1`。其 `kernel_sync.base_reference` 精确指向 [v4 原运行 39521263796/1](https://github.com/auguspp/Decision-OS-2/actions/runs/39521263796) 已保管的 `daily-20261020` FT r024 根：records commit `d8ce218889ff19fd85a1ef9dbd3d68d7d5e1fbd6`，完整 manifest path、SHA256 与 all selection 见配置。原 Source10 `legacy_reference`、Kernel adoption 资格和 `qualification: null` 继续保留。
+
+本组沿用该 base 的 `2026-07-01..2026-10-20` 整段、显式 `ashare-eod-1835-v1` 及两所已保管的完整 current-L 主表和日历。四个候选来自原 5,226 范围的 2026-10-09 至 10-16 qfq5 端点筛选：5,208 项可比较、18 项缺失保留，排除既有日更六股后按 Decimal 涨幅排序，等值才按代码排序；第 4／5 名无并列。该历史筛选不重跑，也不代表候选在 10/20 的强度或及时发现。
+
+|历史顺序|候选|本组新增目标|
+|---:|---|---|
+|1|`300006.SZ` 莱美药业|`none`、`forward`|
+|2|`002343.SZ` 慈文传媒|`none`、`forward`|
+|3|`301052.SZ` 果麦文化|`none`、`forward`|
+|4|`000530.SZ` 冰山冷热|`none`、`forward`|
+
+这八个目标与 base 的十二个 owner 完全不重叠。真实 v4 主表分母为 5,224（SSE 2,318、SZSE 2,906），四股均 eligible；原十二个请求、状态、引用和原因完整继承，历史累计预留保留为 33，本代新增预算为 8。正常纯计划得到 12 个继承 owner 与 8 个 pending owner，最多形成 20 个活动 owner；配置和纯计划不证明八个新请求已经执行或窗口已经合格。
+
+现役入口仍是 `ashare-data.yml / ftshare-sync`，selection 为 `{"collection_id":"ftshare-cn-eod","generation":"g20261020-independent-v1"}`。本组不传 master／calendar override，不新增 Relay 请求。执行前仍核当前 main、完整 CI、实际写前沿、原额度和容量；若其他世代已经接续这个 base，必须先对账，不能改 ID 或回指旧版本领取预算。成功后分别核八个原 FT 正文、正常 raw／qfq 5／20／60 日读取和 daily 扩展前沿，再纳入新备份与独立恢复。
+
+[daily-market.json](../../config/daily-market.json) 继续原六股、每次最多 12 个价格请求、原 seed 和原 schedule。四股的这次有限扩展不使其加入日更池；以后缺少新交易日价格时保持真实陈旧／缺失状态。完整主表其余证券仍留在分母，有限扩展不签全市场覆盖或长期可用率。
 
 | 手动 operation | 输入与来源访问 | 结果 |
 |---|---|---|
@@ -125,9 +142,9 @@
 | `ftshare-adopt-kernel` | 原采用世代的历史入口，`work_units=1`，新增来源 HTTP 为 0 | 原四份正文及证据已经保管；启用 `kernel_sync` 的配置拒绝再次采用，不向新世代复制同一原核验 |
 | `ftshare-calendar` | 固定 study `ftshare-calendar-continuity-20261018`、`work_units=1` | 仅两次 Relay `trade_cal` 元数据请求，独立保管 SSE / SZSE 截至 10/18 的日历；不取 Relay 日线价格 |
 
-上述入口仍在 `ashare-data.yml` 的原有来源互斥组内。写入只允许原生 private 的同仓、当前 main、合格 main CI、attempt 1 和既有明确私有保管授权；公开权利输入为 false。`ftshare-status` 需要 contents / actions 只读权限。`ftshare-adopt-kernel` 仅取得既有 Store 写入与 Actions 读取权限，没有 FTShare 或 Relay Secret。FTShare Secret 仅进入实际 FTShare capture / sync 步骤；日历只使用既有 Relay Secret，发布产物前另一步重新核验 private 与 main。
+上述入口仍在 `ashare-data.yml` 的原有来源互斥组内。正常 Public `ftshare-sync` 沿 [#164 固定部署授权](../engineering/public-runtime.md)，要求同仓精确绑定、当前 main、合格 main CI、attempt 1 和原访问／保管范围；输入 `access_and_custody_confirmed=true`、`public_rights_confirmed=false`。控制根与原文保管核有效 `sources` grant，发布产物前另核 `market` grant、实际可见性和 main。`ftshare-status` 只读；FTShare Secret 只进入实际 FTShare capture／sync 步骤。历史 check、adoption、calendar 的原身份、权限与终态继续按各自合同保留，不因本配置重新派发。
 
-典型 selection 为 `{"collection_id":"ftshare-cn-eod","generation":"g20261016-v1"}`。首次 sync 可额外携带日历运行保管的 `calendar_references: {"SSE": SourceRef, "SZSE": SourceRef}`，必须是本仓独立可恢复的完整引用，覆盖计划区间且不能改变既有历史开闭市记录。后续运行省略时继承已保管日历，显式提供时必须与原计划相同。`ftshare-status` 不接受日历覆盖输入；历史根继续通过原精确 SourceRef 正常读取。
+其他明确授权的首次 sync 可携带已保管的 `calendar_references: {"SSE": SourceRef, "SZSE": SourceRef}`，必须是本仓独立可恢复的完整引用，覆盖计划区间且不能改变既有历史开闭市记录。本组省略该字段，直接继承 v4 原日历；续取时显式提供则必须与原计划相同。`ftshare-status` 不接受日历覆盖输入；历史根继续通过原精确 SourceRef 正常读取。
 
 ### 批量来源资格与未激活状态
 
@@ -151,21 +168,21 @@
 
 [原采用组交接](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6258970328)已经核验实际采用、正常 status / room 和新备份的离线恢复。后继按[6259072790](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6259072790)接通同一个 `ftshare-sync`，使用 `ftshare-single-collection-plan-v1`，外层 custody、状态、预留及未知写 journal 保持原合同。
 
-`kernel_sync` 只接受 `base_reference`、`start`、`end`、`targets`、`source_budget` 五项。每个 target 是唯一的 `symbol / adjust_kind`；预算严格等于新目标数。新请求以该股、该复权类型及完整日期区间为身份，不按交易日拆请求。当前配置的 1 次是补缺口的生产预算，与已终止研究的实际 6 次分开记账；不把预留次数当作每次都已发出 HTTP 或账户计费。
+`kernel_sync` 要求 `base_reference`、`start`、`end`、`targets`、`source_budget` 五项，可额外声明已实现的 `completion_policy`；当前有限组显式继承 base 的 `ashare-eod-1835-v1`。每个 target 是唯一的 `symbol / adjust_kind`；预算严格等于新目标数。新请求以该股、该复权类型及完整日期区间为身份，不按交易日拆请求。各世代预算与已终止来源核验分别记账；不把预留次数当作每次都已发出 HTTP 或账户计费。
 
 新世代以精确 FTShare base 为 genesis 前驱，必须是该集合可写前沿，不能改指旧 revision 或另开 child 绕过失败、inflight、hold 或已预留请求。上一有限计划未终结时不能开新世代。继承 complete / failed owner 的原请求、结果引用和原因，本代计数为 0；同一失败请求不会因世代名变化重新获得访问次数。历史根仍可独立恢复，不受最新写入前沿限制。
 
 后继可推进日期，但起止必须单调，单次区间最多 119 个自然日，覆盖新日期的两所合格日历须已经保管。原 Relay 日线仅用于原资格证据，不随每次更新重抓。替换的 owner 使用一次新的完整整段请求；旧版本留在前驱中，不把两次 forward 的价格拼成一条序列。未更新 owner 可以继续读取旧价格，但其请求没有覆盖新开市日时，完整状态和 freshness 都保持缺口；日历已经证明休市的日期不强制重抓价格。
 
-所有继承与新建的活动 owner 合计最多 212，根正文仍最多 512 KiB。有限目标不会改变完整 5,226 项主表与 5,224 项可请求分母。当前 1 个新目标即使成功，也只是将 raw 2 / forward 1 的输入增至 raw 2 / forward 2，不签全市场无缺失；实际执行、窗口和恢复结论以新世代原生回执为准。
+所有继承与新建的活动 owner 合计最多 212，state 不超过 `512 KiB - 16 KiB`，根正文仍最多 512 KiB。有限目标不缩小已采用完整主表的分母；当前组沿真实 v4 的 5,224 项，旧历史根仍按其原 5,226／5,224／2 范围恢复。新增八个 owner 即使完成，也只扩展四只股票的 raw／forward 输入；实际窗口与缺失状态以正常 reader 为准。
 
-已从实际采用后的 `ca6477ccdb6de562a0764499b81876c50a3be737` 原 records bundle 执行只读新计划预检：5,226 / 5,224 / 2，3 继承 owner、1 新槽、预算 1、预留 0。计划 136,792 字节，状态 138,547 字节，初始根 139,308 / 524,288 字节，SourceInput 162,348 / 2,097,152 字节；既有 Store 容量门通过。该预检新增来源请求和 Store 写入均为 0；实际运行仍须再次通过原生容量与预算门，预检不代签新行情已经取得。
+首个 `g20261016-v1` 补缺口组曾从采用后的 `ca6477ccdb6de562a0764499b81876c50a3be737` 原 records bundle 执行只读计划预检：5,226 / 5,224 / 2，3 继承 owner、1 新槽、预算 1、预留 0。计划 136,792 字节，状态 138,547 字节，初始根 139,308 / 524,288 字节，SourceInput 162,348 / 2,097,152 字节。该历史预检新增来源请求和 Store 写入均为 0，不代替后继世代各自的原生容量、预算与真实行情验收。
 
 ### 范围、保管与不可重置的账
 
 正常 `ftshare-sync` 的Public保管沿[#164固定部署授权](../engineering/public-runtime.md)，包括集合初始根、预留、原文与结算。集合控制写入要求原custody委托、原生真实Public可见性和精确数据绑定的有效 `sources` 授权；调用者公开确认字段不能单独放行任意公开目标。缺失或撤销授权仍拒绝，历史check/continuation/adoption的原资格及终态不变。
 
-范围继承原生主表的 5,226 项声明；5,224 项可请求，2 项主表隔离继续留在完整缺失分母。原批量计划每批 50 股，分别一次 `none` 与一次整段 `forward`，对应 210 个价格槽；当前 v1 计划只采用显式有限目标，不将该批量列表展开成逐股全回填。不得以删除隔离项、覆盖旧来源身份或拼接不同 forward 请求来增加覆盖。
+历史采用范围继承原主表的 5,226 项声明，其中 5,224 项可请求、2 项隔离；该历史版本的分母保持。后继采用真实完整 current-L 主表时，范围由该版本的完整原页决定，保留当期全部隔离和缺失项。原批量计划每批 50 股，分别一次 `none` 与一次整段 `forward`，对应 210 个价格槽；当前 v1 计划只采用显式有限目标，不将该批量列表展开成逐股全回填。不得以删除隔离项、覆盖旧来源身份或拼接不同 forward 请求来增加覆盖。
 
 原 Source10 的 220 槽、原始终态、维修 grant 与预算随明确前驱保留。FTShare 使用独立 SourceInput 和集合身份，在相同 repository / records / store_id / anchor 上保管，不建立第二套数据仓。每槽先保管 `inflight` 与一次不可退回的预留；再执行至多一次 FTShare 请求。成功正文按原始字节独立读回，随后才保管完成根；错误保留 failed 及稳定原因。未知写按原键对账，未核清的 inflight 禁止重发。
 
@@ -183,7 +200,9 @@
 
 固定 check、continuation 和 calendar 的过渡责任完成后，按实际依赖同步退出专属 workflow 选项、CLI、配置和测试。仍服务正常集合、严格窗口、读取与历史 exact-reference 恢复的共享能力继续保留；不会仅因 #10 工程合并而自动退役或签数据验收。
 
-## 2026-10-19 跨板块有界扩样｜新世代配置，未以 CI 代签行情
+## 2026-10-19 跨板块有界扩样（历史配置）
+
+以下保留原组的冻结范围和验证义务；现役配置见上面的四个独立历史候选，不能按本节重新派发旧八次请求。
 
 前组 [#10 回执 6260063834](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6260063834) 已将 `g20261016-v1` 的沪深两只股票、两种口径与全部历史原始响应完成保管和独立读回；当前 records 正常可写前沿为 `2649d19995f28399d3b3fced12ba4f86b1d5a5a9`。本组由 [#10 新认领](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6260406580) 接续，**沿同一 Store 复用现役 `ftshare-sync`，不新增行情采集器或放宽安全门**。
 

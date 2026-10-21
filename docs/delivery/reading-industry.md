@@ -15,7 +15,7 @@
 }
 ```
 
-`view` 必须显式为 `industry`、`operating-cycle`、`vehicle-flows`、`livestock-weekly`、`industry-uses` 或 `industry-goods`。根必须是完整包的 SourceRef，不能传网页、别名、PMI原指标页或单行代替包；引用保持确切 commit/manifest/selection。可选一个主体或公司查询，不可两者非空；经营周期不支持公司查询。沿原读取器校验内容与用途，不补抓外部 URL、不自动匹配研究中的公司名。商品资格另须显式 `evaluation_at`；原包截止和整理时刻不被此时刻或 Room 议程时刻覆盖，其他视图不接受该字段。
+`view` 必须显式为 `industry`、`operating-cycle`、`vehicle-flows`、`livestock-weekly`、`industry-uses`、`industry-goods` 或 `industry-goods-coverage`。根必须是完整包的 SourceRef，不能传网页、别名、PMI原指标页或单行代替包；引用保持确切 commit/manifest/selection。可选一个主体或公司查询，不可两者非空；经营周期和跨批商品覆盖不支持公司查询。沿原读取器校验内容与用途，不补抓外部 URL、不自动匹配研究中的公司名。两种商品视图另须显式 `evaluation_at`；原包截止和整理时刻不被此时刻或 Room 议程时刻覆盖，其他视图不接受该字段。
 
 公开宿主 payload 顶层须另有 `public_sources_custody_confirmed: true`。它不能由研究、附件/复核材料或反馈许可代替。所有适用许可与计划在创建公共输入产物、目录和 Store I/O 前检查；布尔字段只是调用者的权利声明，不是身份认证。未提供产业计划时旧模型、入口与权限行为不变。原本地 CLI `research-room --input <plan> --out <新HTML>` 继续使用既有绑定；本地读取不赋予公开权。
 
@@ -67,6 +67,8 @@ USDA航线月均费率按公布运输基准报价保留，`market=not-applicable
 页面保留全批 outcomes、原输入失败、具名来源阻塞与恢复条件。商品/系列文字搜索、资格状态和主体/公司筛选只改变本地显示；公司筛选仅保留同一个原输入内有该公司角色证据的系列。零命中不等于零覆盖或零暴露，整批资格不是给公司签资格。下载 JSON 保留本次完整结果，查询请求保留原根、评估时刻及主体/公司方向，文字搜索/资格状态不伪装成服务端过滤。来源按钮的 `read-source` payload 直接是完整 SourceRef；声明中的 retained-use 权利不替代现役宿主公开输出准入。
 
 此视图不提供新的 Brief 选择或采用签名。仍需采用具体原系列时沿原 Brief 身份，不因商品已合格或同页出现而推断研究采用、实际市场新鲜度或人审。所有终态失败与全批预算在导出之前生效。
+
+固定多个已存商品包时使用 `industry-goods-coverage`，完整合同见[跨批商品覆盖](../sources/industry-goods-coverage.md)。它以同一评估时刻真实重读全部声明批次，核跨批身份、同源事实和来源声明冲突，再对合格/新鲜商品取共同身份并集。页面展示完整范围、未恢复批次、冲突和候选处置，筛选不改计数；每批可导出原商品读取请求，沿原入口打开数值、比较和证据。跨批公司查询不被支持，公司角色保留在原叶包。完整固定范围达到500个合格且在时效内的商品，只建立该范围的数量条件，不建立全市场覆盖、自然新期间或任务关闭事实。
 
 ## 与指定已存 Brief 的逐系列关系
 

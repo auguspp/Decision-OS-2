@@ -11,7 +11,7 @@ import pytest
 from decision_kernel.application import reading_industry as component
 from decision_kernel.application.reading_room import ReadingRoom, plan_input
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, MissingObject, RecordError, RevisionInput, SourceRef, encoded
+from decision_kernel.domain.records import BlobRef, MissingObject, RecordError, RevisionInput, SourceInput, SourceRef, digest, encoded
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.interfaces import reading_commands, industry_commands, research_runtime
@@ -29,7 +29,7 @@ def store(tmp_path):
 
 
 def plan(ref, view='industry', **query):
-    if view == 'industry-goods':
+    if view in ('industry-goods', 'industry-goods-coverage'):
         query = {'evaluation_at': CLOCK, **query}
     return {'as_of': CLOCK, 'catalogue': {'limit': 1},
             'industry': {'reference': asdict(ref), 'view': view, **query}}
@@ -41,6 +41,15 @@ def public(value, **extra):
 
 
 def root_for(store, view):
+    if view == 'industry-goods-coverage':
+        from decision_kernel.application.industry_goods_coverage import SCHEMA
+        leaf = root_for(store, 'industry-goods')
+        body = {'schema': SCHEMA, 'prepared_at': CLOCK, 'as_of': CLOCK,
+                'coverage_note': 'One synthetic batch; no real coverage claim.',
+                'batches': [{'batch_id': 'first-batch', 'reference': asdict(leaf)}], 'aliases': []}
+        source = SourceInput('synthetic-goods-coverage', 'content', 'Synthetic declared coverage',
+            'synthetic:goods-coverage', encoded(body).decode(), acquired_at=CLOCK, published_at=CLOCK)
+        return store.put_source('coverage-' + digest(encoded(asdict(source))), source)
     if view == 'industry-goods':
         from test_industry_goods import prepare as goods_data
         return goods_data(store)[0]
@@ -92,7 +101,7 @@ def test_server_query_does_not_change_scope_or_infer_company_links(store, select
         assert all(r['applicability_at_cutoff'] == 'historical' for r in part['relations'])
 
 
-@pytest.mark.parametrize('view', ['industry', 'industry-uses', 'livestock-weekly', 'industry-goods'])
+@pytest.mark.parametrize('view', ['industry', 'industry-uses', 'livestock-weekly', 'industry-goods', 'industry-goods-coverage'])
 @pytest.mark.parametrize('flag', [None, False, 'true', 1])
 def test_native_permission_is_independent_before_any_output_or_store(host, tmp_path, flag, view):
     writer = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
@@ -251,7 +260,7 @@ def exercise_installed_industry_room(outside, python, env, store):
     """Extend the one existing wheel installation, preserving all previous consumers."""
     fixture_store = VersionedStore(GitStore(Path(store)))
     executable = Path(python).parent / 'decision-os'
-    for view in ('industry', 'livestock-weekly', 'industry-uses', 'industry-goods'):
+    for view in ('industry', 'livestock-weekly', 'industry-uses', 'industry-goods', 'industry-goods-coverage'):
         ref = root_for(fixture_store, view)
         head = fixture_store.backend.head()
         source = outside / (view + '-room-plan.json')

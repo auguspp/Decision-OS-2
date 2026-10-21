@@ -109,6 +109,37 @@ function renderIndustryGoods(pane,part){
  search.addEventListener('input',render);state.addEventListener('change',render);
  subject.addEventListener('change',()=>{company.value='';render();});company.addEventListener('change',()=>{subject.value='';render();});render();
 }
+function renderIndustryGoodsCoverage(pane,part){
+ const v=part.view,ip=part.plan,s=v.scope,val=x=>x===null||x===undefined?'未知':String(x);
+ const terms={'fresh-qualified':'合格且在时效内','qualified-not-fresh':'合格，已过期','qualified-freshness-unknown':'合格，时效未知','unresolved':'资格待核','excluded':'明确排除','source-blocked':'来源受阻'};
+ const batches=new Map(v.batches.map(b=>[b.batch_id,b]));
+ pane.append(el('h3','商品覆盖与跨批去重'),el('p',`共同评估时刻 ${v.evaluation_at} · 范围截止 ${v.as_of}`,'banner'),
+  el('p',`固定 ${s.declared_batches} 批，已恢复 ${s.read_batches} 批；${s.candidate_records} 条候选，${s.comparable_series} 个可比系列，去重后 ${s.distinct_qualified_goods} 个合格商品，其中 ${s.fresh_goods} 个在规则时效内、${s.freshness_unknown_goods} 个时效未知。`),
+  el('p',v.quantity_milestone.status==='established-in-declared-scope'?'本次固定范围已达到 500 个合格且在时效内的不同商品；来源的新期间、持续运行和人工验收仍须分别核实。':'本次固定范围尚未满足 500 个合格且在时效内的不同商品。'),
+  el('p',v.coverage_note),el('p','各批原数值和来源证据仍从原批次打开。地区、规格、转载与重复批次不增加商品；新整理和重读不会刷新原观察。'),
+  details('完整范围、集合、冲突与失败（筛选不改变计数）',{scope:v.scope,sets:v.sets,outcomes:v.outcomes,batches:v.batches,aliases:v.aliases,conflicts:v.conflicts,quantity_milestone:v.quantity_milestone,reference:v.reference,view_version:v.view_version,limitations:v.limitations}),
+  button('下载完整商品覆盖结果 JSON',()=>save('industry-goods-coverage-result.json',JSON.stringify(v,null,2),'application/json')));
+ for(const batch of v.batches){const box=el('div',undefined,'industry-use');
+  box.append(el('h4',batch.batch_id),details('原批次范围与读取状态',batch));
+  box.append(button('导出本批价格与证据读取请求',()=>request('industry-goods-batch.json',{operation:'industry-read',payload:{reference:batch.reference,view:'industry-goods',evaluation_at:v.evaluation_at}})));pane.append(box);}
+ const controls=el('div',undefined,'industry-controls'),search=el('input'),label=el('label','在本次返回范围搜索商品或缺项');
+ search.id='industry-coverage-search';search.type='search';label.htmlFor=search.id;const wrap=el('div');wrap.append(label,search);controls.append(wrap);
+ const state=el('select'),stateLabel=el('label','资格处置');state.id='industry-coverage-state';stateLabel.htmlFor=state.id;
+ const all=el('option','全部');all.value='';state.append(all);for(const [value,title] of Object.entries(terms)){const option=el('option',title);option.value=value;state.append(option);}
+ const stateWrap=el('div');stateWrap.append(stateLabel,state);controls.append(stateWrap);const summary=el('p'),body=el('div');
+ pane.append(controls,summary,button('导出原范围读取请求',()=>request('industry-goods-coverage-query.json',{operation:'industry-read',payload:{...ip}})),body);
+ function render(){const needle=search.value.trim().toLocaleLowerCase();let shown=v.entries;
+  if(state.value)shown=shown.filter(e=>e.status===state.value);
+  if(needle)shown=shown.filter(e=>JSON.stringify(e).toLocaleLowerCase().includes(needle));
+  summary.textContent=`本地显示 ${shown.length} / 本次返回 ${v.entries.length} 条；完整声明范围和失败仍保留在上方。`;
+  body.replaceChildren();const scroll=el('div',undefined,'industry-scroll'),table=el('table',undefined,'industry-table'),head=el('tr');
+  for(const text of ['商品','原批次','归并身份','资格','缺项与原因','原始价格与证据'])head.append(el('th',text));table.append(head);
+  for(const e of shown){const row=el('tr');for(const text of [e.title,e.batch_id,val(e.canonical_id),terms[e.status]||e.status,[...(e.reasons||[]),...(e.missing||[])].join('；')])row.append(el('td',text));
+   const cell=el('td'),batch=batches.get(e.batch_id);if(batch)cell.append(button('导出本批读取请求',()=>request('industry-goods-batch.json',{operation:'industry-read',payload:{reference:batch.reference,view:'industry-goods',evaluation_at:v.evaluation_at}})));row.append(cell);table.append(row);}
+  scroll.append(table);body.append(scroll);if(!shown.length)body.append(el('p','本次返回范围没有匹配；这不表示全市场没有商品，也不表示公司零暴露。'));
+ }
+ search.addEventListener('input',render);state.addEventListener('change',render);render();
+}
 function renderIndustry(){
  const pane=$('industry-content'),part=D.industry;
  if(!part){pane.append(el('p','未指定产业阅读包；不会按公司名自动匹配来源、研究或简报。'));return;}
@@ -119,6 +150,7 @@ function renderIndustry(){
  const v=part.view,ip=part.plan,retained=v.retained||v,mode=ip.view;
  if(mode==='industry-uses'){renderIndustryUses(pane,part);return;}
  if(mode==='industry-goods'){renderIndustryGoods(pane,part);return;}
+ if(mode==='industry-goods-coverage'){renderIndustryGoodsCoverage(pane,part);return;}
  const adoption=part.brief_adoption,adopted=new Map((adoption?.rows||[]).map(r=>[r.series_id,r]));
  const adoptionTerms={'included':'指定简报已采用此选择','considered-not-included':'列入范围但本期未采用','not-considered-in-this-brief':'不在指定简报产业范围','industry-not-tracked-in-this-brief':'该简报未跟踪产业','brief-capacity':'本期容量省略（不是人工否决）','previously-included-same-selection':'前版已采用同一选择，本期省略','unreadable-or-outside-cutoff':'交付时不可读、超限或晚于截止','same-displayed-series-and-roles':'本页系列与可见角色和交付时一致','differs-from-delivery':'本页内容与交付时不同，不能套用原采用结论','unknown':'无法核对，不等于未采用'};
  const adoptionLabel=x=>adoptionTerms[x]||x;

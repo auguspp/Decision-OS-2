@@ -3,6 +3,7 @@
 No provider routing, retry, scheduling, cost quota, or untrusted URL selection.
 """
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import count_event, measure_phase
 
 from hashlib import sha256
 from datetime import datetime, timezone
@@ -112,39 +113,43 @@ class RelayHTTP:
         self.last_header_diagnostics = None
         key = self.validate_credential()
         self.requests += 1
+        count_event("relay_requests")
         request = Request(exact, method="GET", headers={"X-API-Key": key,
                           "Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": agent})
         observed_response = None
         try:
-            with self._opener.open(request, timeout=self.request_timeout_seconds) as resp:
-                require(resp.status == 200 and resp.geturl() == exact, "RELAY_HTTP_RESPONSE_INVALID")
-                # Headers are already observed even if the body later stalls.
-                # Preserve their original wait instruction without inventing a
-                # successful response body or changing the transport category.
-                def safe_header(name):
-                    value = resp.headers.get(name)
-                    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) and key not in value else None
-                received_at = datetime.now(timezone.utc)
-                wait_metadata = retry_after(resp.headers, key, received_at)
-                self.last_header_diagnostics = {
-                    'retry_after': {'state': wait_metadata[0], 'seconds': wait_metadata[1]},
-                    **rate_limit_headers(resp.headers, key)}
-                observed_response = {
-                    'http_status': 200, 'received_at': received_at.isoformat(),
-                    'retry_after_state': wait_metadata[0], 'retry_after_seconds': wait_metadata[1],
-                    'x_request_id': safe_header('X-Request-ID'), 'x_cache': safe_header('X-Cache')}
-                require(resp.headers.get("Content-Encoding", "identity").lower() in ("", "identity"),
-                        "RELAY_CONTENT_ENCODING_INVALID")
-                mime = resp.headers.get("Content-Type", "application/json").split(";")[0].strip().lower()
-                require(mime in ("application/json", "text/json", "text/plain"), "RELAY_CONTENT_TYPE_INVALID")
-                length = resp.headers.get("Content-Length")
-                require(length is None or isinstance(length, str) and len(length) <= 12 and length.isascii()
-                        and length.isdigit() and int(length) <= max_bytes, "RELAY_RESPONSE_BYTES_INVALID")
-                raw = resp.read(max_bytes + 1)
-                require(0 < len(raw) <= max_bytes and (length is None or len(raw) == int(length)),
-                        "RELAY_RESPONSE_BYTES_INVALID")
-                meta = {"http_status": 200, "x_request_id": observed_response['x_request_id'],
-                        "x_cache": observed_response['x_cache'], "wire_sha256": sha256(raw).hexdigest()}
+            with measure_phase("relay.http"):
+                count_event("relay_wire_attempts")
+                with self._opener.open(request, timeout=self.request_timeout_seconds) as resp:
+                    require(resp.status == 200 and resp.geturl() == exact, "RELAY_HTTP_RESPONSE_INVALID")
+                    # Headers are already observed even if the body later stalls.
+                    # Preserve their original wait instruction without inventing a
+                    # successful response body or changing the transport category.
+                    def safe_header(name):
+                        value = resp.headers.get(name)
+                        return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value) and key not in value else None
+                    received_at = datetime.now(timezone.utc)
+                    wait_metadata = retry_after(resp.headers, key, received_at)
+                    self.last_header_diagnostics = {
+                        'retry_after': {'state': wait_metadata[0], 'seconds': wait_metadata[1]},
+                        **rate_limit_headers(resp.headers, key)}
+                    observed_response = {
+                        'http_status': 200, 'received_at': received_at.isoformat(),
+                        'retry_after_state': wait_metadata[0], 'retry_after_seconds': wait_metadata[1],
+                        'x_request_id': safe_header('X-Request-ID'), 'x_cache': safe_header('X-Cache')}
+                    require(resp.headers.get("Content-Encoding", "identity").lower() in ("", "identity"),
+                            "RELAY_CONTENT_ENCODING_INVALID")
+                    mime = resp.headers.get("Content-Type", "application/json").split(";")[0].strip().lower()
+                    require(mime in ("application/json", "text/json", "text/plain"), "RELAY_CONTENT_TYPE_INVALID")
+                    length = resp.headers.get("Content-Length")
+                    require(length is None or isinstance(length, str) and len(length) <= 12 and length.isascii()
+                            and length.isdigit() and int(length) <= max_bytes, "RELAY_RESPONSE_BYTES_INVALID")
+                    with measure_phase("relay.body"):
+                        raw = resp.read(max_bytes + 1)
+                    require(0 < len(raw) <= max_bytes and (length is None or len(raw) == int(length)),
+                            "RELAY_RESPONSE_BYTES_INVALID")
+                    meta = {"http_status": 200, "x_request_id": observed_response['x_request_id'],
+                            "x_cache": observed_response['x_cache'], "wire_sha256": sha256(raw).hexdigest()}
         except HTTPError as exc:
             self.last_error_meta = http_failure(exc, key)
             self.last_header_diagnostics = {
@@ -157,32 +162,33 @@ class RelayHTTP:
             if observed_response is not None:
                 self.last_error_meta.update(observed_response, error_body_state='unreadable')
             raise RecordError("RELAY_HTTP_UNAVAILABLE") from None
-        require(key.encode("ascii") not in raw, "RELAY_SECRET_REFLECTED")
-        try:
-            def unique(pairs):
-                out = {}
-                for k, v in pairs:
-                    if k in out:
-                        raise ValueError("duplicate")
-                    out[k] = v
-                return out
-            result = json.loads(raw, object_pairs_hook=unique,
-                                parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
-            decoded = json.dumps(result, ensure_ascii=False, allow_nan=False)
-        except (UnicodeError, ValueError, RecursionError):
-            raise RecordError("RELAY_JSON_INVALID") from None
-        require(key not in decoded, "RELAY_SECRET_REFLECTED")
-        # Scan decoded strings too: JSON may escape quote/backslash characters in
-        # a reflected credential, so serialised substring checks alone are not enough.
-        pending = [result]
-        while pending:
-            value = pending.pop()
-            if isinstance(value, str):
-                require(key not in value, "RELAY_SECRET_REFLECTED")
-            elif isinstance(value, dict):
-                pending.extend(value.keys()); pending.extend(value.values())
-            elif isinstance(value, list):
-                pending.extend(value)
+        with measure_phase("relay.json"):
+            require(key.encode("ascii") not in raw, "RELAY_SECRET_REFLECTED")
+            try:
+                def unique(pairs):
+                    out = {}
+                    for k, v in pairs:
+                        if k in out:
+                            raise ValueError("duplicate")
+                        out[k] = v
+                    return out
+                result = json.loads(raw, object_pairs_hook=unique,
+                                    parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+                decoded = json.dumps(result, ensure_ascii=False, allow_nan=False)
+            except (UnicodeError, ValueError, RecursionError):
+                raise RecordError("RELAY_JSON_INVALID") from None
+            require(key not in decoded, "RELAY_SECRET_REFLECTED")
+            # Scan decoded strings too: JSON may escape quote/backslash characters in
+            # a reflected credential, so serialised substring checks alone are not enough.
+            pending = [result]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, str):
+                    require(key not in value, "RELAY_SECRET_REFLECTED")
+                elif isinstance(value, dict):
+                    pending.extend(value.keys()); pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
         self.last_response_meta = meta
         self.last_response_bytes = raw
         self.last_retry_after = wait_metadata

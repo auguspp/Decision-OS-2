@@ -1,5 +1,6 @@
 """Finite, native-gated FTShare sync, adoption and status in the existing records Store."""
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed, measure_phase
 
 import argparse
 from copy import deepcopy
@@ -508,179 +509,186 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             predecessor=reference, custody_authorized=True, public_rights_confirmed=False)
     report()
     for number in range(1, max_work_units + 1):
-        if previous_limits is not None and not previous_limits.admits(MAX_REQUESTS):
-            admitted = False
-            if quota_wait is not None:
-                try:
-                    admitted = quota_wait(api) is True
-                finally:
-                    # The callback uses the preceding unit's API. Its native
-                    # read probes remain part of that original bounded counter,
-                    # including when permission or quota refresh fails.
-                    unit["store_api_requests"] = getattr(api, "_requests", None)
-                    receipt["store_rate_limits"] = previous_limits.receipt()
-                    report()
-            if not admitted or not previous_limits.admits(MAX_REQUESTS):
-                receipt.update(status="paused", reason_code="FTSHARE_STORE_RATE_LIMIT")
-                break
-        try:
-            store, fresh, api = open_unit(writing)
-        except Exception as exc:
-            receipt.update(status="blocked", reason_code=_safe_error(exc))
-            break
-        unit = {"number": number, "source_requests": 0, "status": "admission"}
-        receipt["work_units"].append(unit)
-        try:
-            if collection is None:
-                with market_read_scope(fresh()) as reader:
-                    reference = latest_ftshare_reference(reader, registry,
-                        collection_id=config["collection_id"], generation=config["generation"])
-                    if not writing:
-                        if reference is None:
-                            receipt.update(status="not-retained", reason_code="FTSHARE_COLLECTION_NOT_RETAINED")
-                        else:
-                            reading = read_ftshare_collection_version(reference, registry, reader, read_as_of=clock())
-                            held = reading["latest_attempt"]["source_hold"]
-                            receipt.update(status="read", health=health_receipt(reading),
-                                reserved_requests=reading["latest_attempt"]["reserved_requests"],
-                                source_hold=deepcopy(held), source_hold_requires_external_review=held is not None)
-                            if held is not None:
-                                receipt["next_run_can_resume"] = False
-                        unit["status"] = receipt["status"]
-                        break
-                    if reference is not None:
-                        collection = restore_ftshare_collection(reference, registry, reader)["collection"]
-                    elif single:
-                        sync = config["kernel_sync"]
-                        collection = plan_ftshare_single_collection(sync["base_reference"], registry, reader,
-                            collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
-                            start=sync["start"], end=sync["end"], targets=sync["targets"],
-                            source_budget=sync["source_budget"], calendar_references=calendar_references,
-                            master_references=master_references,
-                            completion_policy=sync.get("completion_policy"))
-                    else:
-                        collection = plan_ftshare_collection(config["legacy_reference"], registry, reader,
-                            collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
-                            calendar_references=calendar_references)
-                    _check_sync_plan(collection, config, calendar_references, master_references)
-            summary = _summary(collection)
-            if summary["source_hold"] is not None:
-                receipt.update(status="source-held", reason_code=summary["source_hold"]["reason_code"])
-                break
-            if summary["slot_counts"]["in-flight"]:
-                receipt.update(status="blocked", reason_code="FTSHARE_IN_FLIGHT_REQUIRES_RECONCILIATION")
-                break
-            pending = [slot for slot, state in collection["units"].items() if state["status"] == "pending"]
-            if not pending:
-                failed = _work_slot_counts(collection)["failed"]
-                receipt.update(status="already-complete" if not failed else "exhausted",
-                    reason_code=None if not failed else "FTSHARE_FAILED_SLOTS_REMAIN")
-                break
-            receipt["capacity"] = capacity(fresh())
-            require(receipt["capacity"]["admit_work_unit"], "FTSHARE_STORAGE_CAPACITY")
-            require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
-            if client is None:
-                if client_factory is None:
-                    from decision_kernel.infrastructure.ftshare_http import FTShareHTTP
-                    client_factory = FTShareHTTP
-                client = client_factory()
-                client.validate_credential()
-                require(type(client.requests) is int and client.requests == 0, "FTSHARE_FRESH_CLIENT_REQUIRED")
-            guard(api)
-            require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
-            if reference is None:
-                saved = retain(collection, store, fresh)
-                reference, collection = saved["reference"], saved["restored"]["collection"]
-            slot = min(pending, key=lambda candidate: _slot_order(collection, candidate))
-            unit["slot"] = slot
-            candidate = begin_ftshare_slot(collection, slot, at=clock())
-            unit["status"] = "reserving"
-            report()
-            saved = retain(candidate, store, fresh)
-            reference, collection = saved["reference"], saved["restored"]["collection"]
-            unit["status"] = "in-flight"
-            report()
-            guard(api)
-            require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
-            spec = collection["plan"]["requests"][slot]["parameters"]
-            before, request_started, failure, captured = client.requests, monotonic(), None, None
+        with measure_phase("ft.unit"):
+            if previous_limits is not None and not previous_limits.admits(MAX_REQUESTS):
+                admitted = False
+                if quota_wait is not None:
+                    try:
+                        admitted = quota_wait(api) is True
+                    finally:
+                        # The callback uses the preceding unit's API. Its native
+                        # read probes remain part of that original bounded counter,
+                        # including when permission or quota refresh fails.
+                        unit["store_api_requests"] = getattr(api, "_requests", None)
+                        receipt["store_rate_limits"] = previous_limits.receipt()
+                        report()
+                if not admitted or not previous_limits.admits(MAX_REQUESTS):
+                    receipt.update(status="paused", reason_code="FTSHARE_STORE_RATE_LIMIT")
+                    break
             try:
-                if single:
-                    client.candlesticks(spec["symbol"], since=spec["since"], until=spec["until"],
-                        adjust_kind=spec["adjust_kind"])
-                else:
-                    client.candlesticks_batch(spec["symbols"], since=spec["since"], until=spec["until"],
-                        adjust_kind=spec["adjust_kind"])
-                require(isinstance(client.last_response_bytes, bytes), "FTSHARE_ORIGINAL_BODY_REQUIRED")
-                if single:
-                    captured = capture_single(client.last_response_bytes, symbol=spec["symbol"],
-                        since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
-                else:
-                    captured = capture_batch(client.last_response_bytes, symbols=spec["symbols"],
-                        since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
+                store, fresh, api = open_unit(writing)
             except Exception as exc:
-                failure = _safe_error(exc)
-            finally:
-                count = client.requests - before
-                require(type(count) is int and 0 <= count <= 1, "FTSHARE_ONE_CALL_PER_SLOT")
-                unit.update(source_requests=count, transport=_transport(client, monotonic() - request_started))
-                receipt["source_requests"] += count
+                receipt.update(status="blocked", reason_code=_safe_error(exc))
+                break
+            unit = {"number": number, "source_requests": 0, "status": "admission"}
+            receipt["work_units"].append(unit)
+            try:
+                if collection is None:
+                    with market_read_scope(fresh()) as reader:
+                        reference = latest_ftshare_reference(reader, registry,
+                            collection_id=config["collection_id"], generation=config["generation"])
+                        if not writing:
+                            if reference is None:
+                                receipt.update(status="not-retained", reason_code="FTSHARE_COLLECTION_NOT_RETAINED")
+                            else:
+                                reading = read_ftshare_collection_version(reference, registry, reader, read_as_of=clock())
+                                held = reading["latest_attempt"]["source_hold"]
+                                receipt.update(status="read", health=health_receipt(reading),
+                                    reserved_requests=reading["latest_attempt"]["reserved_requests"],
+                                    source_hold=deepcopy(held), source_hold_requires_external_review=held is not None)
+                                if held is not None:
+                                    receipt["next_run_can_resume"] = False
+                            unit["status"] = receipt["status"]
+                            break
+                        if reference is not None:
+                            collection = restore_ftshare_collection(reference, registry, reader)["collection"]
+                        elif single:
+                            sync = config["kernel_sync"]
+                            collection = plan_ftshare_single_collection(sync["base_reference"], registry, reader,
+                                collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
+                                start=sync["start"], end=sync["end"], targets=sync["targets"],
+                                source_budget=sync["source_budget"], calendar_references=calendar_references,
+                                master_references=master_references,
+                                completion_policy=sync.get("completion_policy"))
+                        else:
+                            collection = plan_ftshare_collection(config["legacy_reference"], registry, reader,
+                                collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
+                                calendar_references=calendar_references)
+                        _check_sync_plan(collection, config, calendar_references, master_references)
+                summary = _summary(collection)
+                if summary["source_hold"] is not None:
+                    receipt.update(status="source-held", reason_code=summary["source_hold"]["reason_code"])
+                    break
+                if summary["slot_counts"]["in-flight"]:
+                    receipt.update(status="blocked", reason_code="FTSHARE_IN_FLIGHT_REQUIRES_RECONCILIATION")
+                    break
+                pending = [slot for slot, state in collection["units"].items() if state["status"] == "pending"]
+                if not pending:
+                    failed = _work_slot_counts(collection)["failed"]
+                    receipt.update(status="already-complete" if not failed else "exhausted",
+                        reason_code=None if not failed else "FTSHARE_FAILED_SLOTS_REMAIN")
+                    break
+                receipt["capacity"] = capacity(fresh())
+                require(receipt["capacity"]["admit_work_unit"], "FTSHARE_STORAGE_CAPACITY")
+                require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+                if client is None:
+                    if client_factory is None:
+                        from decision_kernel.infrastructure.ftshare_http import FTShareHTTP
+                        client_factory = FTShareHTTP
+                    client = client_factory()
+                    client.validate_credential()
+                    require(type(client.requests) is int and client.requests == 0, "FTSHARE_FRESH_CLIENT_REQUIRED")
+                guard(api)
+                require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+                if reference is None:
+                    saved = retain(collection, store, fresh)
+                    reference, collection = saved["reference"], saved["restored"]["collection"]
+                slot = min(pending, key=lambda candidate: _slot_order(collection, candidate))
+                unit["slot"] = slot
+                candidate = begin_ftshare_slot(collection, slot, at=clock())
+                unit["status"] = "reserving"
                 report()
-            guard(api)
-            require(count == 1, "FTSHARE_REQUEST_NOT_CONFIRMED")
-            source_hold, delay = _source_instruction(unit["transport"])
-            raw_reference = None
-            if failure is None:
-                retain_capture = retain_ftshare_single if single else retain_ftshare_batch
-                raw = retain_capture(captured, store, fresh_reader=fresh,
-                    custody_authorized=True, public_rights_confirmed=False)
-                raw_reference = raw["reference"]
-            if source_hold is None:
+                with measure_phase("ft.reserve"):
+                    saved = retain(candidate, store, fresh)
+                reference, collection = saved["reference"], saved["restored"]["collection"]
+                unit["status"] = "in-flight"
+                report()
+                guard(api)
+                require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+                spec = collection["plan"]["requests"][slot]["parameters"]
+                before, request_started, failure, captured = client.requests, monotonic(), None, None
                 try:
-                    sleep(delay)
-                except Exception:
-                    source_hold = "FTSHARE_WAIT_INSTRUCTION_UNUSABLE"
-            guard(api)
-            candidate = finish_ftshare_slot(collection, slot, at=clock(), reference=raw_reference,
-                reason_code=failure, source_hold=source_hold)
-            unit["status"] = "settling"
-            saved = retain(candidate, store, fresh)
-            reference, collection = saved["reference"], saved["restored"]["collection"]
-            unit["status"] = "complete" if failure is None else "failed"
-            if failure is not None:
-                receipt.update(status="failed", reason_code=failure)
+                    with measure_phase("ft.request"):
+                        if single:
+                            client.candlesticks(spec["symbol"], since=spec["since"], until=spec["until"],
+                                adjust_kind=spec["adjust_kind"])
+                        else:
+                            client.candlesticks_batch(spec["symbols"], since=spec["since"], until=spec["until"],
+                                adjust_kind=spec["adjust_kind"])
+                    with measure_phase("ft.capture"):
+                        require(isinstance(client.last_response_bytes, bytes), "FTSHARE_ORIGINAL_BODY_REQUIRED")
+                        if single:
+                            captured = capture_single(client.last_response_bytes, symbol=spec["symbol"],
+                                since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
+                        else:
+                            captured = capture_batch(client.last_response_bytes, symbols=spec["symbols"],
+                                since=spec["since"], until=spec["until"], adjust_kind=spec["adjust_kind"], acquired_at=clock())
+                except Exception as exc:
+                    failure = _safe_error(exc)
+                finally:
+                    count = client.requests - before
+                    require(type(count) is int and 0 <= count <= 1, "FTSHARE_ONE_CALL_PER_SLOT")
+                    unit.update(source_requests=count, transport=_transport(client, monotonic() - request_started))
+                    receipt["source_requests"] += count
+                    report()
+                guard(api)
+                require(count == 1, "FTSHARE_REQUEST_NOT_CONFIRMED")
+                source_hold, delay = _source_instruction(unit["transport"])
+                raw_reference = None
+                if failure is None:
+                    retain_capture = retain_ftshare_single if single else retain_ftshare_batch
+                    raw = retain_capture(captured, store, fresh_reader=fresh,
+                        custody_authorized=True, public_rights_confirmed=False)
+                    raw_reference = raw["reference"]
+                if source_hold is None:
+                    try:
+                        with measure_phase("ft.wait"):
+                            sleep(delay)
+                    except Exception:
+                        source_hold = "FTSHARE_WAIT_INSTRUCTION_UNUSABLE"
+                guard(api)
+                candidate = finish_ftshare_slot(collection, slot, at=clock(), reference=raw_reference,
+                    reason_code=failure, source_hold=source_hold)
+                unit["status"] = "settling"
+                with measure_phase("ft.settle"):
+                    saved = retain(candidate, store, fresh)
+                reference, collection = saved["reference"], saved["restored"]["collection"]
+                unit["status"] = "complete" if failure is None else "failed"
+                if failure is not None:
+                    receipt.update(status="failed", reason_code=failure)
+                    break
+                if source_hold is not None:
+                    receipt.update(status="source-held", reason_code=source_hold)
+                    break
+                remaining = _work_slot_counts(collection)
+                receipt["status"] = "partial" if remaining["pending"] else "exhausted" if remaining["failed"] else "complete"
+                if receipt["status"] in {"complete", "exhausted"}:
+                    break
+            except Exception as exc:
+                uncertain = isinstance(exc, UnknownWrite) or unit["status"] in {"reserving", "in-flight", "settling"}
+                from decision_kernel.infrastructure.github_store import write_failure_diagnostic
+                diagnosis = write_failure_diagnostic(exc)
+                if diagnosis is not None:
+                    receipt["write_last_failure"] = diagnosis
+                    unit["write_last_failure"] = diagnosis
+                receipt.update(status="persistence-unconfirmed" if uncertain else "blocked",
+                    reason_code=_safe_error(exc))
+                unit["status"] = receipt["status"]
                 break
-            if source_hold is not None:
-                receipt.update(status="source-held", reason_code=source_hold)
-                break
-            remaining = _work_slot_counts(collection)
-            receipt["status"] = "partial" if remaining["pending"] else "exhausted" if remaining["failed"] else "complete"
-            if receipt["status"] in {"complete", "exhausted"}:
-                break
-        except Exception as exc:
-            uncertain = isinstance(exc, UnknownWrite) or unit["status"] in {"reserving", "in-flight", "settling"}
-            from decision_kernel.infrastructure.github_store import write_failure_diagnostic
-            diagnosis = write_failure_diagnostic(exc)
-            if diagnosis is not None:
-                receipt["write_last_failure"] = diagnosis
-                unit["write_last_failure"] = diagnosis
-            receipt.update(status="persistence-unconfirmed" if uncertain else "blocked",
-                reason_code=_safe_error(exc))
-            unit["status"] = receipt["status"]
-            break
-        finally:
-            unit["store_api_requests"] = getattr(api, "_requests", None)
-            previous_limits = getattr(api, "rate_limits", None)
-            if isinstance(previous_limits, GitHubRateLimits):
-                receipt["store_rate_limits"] = previous_limits.receipt()
-            else:
-                previous_limits = None
-            report()
+            finally:
+                unit["store_api_requests"] = getattr(api, "_requests", None)
+                previous_limits = getattr(api, "rate_limits", None)
+                if isinstance(previous_limits, GitHubRateLimits):
+                    receipt["store_rate_limits"] = previous_limits.receipt()
+                else:
+                    previous_limits = None
+                report()
     receipt.update(finished_at=clock(), elapsed_seconds=round(max(0, monotonic() - started), 6))
     report()
     return {"receipt": receipt, "reference": reference}
 
 
+@diagnosed
 def run_runtime(event, env, out, *, execute=run_collection):
     config = configuration(_json(_regular(CONFIG_FILE, 65536)))
     selected = settings(event, env, config)
@@ -691,7 +699,9 @@ def run_runtime(event, env, out, *, execute=run_collection):
     out.mkdir(parents=False, exist_ok=False)
     receipt_path = out / "result.json"
     context = {k: selected[k] for k in ("operation", "code_sha", "run_id", "run_attempt")}
-    _save_receipt(receipt_path, {**context, "status": "configuration-validated", "source_requests": 0})
+    def save_receipt(value):
+        _save_receipt(receipt_path, annotate_performance(value, max_bytes=262144))
+    save_receipt({**context, "status": "configuration-validated", "source_requests": 0})
     try:
         require(not env.get(BINDING_ENV), "FTSHARE_RUNTIME_BINDING_OVERRIDE_FORBIDDEN")
         require(bool(env.get(TOKEN_ENV)), "FTSHARE_STORE_TOKEN_REQUIRED")
@@ -711,8 +721,8 @@ def run_runtime(event, env, out, *, execute=run_collection):
             calendar_references=selected["calendar_references"],
             client_factory=client_factory, kernel_loader=kernel_loader,
             guard=lambda api: check_private(api, selected),
-            progress=lambda value: _save_receipt(receipt_path, {**context, **value}))
-        _save_receipt(receipt_path, {**context, **result["receipt"]})
+            progress=lambda value: save_receipt({**context, **value}))
+        save_receipt({**context, **result["receipt"]})
         if result["reference"] is not None:
             # Only the private control artifact carries the exact source locator.
             _save_receipt(out / "control.json", {"schema": "ftshare-reading-control-v1",
@@ -721,7 +731,7 @@ def run_runtime(event, env, out, *, execute=run_collection):
         return 0 if result["receipt"]["status"] in {"complete", "already-complete", "read"} else 2
     except Exception as exc:
         saved = _json(_regular(receipt_path, 262144))
-        _save_receipt(receipt_path, {**saved, "status": "blocked", "reason_code": _safe_error(exc)})
+        save_receipt({**saved, "status": "blocked", "reason_code": _safe_error(exc)})
         return 2
     finally:
         print(_regular(receipt_path, 262144).decode(), end="")

@@ -175,6 +175,12 @@
 
 已用 Source10 的原 bundle 独立恢复真实范围，执行无网络、无 Store 写入的初始计划预检：计划 304,532 字节、初始状态 323,067 字节、根正文 323,839 / 524,288 字节、编码 SourceInput 375,077 / 2,097,152 字节，均通过现有结构与容量门槛。该预检确认 210 槽的初始包装可保管；最终完成根、真实 FTShare 正文、完整生产 bundle 和阅读室体积仍未获实际数据验证。
 
+### 有限运行的性能口径
+
+原 work-unit `transport.elapsed_seconds` 包含 `client.candlesticks()` 与 `capture_single/capture_batch` 的解析和转换，位于预留保管之后、原件保管及settle之前；它不是纯HTTP或socket耗时。整组duration减去这些区间只得到尚未分解的段外时间，不能把差额全部认作GitHub延迟。`store_api_requests` 仍是该原API实例的计数，不等于供应商计费或整轮远端写次数。
+
+正常有限运行复用[日更性能诊断](../architecture/daily-market.md#运行性能诊断)，在原客户端、验证、reserve、原件保管、settle和独立读回边界记录有界monotonic数据。日更内调用沿同一次诊断上下文；诊断不改变原response metadata、SourceInput或集合schema，也不新建API额度。原512 / 来源前240、每槽一次HTTP、hold和未知写停止继续生效；缺少生产阶段样本时不能从工程测试签发提速结论。
+
 ### 正常消费者与维护义务
 
 正常 `open_market`、CLI 和阅读室识别 FTShare 集合引用，独立恢复主表、日历及保管的 none / forward 正文，计算原有 5 / 20 / 60 日严格逐日窗口与独立端点结果。分页和实体筛选保留完整范围哈希、缺失分母和隔离项。缺失 counterpart、坏行、交易日缺口及 source_hold 均可见；forward 缺失不回填 raw。来源请求数必须为 0，展示数据来自 Store 的确切引用。

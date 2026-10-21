@@ -1,5 +1,6 @@
 """Explicit visibility-bound GitHub storage; native conditional commits, never a sync daemon."""
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import count_event, measure_phase, timed
 
 import base64
 from contextlib import contextmanager
@@ -289,6 +290,7 @@ class GitHubAPI:
                 or (method == "POST" and path == "/graphql" and isinstance(payload, dict)),
                 "API_OPERATION_NOT_ALLOWED")
         self._requests += 1
+        count_event("github_api_requests")
         if self._requests > MAX_REQUESTS:
             raise StoreUnavailable("REMOTE_REQUEST_LIMIT")
         data = encoded(payload) if payload is not None else None
@@ -299,14 +301,18 @@ class GitHubAPI:
         })
         self.rate_limits.debit("graphql" if method == "POST" else "core")
         try:
-            with self._opener.open(request, timeout=30) as response:
-                if response.status != 200 or response.geturl() != API_ROOT + path:
-                    raise IntegrityError("UNEXPECTED_REMOTE_RESPONSE")
-                self.rate_limits.observe(getattr(response, "headers", None))
-                raw = response.read(MAX_RESPONSE + 1)
-                if len(raw) > MAX_RESPONSE:
-                    raise IntegrityError("REMOTE_RESPONSE_TOO_LARGE")
-            return _json(raw)
+            with measure_phase("github.post" if method == "POST" else "github.get"):
+                count_event("github_post_requests" if method == "POST" else "github_get_requests")
+                with self._opener.open(request, timeout=30) as response:
+                    if response.status != 200 or response.geturl() != API_ROOT + path:
+                        raise IntegrityError("UNEXPECTED_REMOTE_RESPONSE")
+                    self.rate_limits.observe(getattr(response, "headers", None))
+                    with measure_phase("github.body"):
+                        raw = response.read(MAX_RESPONSE + 1)
+                    if len(raw) > MAX_RESPONSE:
+                        raise IntegrityError("REMOTE_RESPONSE_TOO_LARGE")
+            with measure_phase("github.json"):
+                return _json(raw)
         except HTTPError as exc:
             # Never include GitHub's error body, request URL or authorization in a public error.
             quota = self.rate_limits.observe(exc.headers)
@@ -552,6 +558,7 @@ class GitHubStore:
             raise IntegrityError("BLOB_DIGEST_MISMATCH")
         return raw
 
+    @timed("store.cas")
     def commit(self, files: dict[str, bytes], *, expected: str | None) -> str:
         require(self.binding.write_enabled, "REMOTE_READ_ONLY")
         _sha(expected)  # Initialization/branch creation is a separate, explicitly authorized operation.
@@ -586,31 +593,33 @@ class GitHubStore:
                                             for path, raw in sorted(files.items())]},
         }}}
         self._repository()  # Re-check immediately before sending write bytes.
-        value = self.api.request("POST", "/graphql", payload)
+        with measure_phase("store.cas_post"):
+            value = self.api.request("POST", "/graphql", payload)
         phase, classification = "response", None
         try:
-            if not isinstance(value, dict) or value.get("errors"):
-                # Includes CAS rejection: no automatic resend and no parsing private error prose.
-                classification = "graphql-errors" if isinstance(value, dict) else "response-invalid"
-                raise UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION")
-            commit = _sha(value["data"]["createCommitOnBranch"]["commit"]["oid"])
-            phase = "commit"
-            actual = self._commit(commit)
-            require(actual.get("parents") == [{"sha": expected}] or
-                    isinstance(actual.get("parents"), list) and len(actual["parents"]) == 1
-                    and actual["parents"][0].get("sha") == expected, "REMOTE_PARENT_MISMATCH")
-            phase = "binding"
-            self.check_commit(commit)
-            phase = "tree"
-            actual_tree = self._tree(commit)
-            require(set(actual_tree) == set(tree) | set(files), "REMOTE_WRITE_SET_CHANGED")
-            for path, row in tree.items():
-                if path not in files:
-                    require(actual_tree[path]["sha"] == row["sha"], "REMOTE_UNRELATED_CHANGE")
-            phase = "readback"
-            for path, raw in files.items():
-                require(self._read(commit, path, tree=actual_tree) == raw, "REMOTE_WRITE_READBACK_MISMATCH")
-            return commit
+            with measure_phase("store.cas_verify"):
+                if not isinstance(value, dict) or value.get("errors"):
+                    # Includes CAS rejection: no automatic resend and no parsing private error prose.
+                    classification = "graphql-errors" if isinstance(value, dict) else "response-invalid"
+                    raise UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION")
+                commit = _sha(value["data"]["createCommitOnBranch"]["commit"]["oid"])
+                phase = "commit"
+                actual = self._commit(commit)
+                require(actual.get("parents") == [{"sha": expected}] or
+                        isinstance(actual.get("parents"), list) and len(actual["parents"]) == 1
+                        and actual["parents"][0].get("sha") == expected, "REMOTE_PARENT_MISMATCH")
+                phase = "binding"
+                self.check_commit(commit)
+                phase = "tree"
+                actual_tree = self._tree(commit)
+                require(set(actual_tree) == set(tree) | set(files), "REMOTE_WRITE_SET_CHANGED")
+                for path, row in tree.items():
+                    if path not in files:
+                        require(actual_tree[path]["sha"] == row["sha"], "REMOTE_UNRELATED_CHANGE")
+                phase = "readback"
+                for path, raw in files.items():
+                    require(self._read(commit, path, tree=actual_tree) == raw, "REMOTE_WRITE_READBACK_MISMATCH")
+                return commit
         except (RecordError, KeyError, TypeError, AttributeError) as exc:
             error = UnknownWrite("REMOTE_WRITE_REQUIRES_RECONCILIATION")
             error.write_phase = phase

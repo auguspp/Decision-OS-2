@@ -1,5 +1,6 @@
 """Native GitHub daily host for the existing six-stock FTShare collection."""
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed, measure_phase, timed
 
 import argparse
 from copy import deepcopy
@@ -22,7 +23,7 @@ from decision_kernel.application.daily_market import (
 from decision_kernel.application.ftshare_collection_inputs import read_ftshare_collection_version
 from decision_kernel.application.market_capacity import market_capacity
 from decision_kernel.application.market_collection_runtime import health_receipt
-from decision_kernel.application.market_custody import fresh_market_reader, retain_market_query
+from decision_kernel.application.market_custody import fresh_market_reader, market_read_scope, retain_market_query
 from decision_kernel.application.market_relay_inputs import qualified_trade_calendar
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.research_sources import capture_registered
@@ -99,7 +100,8 @@ class DailyQuotaWindows:
             if delay <= 0:
                 return self._paused("DAILY_MARKET_QUOTA_WAIT_BOUND")
             before = self.monotonic()
-            self.sleep(delay)
+            with measure_phase("quota.wait"):
+                self.sleep(delay)
             elapsed = self.monotonic() - before
             if not math.isfinite(elapsed) or elapsed <= 0:
                 return self._paused("DAILY_MARKET_QUOTA_CLOCK")
@@ -227,6 +229,7 @@ def _reconciliation_summary(cycle):
         "original_price_pending_requests": 11}
 
 
+@timed("daily.execute")
 def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               guard=None, calendar_client_factory=None, price_client_factory=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
@@ -297,9 +300,11 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         update()
     def unit(write):
         store, fresh, api = open_unit(write)
-        guard(api)
+        with measure_phase("daily.guard"):
+            guard(api)
         if write:
-            require(capacity(fresh())["admit_work_unit"] is True, "DAILY_MARKET_STORAGE_CAPACITY")
+            with measure_phase("daily.capacity"):
+                require(capacity(fresh())["admit_work_unit"] is True, "DAILY_MARKET_STORAGE_CAPACITY")
             _admit(api)
         return store, fresh, api
     def refresh_masters():
@@ -425,68 +430,70 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 for venue, use in zip(VENUES, plan["requests"], strict=True):
                     if item["cycle"]["calendars"][venue]["status"] == "complete":
                         continue
-                    store, fresh, api = unit(True)
-                    if repair_new and item["cycle"]["calendars"][venue]["status"] == "failed":
-                        from decision_kernel.application.daily_calendar_repair import reserve
-                        state = reserve(item, calendar_repair, at=clock())
-                        repair_new = False
-                    else:
+                    with measure_phase("daily.calendar"):
+                        store, fresh, api = unit(True)
+                        if repair_new and item["cycle"]["calendars"][venue]["status"] == "failed":
+                            from decision_kernel.application.daily_calendar_repair import reserve
+                            state = reserve(item, calendar_repair, at=clock())
+                            repair_new = False
+                        else:
+                            calendars = deepcopy(item["cycle"]["calendars"])
+                            calendars[venue].update(status="in-flight", reserved_requests=1)
+                            state = next_state(item, at=clock(), calendars=calendars)
+                        save(state, store, fresh)
                         calendars = deepcopy(item["cycle"]["calendars"])
-                        calendars[venue].update(status="in-flight", reserved_requests=1)
-                        state = next_state(item, at=clock(), calendars=calendars)
-                    save(state, store, fresh)
-                    calendars = deepcopy(item["cycle"]["calendars"])
-                    guard(api)
-                    _admit(api)
-                    request_started = None
-                    try:
-                        if calendar_client is None:
-                            calendar_client = (calendar_client_factory or RelayHTTP)()
-                            calendar_client.validate_credential()
-                            require(type(calendar_client.requests) is int and calendar_client.requests == 0,
-                                "DAILY_MARKET_FRESH_CALENDAR_CLIENT")
-                        before = calendar_client.requests
-                        require(before < 2, "DAILY_MARKET_CALENDAR_BUDGET")
-                        session = RetryingRelay(calendar_client, RetryPolicy(max_attempts=1, max_wait_seconds=0),
-                            clock=clock, monotonic=monotonic, deadline=monotonic() + 600)
-                        request_started = monotonic()
+                        guard(api)
+                        _admit(api)
+                        request_started = None
                         try:
-                            captured = capture_registered(use, registry, session, max_pages=1)
-                        finally:
-                            count = calendar_client.requests - before
-                            require(type(count) is int and 0 <= count <= 1, "DAILY_MARKET_ONE_CALENDAR_REQUEST")
-                            report["calendar_source_requests"] += count
-                            update()
-                        require(count == 1 and captured["complete"] and captured["error"] is None
-                            and len(captured["pages"]) == 1, captured["error"] or "DAILY_MARKET_CALENDAR_INCOMPLETE")
-                        result = {"case_id": plan["case_id"], "use": use, "status": "captured", "capture": captured}
-                        qualified_trade_calendar(result, registry=registry, exchange=venue,
-                            start=cycle["calendar_start"], end=cycle["calendar_end"])
-                        guard(api)
-                        retained = retain_market_query(result, registry, store, fresh_reader=fresh,
-                            custody_authorized=True, public_rights_confirmed=False)
-                        hold, delay = _source_instruction({**(calendar_client.last_response_meta or {}),
-                            "rate_limits": calendar_client.last_header_diagnostics or {}})
-                        require(hold is None, (hold or "DAILY_MARKET_CALENDAR_WAIT").replace(
-                            "FTSHARE_", "DAILY_MARKET_CALENDAR_"))
-                        sleep(delay)
-                        calendars[venue].update(status="complete", reference=retained["reference"])
-                        save(next_state(item, at=clock(), calendars=calendars), store, fresh)
-                    except Exception as exc:
-                        # A lost Store response keeps the durable in-flight reservation.
-                        # No new date/run id can reserve this query again.
-                        if isinstance(exc, UnknownWrite):
+                            if calendar_client is None:
+                                calendar_client = (calendar_client_factory or RelayHTTP)()
+                                calendar_client.validate_credential()
+                                require(type(calendar_client.requests) is int and calendar_client.requests == 0,
+                                    "DAILY_MARKET_FRESH_CALENDAR_CLIENT")
+                            before = calendar_client.requests
+                            require(before < 2, "DAILY_MARKET_CALENDAR_BUDGET")
+                            session = RetryingRelay(calendar_client, RetryPolicy(max_attempts=1, max_wait_seconds=0),
+                                clock=clock, monotonic=monotonic, deadline=monotonic() + 600)
+                            request_started = monotonic()
+                            try:
+                                captured = capture_registered(use, registry, session, max_pages=1)
+                            finally:
+                                count = calendar_client.requests - before
+                                require(type(count) is int and 0 <= count <= 1, "DAILY_MARKET_ONE_CALENDAR_REQUEST")
+                                report["calendar_source_requests"] += count
+                                update()
+                            require(count == 1 and captured["complete"] and captured["error"] is None
+                                and len(captured["pages"]) == 1, captured["error"] or "DAILY_MARKET_CALENDAR_INCOMPLETE")
+                            result = {"case_id": plan["case_id"], "use": use, "status": "captured", "capture": captured}
+                            qualified_trade_calendar(result, registry=registry, exchange=venue,
+                                start=cycle["calendar_start"], end=cycle["calendar_end"])
+                            guard(api)
+                            retained = retain_market_query(result, registry, store, fresh_reader=fresh,
+                                custody_authorized=True, public_rights_confirmed=False)
+                            hold, delay = _source_instruction({**(calendar_client.last_response_meta or {}),
+                                "rate_limits": calendar_client.last_header_diagnostics or {}})
+                            require(hold is None, (hold or "DAILY_MARKET_CALENDAR_WAIT").replace(
+                                "FTSHARE_", "DAILY_MARKET_CALENDAR_"))
+                            with measure_phase("relay.wait"):
+                                sleep(delay)
+                            calendars[venue].update(status="complete", reference=retained["reference"])
+                            save(next_state(item, at=clock(), calendars=calendars), store, fresh)
+                        except Exception as exc:
+                            # A lost Store response keeps the durable in-flight reservation.
+                            # No new date/run id can reserve this query again.
+                            if isinstance(exc, UnknownWrite):
+                                raise
+                            if request_started is not None:
+                                from decision_kernel.application.daily_calendar_repair import diagnostic
+                                report["calendar_last_failure"] = diagnostic(venue, calendar_client,
+                                    elapsed_seconds=monotonic() - request_started)
+                                update()
+                            guard(api)
+                            calendars[venue].update(status="failed", reference=None, reason_code=_reason(exc))
+                            save(next_state(item, at=clock(), calendars=calendars,
+                                status="blocked", reason_code=_reason(exc)), store, fresh)
                             raise
-                        if request_started is not None:
-                            from decision_kernel.application.daily_calendar_repair import diagnostic
-                            report["calendar_last_failure"] = diagnostic(venue, calendar_client,
-                                elapsed_seconds=monotonic() - request_started)
-                            update()
-                        guard(api)
-                        calendars[venue].update(status="failed", reference=None, reason_code=_reason(exc))
-                        save(next_state(item, at=clock(), calendars=calendars,
-                            status="blocked", reason_code=_reason(exc)), store, fresh)
-                        raise
                 if item["cycle"]["status"] == "calendar-pending":
                     try:
                         session = completed_session(item["cycle"], registry, fresh_market_reader(store, fresh))
@@ -501,7 +508,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         save(next_state(item, at=clock(), status="blocked", reason_code=_reason(exc)), store, fresh)
                         raise
                 if item["cycle"]["status"] == "master-pending":
-                    refresh_masters()
+                    with measure_phase("daily.masters"):
+                        refresh_masters()
                 if item["cycle"]["status"] == "market-pending":
                     config = price_configuration(item["cycle"], approved, registry, fresh_market_reader(store, fresh))
                     references = {venue: item["cycle"]["calendars"][venue]["reference"] for venue in VENUES}
@@ -509,14 +517,15 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         report["price_source_requests"] = value["source_requests"]
                         report["price_execution"] = value
                         update()
-                    executed = execute_prices(operation="ftshare-sync", config=config, registry=registry,
-                        open_unit=open_unit, max_work_units=approved["max_price_requests"],
-                        access_confirmed=True, custody_authorized=True, client_factory=price_client_factory,
-                        guard=guard, progress=price_progress, clock=clock, monotonic=monotonic,
-                        sleep=sleep, capacity=capacity, calendar_references=references,
-                        **({"master_references": {v: item["cycle"]["masters"][v]["reference"] for v in VENUES}}
-                            if item["cycle"]["schema"] == MASTER_SCHEMA else {}),
-                        quota_wait=getattr(open_unit, "quota_wait", None))
+                    with measure_phase("daily.ft"):
+                        executed = execute_prices(operation="ftshare-sync", config=config, registry=registry,
+                            open_unit=open_unit, max_work_units=approved["max_price_requests"],
+                            access_confirmed=True, custody_authorized=True, client_factory=price_client_factory,
+                            guard=guard, progress=price_progress, clock=clock, monotonic=monotonic,
+                            sleep=sleep, capacity=capacity, calendar_references=references,
+                            **({"master_references": {v: item["cycle"]["masters"][v]["reference"] for v in VENUES}}
+                                if item["cycle"]["schema"] == MASTER_SCHEMA else {}),
+                            quota_wait=getattr(open_unit, "quota_wait", None))
                     price = executed["receipt"]
                     report["price_source_requests"], report["price_execution"] = price["source_requests"], price
                     if price.get("write_last_failure") is not None:
@@ -547,35 +556,52 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     try:
         _, fresh, api = unit(False)
         reader = fresh()
-        resolved = daily_market_reference(reader, registry, approved)
-        control.update(market_reference=resolved["reference"], cycle_reference=resolved["cycle_reference"])
-        for key in ("frontier_reason_code", "frontier_blocking_reference", "frontier_successor_references"):
-            control[key] = deepcopy(resolved[key])
-        if resolved["frontier_reason_code"] is not None:
-            report["frontier_reason_code"] = resolved["frontier_reason_code"]
-            if report["status"] in {"read", "complete", "already-complete", "no-new-session"}:
-                report.update(status="blocked", reason_code=resolved["frontier_reason_code"])
-        if resolved["cycle"] is not None:
-            current = resolved["cycle"]
-            reconciliation = _reconciliation_summary(current)
-            if reconciliation is not None:
-                report["write_reconciliation"] = reconciliation
-            report["calendar_reserved_requests"] = sum(row["reserved_requests"] for row in current["calendars"].values())
-            if current.get("calendar_repair") is not None:
-                report.update(calendar_original_source_budget=2, calendar_additional_source_budget=1,
-                    calendar_source_budget=3, calendar_repair=deepcopy(current["calendar_repair"]))
-            control.update(generation=current["market_generation"], calendar_references={venue: row["reference"]
-                for venue, row in current["calendars"].items() if row["reference"] is not None})
-            if current["schema"] == MASTER_SCHEMA:
-                control["master_references"] = {venue: row["reference"]
-                    for venue, row in current["masters"].items() if row["reference"] is not None}
-            report.update(cycle_date=current["date"], cycle_status=current["status"],
-                calendar_checked_through=current["calendar_end"]
-                    if all(row["status"] == "complete" for row in current["calendars"].values()) else None,
-                expected_completed_session=current["price_end"])
-        reading = read_ftshare_collection_version(resolved["reference"], registry, reader, read_as_of=clock())
-        report["health"] = health_receipt(reading)
-        guard(api)
+        pending_control, pending_report = deepcopy(control), deepcopy(report)
+        reading_failure = None
+        with measure_phase("daily.read_scope"), market_read_scope(reader) as grouped:
+            with measure_phase("daily.resolve"):
+                resolved = daily_market_reference(grouped, registry, approved)
+            pending_control.update(market_reference=resolved["reference"], cycle_reference=resolved["cycle_reference"])
+            for key in ("frontier_reason_code", "frontier_blocking_reference", "frontier_successor_references"):
+                pending_control[key] = deepcopy(resolved[key])
+            if resolved["frontier_reason_code"] is not None:
+                pending_report["frontier_reason_code"] = resolved["frontier_reason_code"]
+                if pending_report["status"] in {"read", "complete", "already-complete", "no-new-session"}:
+                    pending_report.update(status="blocked", reason_code=resolved["frontier_reason_code"])
+            if resolved["cycle"] is not None:
+                current = resolved["cycle"]
+                reconciliation = _reconciliation_summary(current)
+                if reconciliation is not None:
+                    pending_report["write_reconciliation"] = reconciliation
+                pending_report["calendar_reserved_requests"] = sum(row["reserved_requests"] for row in current["calendars"].values())
+                if current.get("calendar_repair") is not None:
+                    pending_report.update(calendar_original_source_budget=2, calendar_additional_source_budget=1,
+                        calendar_source_budget=3, calendar_repair=deepcopy(current["calendar_repair"]))
+                pending_control.update(generation=current["market_generation"], calendar_references={venue: row["reference"]
+                    for venue, row in current["calendars"].items() if row["reference"] is not None})
+                if current["schema"] == MASTER_SCHEMA:
+                    pending_control["master_references"] = {venue: row["reference"]
+                        for venue, row in current["masters"].items() if row["reference"] is not None}
+                pending_report.update(cycle_date=current["date"], cycle_status=current["status"],
+                    calendar_checked_through=current["calendar_end"]
+                        if all(row["status"] == "complete" for row in current["calendars"].values()) else None,
+                    expected_completed_session=current["price_end"])
+            try:
+                with measure_phase("daily.ft_read"):
+                    reading = read_ftshare_collection_version(resolved["reference"], registry, grouped, read_as_of=clock())
+                with measure_phase("daily.health"):
+                    pending_report["health"] = health_receipt(reading)
+            except Exception as exc:
+                # A qualified frontier may remain useful when its FT view is
+                # unavailable, but it must first pass the same final live check.
+                reading_failure = exc
+        if reading_failure is None:
+            with measure_phase("daily.guard"):
+                guard(api)
+        control.update(pending_control)
+        report.update(pending_report)
+        if reading_failure is not None:
+            raise reading_failure
     except Exception as exc:
         report["reading_reason_code"] = _reason(exc)
         if report["status"] in {"read", "complete", "already-complete", "no-new-session"}:
@@ -585,6 +611,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     return {"receipt": report, "control": control}
 
 
+@diagnosed
 def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily):
     approved = policy(_json(_regular(POLICY_FILE, 8192)))
     selected = settings(event, env, approved)
@@ -615,7 +642,7 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
     require(0 <= (now - created).total_seconds() < 24 * 3600, "DAILY_MARKET_NATIVE_CLOCK")
     out.mkdir(parents=False, exist_ok=False)
     def progress(receipt, control):
-        _save_receipt(out / "result.json", {**receipt, **selected, "native_proof": proof})
+        _save_receipt(out / "result.json", annotate_performance({**receipt, **selected, "native_proof": proof}))
         _save_receipt(out / "control.json", control)
     executed = execute(approved=approved, registry=RelayRegistry(REGISTRY),
         open_unit=open_unit or remote_units(env[TOKEN_ENV], selected), operation=selected["operation"],

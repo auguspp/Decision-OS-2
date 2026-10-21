@@ -95,6 +95,29 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 人用入口为[本工作流页面](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)最近一次运行的 Summary。完整页面与精确引用在该次私有产物中；没有另建网站、自动发布或第二个当前状态文件。工作流的 schedule 路由不依赖未保证存在的事件 repository.private 字段，所有来源与 Store 副作用前及输出释放前仍由原生 API 严格核私有仓库身份。
 
+## 运行性能诊断
+
+日更和相依 FT 运行的 `performance` 是同一次操作中的有界阶段诊断，随原运行回执保留。它使用标准库 monotonic 时钟观察现有调用边界，记录固定阶段标签、实际次数和有限时长样本；没有独立采集器、存储、网络探测或新的执行额度。历史 `result.json` 没有该字段仍按原合同读取。来源回执的完整摘要继续绑定新增诊断，产品页面的既有 `UPDATE_FIELDS` 不展开这些内部明细。
+
+| 可观察边界 | 解释 |
+|---|---|
+| Relay / FT 客户端的实际传输、正文读取与解析 | 只计进入该边界的真实调用。HTTP状态、cache、原始字节和请求身份仍以各自原回执为准。 |
+| 预留、原件与控制保存、CAS、正常独立读回 | 计时只观察原写入及读取过程；阶段返回或抛出不证明远端写入效果。未知写仍按原键对账。 |
+| 原生准入、容量、快照获取与固定版本读取 | 只观察现有动作，共享原 API 实例及原512请求硬上限；不缓存live权限、main/records head或重新分配额度。 |
+| 日历、完整主表单元、FT组、终态读取及实际等待 | 上层阶段包含其内部阶段，不能把嵌套时间相加当总耗时。跨进程以各自实际duration和原生job时钟关联。 |
+
+诊断最多128KiB、512条有序阶段样本，每个固定阶段最多保留前32个可计时的完成样本。P50/P95按这组包含正常返回与抛出异常的样本计算nearest-rank，不能解释为整个运行的成功请求分位数。阶段总时长和计数都包含嵌套调用；有序日历/主表/FT单元另记其计数增量。`github_api_requests`沿原API owner的预算计数（包括超过硬上限而拒绝的调用），GET/POST另计真正获准进入dispatch的次数。Relay/FT分别记录原owner请求计数和进入opener的`wire_attempts`；进入传输边界不证明远端收到了请求、返回成功或确认写入。
+
+计时缺失、无效或样本超限明确保留unknown / truncation；全部duration未知的阶段总时长为null，不补零。超过既有回执总字节上限时，诊断缩为显式省略标记；连标记也无法容纳时保持原回执，字段缺失表示未知。诊断内容不接受任意URL、路径、请求头、正文、供应商错误文本或凭据。诊断不进入SourceInput、query key、attempts、checkpoint、cycle、FT plan、journal或CAS意图；原严格schema与历史摘要保持。
+
+source `result.json`在原来源入口结束时封存；Discovery和Reading分别在既有`discovery-result.json`与完整阅读模型中保留自己的诊断，不回写已被两者绑定摘要的source回执，也不增加第七个产物。Reading在构建模型后封存输出对象，JSON、HTML和summary消费同一模型。若附加诊断触发原8MiB HTML门，只回退原模型重渲染一次；原模型仍超限则按原门拒绝，诊断缺失仍表示unknown。渲染及最终原生资格检查不计入模型内duration，完整步骤耗时仍以原生job时钟为准。
+
+两个旧计时字段继续采用原语义：Relay checkpoint 的 `requested_at` 在同步保存 in-flight reservation **之前**取得，至 `received_at` 的区间还包含保管、独立读回及请求前guard，不能解释为纯HTTP；FT原 `transport.elapsed_seconds` 包含客户端调用和capture转换，不能解释为纯socket时间。原Git提交时钟与页间差额可以定位未分解区间，不能替代各阶段实际计时。
+
+终态 `daily_market_reference`、control与正常FT health读取在同一个现役 `market_read_scope` 中完成。这个无中间写入的只读组复用同一已验证snapshot及其有界immutable memo，减少重复clone和相同对象读取；原外层入口/退出live验证及最终guard继续执行。独立写后读回仍打开其自己的fresh scope，不能以本组旧快照确认新写入。
+
+本能力由日更owner维护，与实际来源、保管和读取调用点一起退出；没有正常消费者后不保留一套空运行诊断框架。验证应覆盖计时边界、原失败和未知写停止、严格历史恢复、原预算、同快照出口失败及诊断容量。正式CI和合并仅证明工程合同；性能责任须在真实新业务日或自然窗口按同口径比较两所完整主表、全部页72小时、原FT12、Reading/Watch、失败恢复、新鲜度及总耗时。单次成功、合成计时或省去一次clone均不能代签持续生产性能。
+
 ## 暂停、回退与证明边界
 
 可以在 GitHub 原生界面停用本工作流，或经普通 PR 将本专属配置 `enabled` 置为 false。暂停不删除历史、不清除失败、不取消已有在途操作；在途结果仍按原引用核对。恢复 enabled 只恢复原合同，不能解锁已失败周期。代码回退使用普通反向 PR；新增 records 原件与它们的现役只读支持继续保留，不强制回退业务分支。

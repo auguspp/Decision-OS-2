@@ -18,8 +18,10 @@ from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.git_snapshot import GitSnapshot, MAX_BUNDLE_BYTES
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore, github_tree_inventory
 from decision_kernel.infrastructure.native_git_memo import native_git_memo_scope
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 
+@timed("snapshot.fetch")
 def _fetch_market_branch(binding, api, destination):
     """Fixed GitHub origin only; credentials exist only in this child's environment."""
     require(isinstance(binding, GitHubBinding) and not binding.write_enabled
@@ -74,19 +76,22 @@ class GitMarketReader:
             finally:
                 self._depth -= 1
             return
-        remote = GitHubStore(self.binding, self.api)
-        snapshot = remote.head()
+        with measure_phase("snapshot.admit"):
+            remote = GitHubStore(self.binding, self.api)
+            snapshot = remote.head()
         with TemporaryDirectory(prefix="dos2-market-read-") as temporary:
             root = Path(temporary) / "records.git"
             self._fetch(self.binding, self.api, root)
-            native = GitSnapshot(root, self.binding, snapshot)
+            with measure_phase("snapshot.init"):
+                native = GitSnapshot(root, self.binding, snapshot)
             with native_git_memo_scope(native, closed_error="MARKET_SNAPSHOT_SCOPE_CLOSED",
                     read_only_error="MARKET_SNAPSHOT_READ_ONLY") as reader:
                 self._reader = reader
                 self._depth = 1
                 try:
                     yield self
-                    remote.check_commit(snapshot)
+                    with measure_phase("snapshot.exit"):
+                        remote.check_commit(snapshot)
                 finally:
                     self._depth = 0
                     self._reader = None
@@ -97,6 +102,7 @@ class GitMarketReader:
             self._reader.check_commit(snapshot)
             yield self
 
+    @timed("snapshot.read")
     def _call(self, method, *args, **kwargs):
         if self._depth:
             return getattr(self._reader, method)(*args, **kwargs)

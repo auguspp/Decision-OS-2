@@ -4,6 +4,7 @@ The retained representation is the existing requested-column excerpt, NOT wire
 bytes or execution diagnostics. No Relay calls, source store, or retry loop here.
 """
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 from contextlib import contextmanager
 from copy import deepcopy
@@ -239,7 +240,8 @@ def _retain_prepared_query(header, sources, registry, store, reader, page_cache)
             page_cache[identity] = _put(store, source)
         page_refs.append({"reference": asdict(page_cache[identity]), "source_sha256": identity})
     reference = _put(store, _manifest_source(QUERY_SCHEMA, {**header, "pages": page_refs}))
-    return restore_market_query(reference, registry, reader)
+    with measure_phase("query.readback"):
+        return restore_market_query(reference, registry, reader)
 
 
 def _read_source(store, reference):
@@ -339,6 +341,7 @@ def _restore_market_query(reference, registry, store):
             "original_http_restored": False}
 
 
+@timed("query.save")
 def retain_market_query(result, registry, store, *, fresh_reader, custody_authorized=False,
                         public_rights_confirmed=False, checkpoint_reference=None):
     """Retain one complete query through the same page/query SourceRef chain.

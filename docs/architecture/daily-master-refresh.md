@@ -48,6 +48,12 @@ v4 的 `daily_policy` 保存本周期批准日更政策的规范快照（仅去�
 
 正常FT view保留新scope、隔离与来源引用，并显示每所 `capture_times.L` 的原逐页取得时点。ReadingRoom消费原同一FT引用，不接受单独较新的主表参数代替旧FT context。#60原政策 **quote3/master3/capital35天**及主表全部页72小时要求不变；其正常只读资格必须在实际新引用与实际评价时刻另行成立。
 
+## 时间口径与运行诊断
+
+原 Relay checkpoint 的 `attempt.requested_at` 在同步保管 in-flight reservation之前取得；持久预留及独立读回完成、原guard与deadline通过后，才发出该次HTTP。因此 `requested_at → received_at` 是原attempt的包围区间，可能包含较长的请求前保管，不能按cacheHIT或区间长度推定上游延迟。响应后的页间差额同样不能全部归为Store写入。
+
+现役[日更性能诊断](daily-market.md#运行性能诊断)在原owner边界另记实际阶段，保持原attempt字段、完整分页、重试/等待、原预留与控制摘要不变。诊断只帮助区分实际传输、校验、保管和独立读回；它不能授权跳过fresh读取、并行写records或以只含六股的主表提速。
+
 ## 验证与退出
 
 工程验证覆盖完整多页原检查点接续、页及重试预算、0请求推广、未知/失败与所有权变化停止、新主表scope和已有owner保护、计划保管及两代独立Git恢复、正常日更与Reading采用、旧周期继续按原预算，以及新周期在同日重复调用时0来源。合成来源只证明工程语义，不能证明实际刷新已完成、现在的证券数量或自然调度连续性。

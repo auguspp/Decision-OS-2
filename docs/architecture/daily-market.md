@@ -1,6 +1,6 @@
 # 有界 A 股日常更新
 
-责任：#10 的日线来源与 #13 的正常阅读；批次归 [#147](https://github.com/auguspp/Decision-OS-2/issues/147)。用户在 2026-10-19 要求登记 Kernel / OS2 差距、分批实现并先实现第一批，其中包含常态更新。本合同把这项新授权落实到已有 GitHub Actions、同仓 private `records` 和现役 FTShare v1 日线集合，不改变旧一次性 study、旧失败额度或研究委托。
+责任：#10 的日线来源与 #13 的时钟接入、正常阅读；批次归 [#147](https://github.com/auguspp/Decision-OS-2/issues/147)。用户在 2026-10-19 要求登记 Kernel / OS2 差距、分批实现并先实现第一批，其中包含常态更新。本合同把这项新授权落实到已有 GitHub Actions、同仓 private `records` 和现役 FTShare v1 日线集合，不改变旧一次性 study、旧失败额度或研究委托。
 
 ## 真实范围与周期
 
@@ -10,19 +10,21 @@
 
 可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。原完整主表的 5226 只分母留在旧版本；新完整主表采用时由实际 scope 重建分母，隔离项和未覆盖证券继续计数。六只日常更新不能代签全市场完成。
 
-[daily-market.yml](../../.github/workflows/daily-market.yml) 使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。时区换算固定 UTC+8，没有自建时钟服务。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
+[daily-market.yml](../../.github/workflows/daily-market.yml) 默认使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。独立 [daily-market-clock.json](../../config/daily-market-clock.json) 选择唯一主时钟；外部固定入口、零业务 probe 及实际切换按[外部日更时钟合同](../engineering/external-daily-clock.md)执行，未核服务商配置前继续原 GitHub 时钟。换钟不改变本文件的 source policy、周期或预算。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
 
 每个业务日期至多建立一个正常日更周期，一次调用最多推进一个既存或新周期。日历与价格原预算仍为 **2 个实际交易日历请求 + 12 个 FTShare 单股整段请求**；新 v4 周期另有两所完整主表查询，各最多20页、每页500行及原4次尝试/180秒等待，最多40页/160次实际主表HTTP，不能把两次完整查询写成只有两次HTTP。两所 `trade_cal` 返回全部开闭市日，按实际完整日历决定最后已完成交易日，不凭星期推定开市。休市且没有新增交易日时只保留实际日历与原市场引用，不重抓主表或价格。新开市日使用最长119自然日整段窗口；是否足够5/20/60交易日比较由实际会话及价格点判定，119天不是保证，缺点继续显示partial。
 
 ### 延迟调度与显式补更
 
-原生 `schedule` 和显式手动 `recover-late` 从该次运行真实 `created_at` 之前最近的工作日 18:35 选择业务槽，创建时刻距该槽必须严格小于 24 小时。选择只决定业务日期、日历窗口和确定的 generation，来源授权与旧预算不变。例如原生创建于 `2026-10-19T17:07:33Z`，北京时间已到 10/20 01:07:33，仍选择 10/19 18:35 的槽。周五迟到周六且不足 24 小时可以选择周五；到周六 18:35、周日或周一 18:35 前已没有符合窗口的旧槽，返回 `not-due / DAILY_MARKET_NO_RECENT_SCHEDULE`，不取来源、不写新周期。
+被选中的自动时钟（原生 `schedule` 或 `external-clock`）和显式手动 `recover-late` 从该次运行真实 `created_at` 之前最近的工作日 18:35 选择业务槽，创建时刻距该槽必须严格小于 24 小时。选择只决定业务日期、日历窗口和确定的 generation，来源授权与旧预算不变。例如原生创建于 `2026-10-19T17:07:33Z`，北京时间已到 10/20 01:07:33，仍选择 10/19 18:35 的槽。周五迟到周六且不足 24 小时可以选择周五；到周六 18:35、周日或周一 18:35 前已没有符合窗口的旧槽，返回 `not-due / DAILY_MARKET_NO_RECENT_SCHEDULE`，不取来源、不写新周期。
 
 | 原生调用 | 日期准入与记录 |
 |---|---|
 | 手动 `status` | 只读原状态，无来源凭据；不选择新周期。 |
 | 手动 `update` | 保留当日本地 18:35 门槛，不自动补上一日。 |
-| 自动 `schedule` | 按原生创建时刻选择最近且不足 24 小时的已到期工作日槽。 |
+| 自动 `schedule` | primary=github-schedule 时准入，按原生创建时刻选择最近且不足 24 小时的已到期工作日槽。 |
+| `external-clock` | primary=external-cron 时进入同一 update，采用同一个原生创建时钟和业务槽；event 仍为 workflow_dispatch，不单凭入口标识证明外部自然触发。 |
+| `clock-probe` | 独立工程元数据检查；不选择或读取业务周期，不进入日更、发现或阅读消费者。 |
 | 手动 `recover-late` | 显式补同一有限窗口内的最近槽；执行行为为 `update`，回执保留 `invocation=recover-late`。 |
 
 `recover-late` 没有任意日期、旧 run、额外来源额度或强制跳过状态的输入。已有同一业务日完成记录时只读；旧周期未结束时先恢复原链，安全 pending 只继续剩余工作，失败、hold 和未知预留仍停止。该入口可补一个仍在最近槽窗口内的实际遗漏，不能选择更早历史日，也不能把后来的新周期或包含旧日的整段行情称作已恢复那个遗漏周期。
@@ -59,7 +61,9 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
   --out "$RUNNER_TEMP/dos2-daily-market"
 ```
 
-自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；手动输入只接受 `operation=update|status|recover-late|repair-calendar|reconcile-write` 和确切 `code_sha`。两个恢复入口各自加载固定获审配置。宿主重新核原生仓库 ID / 可见性与部署授权、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。回执分别记录真实 `invocation=schedule|update|status|recover-late|repair-calendar|reconcile-write` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
+自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；原手动 `operation=update|status|recover-late|repair-calendar|reconcile-write` 继续要求确切 `code_sha`。两个恢复入口各自加载固定获审配置。宿主重新核原生仓库 ID / 可见性与部署授权、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。业务回执分别记录真实 `invocation=schedule|external-clock|update|status|recover-late|repair-calendar|reconcile-write` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
+
+只有 `external-clock` / `clock-probe` 接受固定 `code_sha=current-main`，并立即绑定该次原生 `GITHUB_SHA`；旧手动入口不接受这个标记。真实宿主明确加载固定 clock 配置，缺失或损坏即停止。被选中的自动生产在 visibility 阶段、注入来源密钥前先核当前 main 和 CI，实际宿主与消费者再次检查。`clock-probe` 只进入独立只读 job，输出 `probe.json` / `probe.md`，0 来源请求、0 records 读写、0 dispatch/通知；不得把它转入普通 status 后读取业务。配置、实际启用、自然来源和消费者采用仍按外部时钟合同分别验收。
 
 周期准入固定使用原生运行创建时刻，不能因队列或同次安全 quota 等待跨过午夜、甚至下一次 18:35，就领取另一天的预算。进入宿主时，真实当前时间必须不早于该原生创建时刻，且相差严格小于 24 小时；这个队列年龄上限与原生创建时刻距业务槽的不足 24 小时上限分别成立。新建周期的实际创建时间不早于其原生准入时间；采集和正常读取仍使用当时真实时钟，不回填成槽的时刻。
 
@@ -89,7 +93,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 当前阅读的 `market_reference` 可以晚于已完成周期内保存的 `market_reference`；`cycle_reference` 和周期 generation 仍标识原周期。旧周期完成与当前扩面失败分别显示，运行回执和正常阅读保留当前阻断 / partial，不把旧周期改写成失败，也不借旧周期的 complete 掩盖后续失败。正式报告、研究采用和人工决定仍按原版本独立进行。
 
-`status` 作业只有 contents / actions 读取权限，没有来源 Secret。`update`、`recover-late` 与自动调度沿用同一个更新作业，使用现有来源 Secret 和原 `records` 写入权限，Secret 不交给后续阅读步骤。产物发布前再核一次原生 private / main。读取和操作失败保留本次 failure / partial，不能用上一份成功报表代替。Actions 产物有到期日；持久真源仍是原 records。
+`status` 作业只有 contents / actions 读取权限，没有来源 Secret。`update`、`recover-late` 与被选中的自动时钟（schedule/external-clock）沿用同一个更新作业，使用现有来源 Secret 和原 `records` 写入权限，Secret 不交给后续阅读步骤。产物发布前再核一次原生 private / main。读取和操作失败保留本次 failure / partial，不能用上一份成功报表代替。Actions 产物有到期日；持久真源仍是原 records。
 
 正常阅读步骤运行 `python -m decision_kernel.interfaces.daily_reading_cli --out "$RUNNER_TEMP/dos2-daily-market"`，只取得 Store 读取凭据，复用原 `reading_commands.perform` 的单次权限/预算作用域。它核对同目录 `result.json` 的原生本次 run、代码与事件身份，通过 `daily_market_reference` 取得最新实际尝试，再使用 `brief={"select":"latest-saved"}` 从原发行目录发现并固定简报。读失败、坏控制链或旧内容继续显示原缺口，不借重新生成 HTML 声称今日已发行新 Brief。该步骤不取得新闻或行情，不写 records，也不自动更新研究判断。
 

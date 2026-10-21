@@ -519,7 +519,52 @@ def test_pointer_overwrite_keeps_same_tree_count_at_boundary(api, backend, monke
     assert len(rows) == 5
 
 
-def test_uncached_tree_after_cache_capacity_keeps_its_empty_directory_inventory(api, backend, monkeypatch):
+def test_tree_cache_replaces_cold_entries_and_reuses_newly_validated_tree(api, backend):
+    for number in range(31):
+        commit = api.git.commit({f"submissions/warm-{number}.json": b"{}\n"}, expected=api.git.head())
+        backend._tree(commit)
+    assert len(backend._trees) == 32
+    hot, cold = list(backend._trees)[:2]
+    backend._tree(hot)
+    newest = api.git.commit({"submissions/newest.json": b"{}\n"}, expected=api.git.head())
+    checked = backend._tree(newest)
+    assert len(backend._trees) == len(backend._tree_directories) == 32
+    assert set(backend._trees) == set(backend._tree_directories)
+    assert hot in backend._trees and newest in backend._trees and cold not in backend._trees
+    sent = len(api.requests)
+    assert backend._tree(newest) is checked and len(api.requests) == sent
+    backend._tree(cold)
+    assert len(api.requests) == sent + 2  # Original commit and recursive tree, no hidden reuse.
+    assert len(backend._trees) == 32 and cold in backend._trees
+    assert set(backend._trees) == set(backend._tree_directories)
+    assert backend._last_tree_directories == (cold, backend._tree_directories[cold])
+    assert api.writes == 0
+
+
+def test_invalid_tree_does_not_evict_or_poison_full_cache(api, backend):
+    for number in range(31):
+        commit = api.git.commit({f"submissions/valid-{number}.json": b"{}\n"}, expected=api.git.head())
+        backend._tree(commit)
+    keys, directories, last = list(backend._trees), dict(backend._tree_directories), backend._last_tree_directories
+    newer = api.git.commit({"submissions/not-yet-validated.json": b"{}\n"}, expected=api.git.head())
+    def truncated(path, value):
+        if "/git/trees/" in path:
+            value["truncated"] = True
+        return value
+    api.corrupt_response = truncated
+    with pytest.raises(RecordError, match="^INCOMPLETE_REMOTE_TREE$"):
+        backend._tree(newer)
+    assert list(backend._trees) == keys and backend._tree_directories == directories
+    assert backend._last_tree_directories == last and newer not in backend._trees
+    sent = len(api.requests)
+    api.corrupt_response = None
+    backend._tree(newer)  # A later explicit call still obtains and validates the original tree.
+    assert len(api.requests) == sent + 2 and newer in backend._trees
+    assert len(backend._trees) == 32 and set(backend._trees) == set(backend._tree_directories)
+    assert api.writes == 0
+
+
+def test_replaced_tree_cache_keeps_current_empty_directory_inventory(api, backend, monkeypatch):
     for number in range(31):
         commit = api.git.commit({f"submissions/warm-{number}.json": b"{}\n"}, expected=api.git.head())
         backend._tree(commit)
@@ -527,9 +572,10 @@ def test_uncached_tree_after_cache_capacity_keeps_its_empty_directory_inventory(
     before = api.git.commit({"submissions/last.json": b"{}\n"}, expected=api.git.head())
     _extend_tree_metadata(api, {}, ["submissions", "submissions/retained-empty"])
     backend._tree(before)
-    assert before not in backend._trees
+    assert before in backend._trees and len(backend._trees) == 32
+    assert set(backend._trees) == set(backend._tree_directories)
     # A cached historical lookup must not make the next write use its directories.
-    backend._tree(api.binding.anchor)
+    backend._tree(commit)
     monkeypatch.setattr(remote, "MAX_TREE_ENTRIES", 35)
     with pytest.raises(RecordError, match="^REMOTE_TREE_LIMIT_BEFORE_WRITE$"):
         backend.commit({"submissions/new.json": b"{}\n"}, expected=before)

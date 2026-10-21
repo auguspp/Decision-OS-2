@@ -8,10 +8,11 @@ import pytest
 from decision_kernel.application import odds_book, reading_room
 from decision_kernel.application.conditional_odds import ConditionalOdds, RESULT_RECORD
 from decision_kernel.application.reading_room import ReadingRoom, plan_input
-from decision_kernel.domain.records import RecordError, RevisionInput, StoreUnavailable, encoded
+from decision_kernel.application.versioned_store import VersionedStore
+from decision_kernel.domain.records import RecordError, RevisionInput, SourceInput, StoreUnavailable, encoded
 from decision_kernel.infrastructure.github_store import MAX_REQUESTS
 from decision_kernel.interfaces import odds_commands, reading_commands, reading_page
-from test_conditional_odds import context
+from test_conditional_odds import authorized, context, price_payload, spec_payload
 from test_hosted_watch_runtime import public_host
 from test_news_read_budget import transport
 from test_odds_book import saved_pair
@@ -144,6 +145,63 @@ def test_normal_public_host_defers_all_outputs_and_shares_original_api_for_pages
     assert report["result"]["odds_book_view"]["detail"]["status"] == "readable"
     assert html_model((output / "reading-room.html").read_text()) == report["result"]
     assert json.loads((output / "inputs.json").read_bytes())["operation"] == "reading-room"
+    assert 0 < api._requests == len(model.requests) < MAX_REQUESTS == 512
+    assert all(method == "GET" for method, _, _ in model.requests)
+    assert model.git.head() == before and model.writes == writes
+
+
+def test_four_page_overview_and_exact_detail_cross_tree_cache_capacity(public_host, tmp_path, monkeypatch):
+    model, _, _ = public_host
+    # Eleven cases give 33 candidates: the smallest three-object-per-case
+    # fixture for four full eight-row pages. Every retained object has its own
+    # real Git commit; the cold hosted consumer receives no writer cache.
+    model.git.repository = model.binding.repository
+    local, results = VersionedStore(model.git), []
+    service = ConditionalOdds(local)
+    for number in range(11):
+        key = f"pressure-{number:02d}"
+        source = local.put_source(key + "-source", SourceInput(key, "content", "Synthetic cache basis",
+            "synthetic:four-page-cache", "Synthetic cache-pressure evidence " + key))
+        research = local.submit_revision(key + "-research", RevisionInput(key, "r1", "full",
+            "Synthetic cache-pressure research " + key, "Synthetic finite host consumer", "synthetic",
+            (source,), unresolved=("Economic assumption not verified",)))
+        spec = service.freeze(authorized("spec", spec_payload(asdict(research), spec_id=key)),
+                              submission_id=key + "-spec")
+        results.append(service.save(authorized("calculation", {"spec_ref": spec["reference"],
+            "price": price_payload(price_id=key, price=str(100 + number))}), submission_id=key + "-odds"))
+    expected = service.read(results[0]["reference"])["result"]
+    before, writes = model.git.head(), model.writes
+    model.requests.clear()
+    api, output = transport(model), tmp_path / "four-pages"
+    original, scopes = odds_book.read_book, []
+    def page(store, *args, **kwargs):
+        assert store.backend.api is api
+        assert not (output / "inputs.json").exists() and not (output / "reading-room.html").exists()
+        scopes.append(store.backend)
+        return original(store, *args, **kwargs)
+    monkeypatch.setattr(odds_book, "read_book", page)
+    detail = {"operation": "read-odds", "payload": {"reference": results[0]["reference"]}}
+    value = request({"snapshot": before, "limit": 8, "scan_limit": 32}, detail=detail,
+        catalogue={"limit": 4, "cursor": {"schema": "research-catalogue-cursor-v1",
+            "repository": model.binding.repository, "snapshot": before, "offset": 0}})
+    report = run(model, api, output, value)
+    assert report["status"] == "completed" and report["write"] == "not-requested"
+    assert len(scopes) == 4 and all(scope is scopes[0] for scope in scopes) and not scopes[0].active
+    panel = report["result"]["odds_book_view"]
+    view = panel["view"]
+    assert [item["scan"]["start"] for item in view["pages"]] == [0, 8, 16, 24]
+    assert [len(item["items"]) for item in view["pages"]] == [8, 8, 8, 8]
+    assert view["counts"]["readable_items"] == 32 and view["counts"]["failed_items"] == 0
+    assert view["scan"]["total_candidates"] == 33 and view["scan"]["unread_tail"] == 1
+    assert view["status"] == panel["status"] == "partial"
+    assert panel["detail"]["status"] == "readable" and panel["detail"]["result"]["recalculation"] == "matches"
+    assert panel["detail"]["result"]["result"] == expected
+    assert html_model((output / "reading-room.html").read_text()) == report["result"]
+    loaded = {path for method, path, _ in model.requests if "/git/commits/" in path}
+    assert len(loaded) > 32  # Real pressure, not a reduced cache or fabricated counter.
+    owner = scopes[0].owner
+    assert len(owner._trees) == len(owner._tree_directories) == 32
+    assert set(owner._trees) == set(owner._tree_directories)
     assert 0 < api._requests == len(model.requests) < MAX_REQUESTS == 512
     assert all(method == "GET" for method, _, _ in model.requests)
     assert model.git.head() == before and model.writes == writes

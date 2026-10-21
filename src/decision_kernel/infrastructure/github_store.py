@@ -426,8 +426,12 @@ class GitHubStore:
     def _tree(self, commit: str) -> dict[str, dict]:
         _sha(commit)
         if commit in self._trees:
-            self._last_tree_directories = (commit, self._tree_directories[commit])
-            return self._trees[commit]
+            entries = self._trees.pop(commit)
+            directories = self._tree_directories.pop(commit)
+            self._trees[commit] = entries
+            self._tree_directories[commit] = directories
+            self._last_tree_directories = (commit, directories)
+            return entries
         tree_sha = self._commit(commit)["tree"]["sha"]
         value = self._get("git/trees/" + tree_sha + "?recursive=1")
         require(isinstance(value, dict) and value.get("sha") == tree_sha
@@ -455,9 +459,12 @@ class GitHubStore:
         # Exact immutable object data only; mutable repository/ref checks remain live.
         directories = frozenset(paths - set(entries))
         self._last_tree_directories = (commit, directories)
-        if len(self._trees) < 32:
-            self._trees[commit] = entries
-            self._tree_directories[commit] = directories
+        if len(self._trees) == 32:
+            oldest = next(iter(self._trees))
+            del self._trees[oldest]
+            del self._tree_directories[oldest]
+        self._trees[commit] = entries
+        self._tree_directories[commit] = directories
         return entries
 
     def _read(self, commit: str, path: str, *, tree: dict | None = None) -> bytes:

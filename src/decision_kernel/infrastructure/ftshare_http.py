@@ -1,5 +1,6 @@
 """Fixed-origin, one-attempt FTShare daily transport; no provider routing."""
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import count_event, measure_phase
 
 from base64 import b64encode, urlsafe_b64encode
 from datetime import datetime, timezone
@@ -84,7 +85,8 @@ def _error_diagnostics(error, key):
         'observed_body_bytes': None, 'truncated': None, 'business_code': None,
         'category': 'body-unavailable'}
     try:
-        raw = error.read(MAX_ERROR_BODY + 1)
+        with measure_phase("ft.error_body"):
+            raw = error.read(MAX_ERROR_BODY + 1)
     except Exception:
         return result  # Diagnostic failure must preserve the original HTTP status.
     if not isinstance(raw, bytes):
@@ -100,7 +102,8 @@ def _error_diagnostics(error, key):
         result['category'] = 'unsupported-content-encoding'
     else:
         try:
-            payload = _json_payload(raw)
+            with measure_phase("ft.error_json"):
+                payload = _json_payload(raw)
         except (UnicodeError, ValueError, RecursionError):
             result['category'] = 'non-json'
             return result
@@ -203,22 +206,26 @@ class FTShareHTTP:
             'Accept': 'application/json', 'Content-Type': 'application/json',
             'Accept-Encoding': 'identity', 'User-Agent': 'DecisionOS2-FTShareDaily/0.1'})
         self.requests += 1
+        count_event("ft_requests")
         observed = None
         try:
-            with self._opener.open(request, timeout=self.request_timeout_seconds) as response:
-                require(response.status == 200 and response.geturl() == exact,
-                        'FTSHARE_HTTP_RESPONSE_INVALID')
-                observed = self._headers(response.headers, key, 200)
-                require(response.headers.get('Content-Encoding', 'identity').lower() in ('', 'identity'),
-                        'FTSHARE_CONTENT_ENCODING_INVALID')
-                mime = response.headers.get('Content-Type', 'application/json').split(';')[0].strip().lower()
-                require(mime in ('application/json', 'text/json', 'text/plain'), 'FTSHARE_CONTENT_TYPE_INVALID')
-                length = response.headers.get('Content-Length')
-                require(length is None or isinstance(length, str) and re.fullmatch(r'[0-9]{1,10}', length)
-                        and int(length) <= MAX_BODY, 'FTSHARE_RESPONSE_BYTES_INVALID')
-                raw = response.read(MAX_BODY + 1)
-                require(isinstance(raw, bytes) and 0 < len(raw) <= MAX_BODY
-                        and (length is None or len(raw) == int(length)), 'FTSHARE_RESPONSE_BYTES_INVALID')
+            with measure_phase("ft.http"):
+                count_event("ft_wire_attempts")
+                with self._opener.open(request, timeout=self.request_timeout_seconds) as response:
+                    require(response.status == 200 and response.geturl() == exact,
+                            'FTSHARE_HTTP_RESPONSE_INVALID')
+                    observed = self._headers(response.headers, key, 200)
+                    require(response.headers.get('Content-Encoding', 'identity').lower() in ('', 'identity'),
+                            'FTSHARE_CONTENT_ENCODING_INVALID')
+                    mime = response.headers.get('Content-Type', 'application/json').split(';')[0].strip().lower()
+                    require(mime in ('application/json', 'text/json', 'text/plain'), 'FTSHARE_CONTENT_TYPE_INVALID')
+                    length = response.headers.get('Content-Length')
+                    require(length is None or isinstance(length, str) and re.fullmatch(r'[0-9]{1,10}', length)
+                            and int(length) <= MAX_BODY, 'FTSHARE_RESPONSE_BYTES_INVALID')
+                    with measure_phase("ft.body"):
+                        raw = response.read(MAX_BODY + 1)
+                    require(isinstance(raw, bytes) and 0 < len(raw) <= MAX_BODY
+                            and (length is None or len(raw) == int(length)), 'FTSHARE_RESPONSE_BYTES_INVALID')
         except HTTPError as exc:
             try:
                 status = exc.code
@@ -238,12 +245,13 @@ class FTShareHTTP:
         except RecordError:
             self.last_error_meta = observed
             raise
-        require(key.encode('ascii') not in raw, 'FTSHARE_SECRET_REFLECTED')
-        try:
-            result = _json_payload(raw)
-        except (UnicodeError, ValueError, RecursionError):
-            raise RecordError('FTSHARE_JSON_INVALID') from None
-        require(not _reflected(result, key), 'FTSHARE_SECRET_REFLECTED')
+        with measure_phase("ft.json"):
+            require(key.encode('ascii') not in raw, 'FTSHARE_SECRET_REFLECTED')
+            try:
+                result = _json_payload(raw)
+            except (UnicodeError, ValueError, RecursionError):
+                raise RecordError('FTSHARE_JSON_INVALID') from None
+            require(not _reflected(result, key), 'FTSHARE_SECRET_REFLECTED')
         self.last_response_meta = {**observed, 'wire_sha256': digest(raw), 'wire_bytes': len(raw)}
         self.last_response_bytes = raw
         return result

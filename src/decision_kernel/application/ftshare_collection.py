@@ -5,6 +5,7 @@ unchanged. FTShare owns new one-attempt, whole-history batch slots. Source I/O,
 native job identity, secret handling and work-unit capacity stay with the host.
 """
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 from copy import deepcopy
 from dataclasses import asdict
@@ -709,6 +710,7 @@ def restore_ftshare_collection(reference, registry, store):
             "legacy_allowance_reopened": False, "daily_generation_advance": False}
 
 
+@timed("ft.control_save")
 def retain_ftshare_collection(collection, registry, store, *, fresh_reader, predecessor=None,
                              custody_authorized=False, public_rights_confirmed=False):
     """Retain one state edge with independent proof; unknown writes stop the host.
@@ -782,7 +784,7 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
     # Verify the new control with a genuinely fresh Store. Re-fetching the same
     # old masters/calendars and all settled batches here would multiply source
     # restoration cost by every state edge. The ordinary reader proves them.
-    with market_read_scope(fresh_market_reader(store, fresh_reader)) as grouped:
+    with measure_phase("ft.control_readback"), market_read_scope(fresh_market_reader(store, fresh_reader)) as grouped:
         exact, restored_body = _manifest(reference, registry, grouped)
         require(encoded(restored_body) == encoded(content), "FTSHARE_COLLECTION_READBACK_CHANGED")
         if checked["revision"]:
@@ -1313,6 +1315,7 @@ def _restore_single_collection(reference, content, registry, store):
     return base
 
 
+@timed("ft.capture_save")
 def retain_ftshare_single(capture, store, *, fresh_reader, custody_authorized=False,
                          public_rights_confirmed=False):
     authorize_market_custody(store, custody_authorized=custody_authorized,

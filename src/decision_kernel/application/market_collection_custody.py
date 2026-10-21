@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 from decision_kernel.application.market_custody import (
     _document, _put, _read_source, authorize_market_custody, fresh_market_reader,
@@ -140,6 +141,7 @@ def _checkpoint_manifest(reference, registry, store):
     return ref, content
 
 
+@timed("checkpoint.save")
 def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_reader, predecessor=None,
                              custody_authorized=False, public_rights_confirmed=False):
     """Save accepted pages once, then synchronously save and read back control.
@@ -151,8 +153,9 @@ def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_rea
     authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
     identifier(checkpoint_id)
-    checked = _checkpoint(state, registry)
-    sources = _page_sources(checked, checkpoint_id, registry)
+    with measure_phase("checkpoint.validate"):
+        checked = _checkpoint(state, registry)
+        sources = _page_sources(checked, checkpoint_id, registry)
     reader = fresh_market_reader(store, fresh_reader)
     previous = None
     predecessor = _reference(predecessor, store.backend.repository, optional=True)
@@ -168,7 +171,8 @@ def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_rea
             require(old["source_sha256"] == digest(encoded(asdict(source)))
                     and old["attempts"] == page["attempts"], "MARKET_CHECKPOINT_PAGE_HISTORY_CHANGED")
         if previous["state_sha256"] == digest(encoded(checked)):
-            restored = restore_market_checkpoint(predecessor, registry, reader)
+            with measure_phase("checkpoint.readback"):
+                restored = restore_market_checkpoint(predecessor, registry, reader)
             require(encoded(restored["state"]) == encoded(checked), "MARKET_CHECKPOINT_READBACK_CHANGED")
             return {"status": "stored-and-independently-restored-checkpoint", "reference": predecessor,
                     "source_id": checkpoint_source_id(checkpoint_id), "page_count": len(sources),
@@ -196,11 +200,14 @@ def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_rea
         if previous is not None and index < len(previous["pages"]):
             reference = previous["pages"][index]["reference"]
         else:
-            reference = asdict(_put(store, source))
+            with measure_phase("checkpoint.page_save"):
+                reference = asdict(_put(store, source))
         content["pages"].append({"reference": reference,
             "source_sha256": digest(encoded(asdict(source))), "attempts": deepcopy(page["attempts"])})
-    reference = _put(store, _source(content))
-    restored = restore_market_checkpoint(reference, registry, reader)
+    with measure_phase("checkpoint.control_save"):
+        reference = _put(store, _source(content))
+    with measure_phase("checkpoint.readback"):
+        restored = restore_market_checkpoint(reference, registry, reader)
     require(encoded(restored["state"]) == encoded(checked), "MARKET_CHECKPOINT_READBACK_CHANGED")
     return {"status": "stored-and-independently-restored-checkpoint",
             "reference": _reference(reference, store.backend.repository),

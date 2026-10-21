@@ -5,6 +5,7 @@ only the two calendar reservations and the exact collection selected by one
 daily invocation; they are neither another price store nor a generic queue.
 """
 from __future__ import annotations
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 from copy import deepcopy
 from dataclasses import asdict
@@ -379,6 +380,7 @@ def latest_cycle(store, *, registry=None, protected_symbols=()):
         return previous
 
 
+@timed("cycle.save")
 def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_symbols=()):
     authorize_market_custody(store, custody_authorized=True, public_rights_confirmed=False)
     state = validate_cycle(state)
@@ -432,8 +434,9 @@ def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_sy
     source = _source(state)
     reference = store.put_source("daily-market-" + digest(encoded(asdict(source)))[:32], source,
         expected_head=snapshot)
-    restored = latest_cycle(fresh_market_reader(store, fresh_reader), registry=registry,
-        protected_symbols=protected_symbols)
+    with measure_phase("cycle.readback"):
+        restored = latest_cycle(fresh_market_reader(store, fresh_reader), registry=registry,
+            protected_symbols=protected_symbols)
     expected = {"reference": json.loads(encoded(asdict(reference))), "cycle": state}
     require(restored == expected, "DAILY_MARKET_READBACK_CHANGED")
     return restored

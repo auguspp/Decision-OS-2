@@ -5,6 +5,8 @@ The existing business transport remains single-attempt. No alternate hosts or ke
 """
 from __future__ import annotations
 
+from decision_kernel.infrastructure.runtime_performance import measure_phase
+
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, IncompleteRead
@@ -118,7 +120,10 @@ def http_failure(exc: HTTPError, key: str, *, now: datetime | None = None) -> di
         if headers.get("Content-Encoding", "identity").lower() not in ("", "identity"):
             body_state = "unsupported-encoding"
         else:
-            body_state, code = _error_code(exc.read(ERROR_BYTES + 1), key)
+            with measure_phase("relay.error_body"):
+                raw = exc.read(ERROR_BYTES + 1)
+            with measure_phase("relay.error_json"):
+                body_state, code = _error_code(raw, key)
     except (OSError, HTTPException):
         pass
     finally:

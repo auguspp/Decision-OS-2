@@ -6,6 +6,8 @@ state. Original source proof replay remains with MarketDiscovery.
 """
 from __future__ import annotations
 
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
+
 from copy import deepcopy
 from dataclasses import asdict
 
@@ -120,6 +122,7 @@ def _discover_latest(store, *, registry, as_of, snapshot):
             "reference": chosen["reference"], "latest_as_of": chosen["as_of"]}
 
 
+@timed("discovery.read")
 def _latest(store, source_store, registry, as_of):
     inventory = discover_latest(store, registry=registry, as_of=as_of)
     require(inventory["complete"], inventory.get("reason_code", "DAILY_DISCOVERY_INCOMPLETE"))
@@ -160,6 +163,7 @@ def reading_discovery(store, source_store, registry, reference, *, as_of):
             "panel": {"build": plan, "kind": "stock", "limit": 20}}
 
 
+@timed("discovery.execute")
 def save_daily_discovery(store, source_store, registry, approved, receipt, *,
                          as_of, submission_id, expected_reference=None, guard=None):
     """Write only after an eligible actual FT version has qualified and replayed."""
@@ -181,7 +185,8 @@ def save_daily_discovery(store, source_store, registry, approved, receipt, *,
             "DAILY_DISCOVERY_RUNTIME_CYCLE_CHANGED")
     inventory, service, saved = _latest(store, source_store, registry, as_of)
     plan = _current_plan(reference, saved, as_of)
-    preview = service.build(plan)
+    with measure_phase("discovery.build"):
+        preview = service.build(plan)
     stock = preview["surfaces"]["stock"]
     require(stock["status"] == "readable" and not stock.get("source_hold")
         and bool(stock.get("sources")) and all(row["status"] == "restored" and row["reason_code"] is None
@@ -205,7 +210,8 @@ def save_daily_discovery(store, source_store, registry, approved, receipt, *,
         require(head == inventory["snapshot"], "DAILY_DISCOVERY_HEAD_CHANGED")
         if guard is not None:
             guard()
-    result = service.save(submission_id, plan, before_new_write=before_write)
+    with measure_phase("discovery.save"):
+        result = service.save(submission_id, plan, before_new_write=before_write)
     return {**base, "status": "stored-and-verified", "records_writes": 1,
         "reference": result["reference"], "persistence": "saved-exact-version",
         "market_reference": reference, "actual_dates": stock["as_of_by_exchange"],

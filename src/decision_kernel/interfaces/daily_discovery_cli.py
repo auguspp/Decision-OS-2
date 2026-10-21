@@ -21,6 +21,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef, digest, encoded, require
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
+from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed
 from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, _admit, native_ready, settings
 from decision_kernel.interfaces.daily_reading_cli import read_update_receipt
 from decision_kernel.interfaces.ftshare_check_cli import _regular, _safe_error
@@ -42,6 +43,7 @@ def _open_writer(api):
     return store, source
 
 
+@diagnosed
 def run_runtime(event, env, out, *, api=None, clock=None):
     approved = policy(_json(_regular(POLICY_FILE, 8192)))
     selected = settings(event, env, approved)
@@ -83,6 +85,7 @@ def run_runtime(event, env, out, *, api=None, clock=None):
     native_ready(api, selected)
     result.update(selected)
     result["source_receipt_sha256"] = digest(encoded(receipt))
+    result = annotate_performance(result)
     raw = encoded(result)
     require(len(raw) <= 1024 * 1024, "DAILY_DISCOVERY_RECEIPT_BOUND")
     with (out / OUTPUT).open("xb") as stream:

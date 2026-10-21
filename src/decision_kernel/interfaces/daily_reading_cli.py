@@ -22,6 +22,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, digest, encoded, require
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
+from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed, measure_phase, timed
 from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, native_ready, settings
 from decision_kernel.interfaces.ftshare_check_cli import _regular, _safe_error
 from decision_kernel.interfaces.market_collection_cli import REGISTRY, _records_runtime_binding
@@ -51,6 +52,7 @@ def _error(exc, token=None):
     return ("DAILY_READING_FAILED" if code == "FTSHARE_CHECK_FAILED" or token and token in code else code)
 
 
+@timed("reading.model")
 def build_reading(store, market_store, registry, approved, update_receipt, *, as_of, discovery_receipt=None):
     """Compose original readers; unresolved latest history is never a seed fallback."""
     context = {"schema": "daily-reading-context-v1", "read_as_of": as_of,
@@ -276,25 +278,41 @@ def read_discovery_receipt(out, selected, receipt):
         "status", "reason_code", "as_of", "records_writes", "reference", "persistence", "source_requests")}
 
 
+@diagnosed
 def run_runtime(event, env, out, *, api=None, clock=None):
-    approved = policy(_json(_regular(POLICY_FILE, 8192)))
-    selected = settings(event, env, approved)
-    token = env.get("GITHUB_TOKEN")
-    require(isinstance(token, str) and bool(token), "DAILY_READING_TOKEN_REQUIRED")
-    root, out = Path(env["RUNNER_TEMP"]).resolve(strict=True), Path(out)
-    require(out.is_dir() and not out.is_symlink() and out.resolve().is_relative_to(root)
-            and out.resolve() != root, "DAILY_READING_OUTPUT")
-    require(all(not (out / name).exists() and not (out / name).is_symlink() for name in OUTPUTS),
-            "DAILY_READING_OUTPUT_EXISTS")
-    receipt = read_update_receipt(out, selected)
-    discovery_receipt = read_discovery_receipt(out, selected, receipt)
-    api = GitHubAPI(token) if api is None else api
-    native_ready(api, selected)
-    store, market_store = _open_readers(api)
-    as_of = (clock or (lambda: datetime.now(timezone.utc).isoformat()))()
-    model = build_reading(store, market_store, RelayRegistry(REGISTRY), approved, receipt, as_of=as_of,
-                          discovery_receipt=discovery_receipt)
-    exports = (daily_page(model).encode(), encoded(model), summary_markdown(model).encode())
+    with measure_phase("reading.execute"):
+        approved = policy(_json(_regular(POLICY_FILE, 8192)))
+        selected = settings(event, env, approved)
+        token = env.get("GITHUB_TOKEN")
+        require(isinstance(token, str) and bool(token), "DAILY_READING_TOKEN_REQUIRED")
+        root, out = Path(env["RUNNER_TEMP"]).resolve(strict=True), Path(out)
+        require(out.is_dir() and not out.is_symlink() and out.resolve().is_relative_to(root)
+                and out.resolve() != root, "DAILY_READING_OUTPUT")
+        require(all(not (out / name).exists() and not (out / name).is_symlink() for name in OUTPUTS),
+                "DAILY_READING_OUTPUT_EXISTS")
+        receipt = read_update_receipt(out, selected)
+        discovery_receipt = read_discovery_receipt(out, selected, receipt)
+        api = GitHubAPI(token) if api is None else api
+        native_ready(api, selected)
+        store, market_store = _open_readers(api)
+        as_of = (clock or (lambda: datetime.now(timezone.utc).isoformat()))()
+        model = build_reading(store, market_store, RelayRegistry(REGISTRY), approved, receipt, as_of=as_of,
+                              discovery_receipt=discovery_receipt)
+    # Freeze one model before all three exports. Render and the final native
+    # eligibility check are deliberately outside this model's timing boundary.
+    observed_model = annotate_performance(model, max_bytes=6 * 1024 * 1024)
+    try:
+        page = daily_page(observed_model)
+    except RecordError as exc:
+        if str(exc) != "ROOM_HTML_BOUND" or observed_model is model:
+            raise
+        # Optional diagnostics must not invalidate an otherwise valid escaped
+        # HTML projection. One capacity-only fallback renders the original model;
+        # it does not repeat reads or attempt to measure its own render duration.
+        page = daily_page(model)
+    else:
+        model = observed_model
+    exports = (page.encode(), encoded(model), summary_markdown(model).encode())
     # Shared main/CI/private host eligibility is checked again immediately
     # before material leaves the reader. The workflow still owns release.
     native_ready(api, selected)

@@ -29,6 +29,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, UnknownWrite, encoded, require
 from decision_kernel.infrastructure.relay_http import RelayHTTP
 from decision_kernel.infrastructure.relay_retry import RetryingRelay, RetryPolicy
+from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 POLICY = {"schema": "daily-master-refresh-policy-v1", "trigger": "every-new-completed-session",
     "venues": ["SSE", "SZSE"], "list_status": "L", "page_size": 500,
@@ -172,7 +173,8 @@ class _CheckedReads:
     def market_read_scope(self):
         with market_read_scope(VersionedStore(self.backend)) as reader:
             if self.preflight is not None:
-                self.preflight(reader)
+                with measure_phase("master.preflight"):
+                    self.preflight(reader)
             yield reader.backend
 
 
@@ -204,6 +206,7 @@ class _GuardedClient:
         return self._client.request_registered(*args, **kwargs)
 
 
+@timed("master.unit")
 def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory, clock,
                     monotonic, sleep, guard=None, preflight=None):
     """Continue one original page/attempt, or promote a complete saved checkpoint."""
@@ -232,7 +235,8 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
     def save_checkpoint(value):
         nonlocal state, persistence_error
         try:
-            _check_state(value, cycle, use, registry)
+            with measure_phase("master.validate"):
+                _check_state(value, cycle, use, registry)
             guard()
             saved = retain_market_checkpoint(value, registry, store, checkpoint_id=owner,
                 predecessor=report["checkpoint_reference"], fresh_reader=fresh,
@@ -247,7 +251,8 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
         while remaining:
             guard()
             part = min(60, remaining)
-            sleep(part)
+            with measure_phase("relay.wait"):
+                sleep(part)
             remaining -= part
 
     try:
@@ -257,7 +262,7 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
             and type(row["reserved_queries"]) is int and row["reserved_queries"] == 1
             and row["reference"] is None and row["reason_code"] is None, "DAILY_MASTER_PHASE")
         require(checkpoint_time(clock()) >= checkpoint_time(cycle["created_at"]), "DAILY_MASTER_CLOCK")
-        with market_read_scope(fresh()) as reader:
+        with measure_phase("master.initial_read"), market_read_scope(fresh()) as reader:
             newest = latest_market_reference(reader, registry, checkpoint_id=owner)
             require_checkpoint_descendant(newest, row["checkpoint_reference"], registry, reader)
             if newest is not None:
@@ -294,9 +299,10 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
                 return emit("partial", "RELAY_STORAGE_BUDGET")
             raise
         try:
-            saved = retain_market_query(result, registry, store, fresh_reader=fresh,
-                checkpoint_reference=report["checkpoint_reference"],
-                custody_authorized=True, public_rights_confirmed=False)
+            with measure_phase("master.promote"):
+                saved = retain_market_query(result, registry, store, fresh_reader=fresh,
+                    checkpoint_reference=report["checkpoint_reference"],
+                    custody_authorized=True, public_rights_confirmed=False)
         except Exception as error:
             persistence_error = error
             raise

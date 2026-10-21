@@ -22,7 +22,8 @@ def configure(commands):
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--plan", type=Path, required=True, help="existing reading-room plan, no executable code")
     parser.add_argument("--out", type=Path, required=True, help="new local output directory; never records or a live target")
-    parser.add_argument("--market-registry", type=Path, help="trusted local registry when a market plan is present")
+    parser.add_argument("--market-registry", type=Path,
+                        help="trusted local registry for market and Odds readers; use an absolute path outside the checkout")
 
 
 def _read(path: Path, limit: int) -> bytes:
@@ -50,8 +51,9 @@ def recover_room(args) -> dict:
     plan = plan_input(json_object(_read(args.plan, 60 * 1024)))
     registry = None
     if plan.get("market"):
-        from decision_kernel.application.relay_registry import RelayRegistry
         require(args.market_registry is not None, "RECOVERY_MARKET_REGISTRY_REQUIRED")
+    if args.market_registry is not None:
+        from decision_kernel.application.relay_registry import RelayRegistry
         registry = RelayRegistry(args.market_registry)
     try:
         args.out.mkdir(mode=0o700, parents=False, exist_ok=False)

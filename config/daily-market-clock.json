@@ -1,0 +1,4 @@
+{
+  "schema": "daily-market-clock-v1",
+  "primary": "github-schedule"
+}

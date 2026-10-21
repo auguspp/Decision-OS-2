@@ -13,7 +13,8 @@
 | 入口 | 已授权Public行为 |
 | --- | --- |
 | daily-market status | 原生预检之后正常读取已存行情、发现状态、研究与最新已存Brief，输出完整HTML/JSON/Summary；不是仅元数据诊断。 |
-| daily-market update / recover-late / schedule | 原6股、工作日18:35、每周期2日历+12价格与迟到24小时界限不变；先无来源凭据预检，再原采集、保管、独立读回、发现状态与阅读。 |
+| daily-market update / recover-late / schedule / external-clock | 原6股、工作日18:35、每周期2日历+12价格与迟到24小时界限不变；先无来源凭据预检，再原采集、保管、独立读回、发现状态与阅读。外部入口归一到原update授权，只在固定clock配置选中它时准入；默认仍由GitHub时钟执行。 |
+| daily-market clock-probe | 独立的仓库/main/run/CI/clock元数据检查；不读取records或进入行情、研究、Brief消费者，不增加业务授权范围。 |
 | ashare-data ftshare-status / ftshare-sync | 原可信有限配置及单股整段路线，明确access_and_custody_confirmed仍是本次采集/保管操作授权；固定部署公开确认不冒充新请求。历史public_rights_confirmed传输位保持原默认false，由部署配置提供公开授权；非法组合明确拒绝，不全skipped。 |
 | market-custody / discovery | 正常原件保管和build/save/read接同一发布授权；原custody或rights操作确认、确切提交、原始分母/失败和CAS保持。 |
 | announcement-discovery | 原目录元数据计划、日期窗口、幂等及来源暂停继续；采集前与附件发布前核实际目标和授权。 |
@@ -29,6 +30,8 @@
 公开CI继续使用合成输入和原完整测试策略，无供应商Secret。日更元数据预检核原仓库ID/全名、main、真实run/attempt/代码/事件及前后可见性，只返回授权路由；Public不能被填成Private。缺授权时status回原诊断、更新明确blocked；原生信息错误不会放行来源。
 
 正常业务作业仍核实际main/完整CI与原运行身份；只在原获准源步骤注入相应Secret，只读消费者没有源密钥。公开PR/fork不获得业务凭据。原后端可见性反转保护、读取作用域、来源/结果上限、唯一writer/CAS/未知写对账保留，错误日志不输出凭据或任意上游正文。
+
+外部时钟的固定 `current-main` 只适用于明确的 `external-clock` / `clock-probe`，运行时绑定受信原生SHA；其他手动入口仍须exact SHA。预检以单主时钟配置拦住整个业务job，不能只让源步骤失败后继续执行 `always()` 阅读。配置与实际启用分开，见[外部日更时钟](external-daily-clock.md)；该入口不解除原平台拒绝或扩大来源预算。
 
 ## 接续与退出
 

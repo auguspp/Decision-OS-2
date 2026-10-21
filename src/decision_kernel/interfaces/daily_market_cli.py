@@ -15,6 +15,9 @@ import sys
 import time
 from urllib.parse import urlencode
 
+from decision_kernel.application.daily_clock import (
+    CLOCK_PROBE, EXTERNAL_CLOCK, admit_clock, dispatch_selection, run_title,
+)
 from decision_kernel.application.daily_market import (
     MASTER_SCHEMA, SUCCESS, VENUES, _stamp, calendar_plan, check_cycle_frontier,
     completed_session, daily_market_reference, initial_cycle, latest_cycle,
@@ -36,6 +39,7 @@ from decision_kernel.infrastructure.relay_retry import RetryingRelay, RetryPolic
 from decision_kernel.interfaces.ftshare_check_cli import REPO, PREFIX, _regular, _safe_error, check_private
 from decision_kernel.interfaces.ftshare_collection_cli import _source_instruction, run_collection
 from decision_kernel.interfaces.market_collection_cli import BINDING_ENV, REGISTRY, _records_runtime_binding, _save_receipt
+from decision_kernel.interfaces.daily_visibility_cli import load_clock_policy
 
 WORKFLOW = ".github/workflows/daily-market.yml"
 TITLE = "decision-os-daily-market"
@@ -125,8 +129,9 @@ class DailyQuotaWindows:
         return True
 
 
-def settings(event, env, approved):
+def settings(event, env, approved, *, clock=None, allow_probe=False):
     approved = policy(approved)
+    require(type(allow_probe) is bool, "DAILY_CLOCK_PROBE_ONLY")
     require(env.get("GITHUB_REPOSITORY") == REPO and env.get("GITHUB_REF") == "refs/heads/main"
         and env.get("GITHUB_EVENT_NAME") in {"schedule", "workflow_dispatch"}
         and env.get("GITHUB_WORKFLOW_REF") == REPO + "/" + WORKFLOW + "@refs/heads/main"
@@ -138,12 +143,12 @@ def settings(event, env, approved):
         require(event.get("schedule") == approved["schedule_utc"] and not event.get("inputs"),
             "DAILY_MARKET_SCHEDULE_CHANGED")
         operation, invocation, sha = "update", "schedule", env.get("GITHUB_SHA")
+        admit_clock(invocation, clock)
     else:
-        inputs = event.get("inputs")
-        require(isinstance(inputs, dict) and set(inputs) == {"operation", "code_sha"}
-            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar", "reconcile-write"}, "DAILY_MARKET_INPUT")
-        invocation, sha = inputs["operation"], inputs["code_sha"]
-        operation = "update" if invocation in {"recover-late", "repair-calendar", "reconcile-write"} else invocation
+        selected = dispatch_selection(event.get("inputs"), env.get("GITHUB_SHA"), clock,
+            input_error="DAILY_MARKET_INPUT", sha_error="DAILY_MARKET_CODE_SHA")
+        operation, invocation, sha = selected["operation"], selected["invocation"], selected["code_sha"]
+    require(invocation != CLOCK_PROBE or allow_probe, "DAILY_CLOCK_PROBE_ONLY")
     require(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha)
         and sha == env.get("GITHUB_SHA"), "DAILY_MARKET_CODE_SHA")
     run_id = env.get("GITHUB_RUN_ID")
@@ -153,14 +158,28 @@ def settings(event, env, approved):
         "event": event_name}
 
 
-def native_ready(api, selected):
-    check_private(api, selected)
+def native_ready(api, selected, *, metadata_only=False):
+    require(type(metadata_only) is bool, "DAILY_CLOCK_METADATA_MODE")
+    if metadata_only or selected.get("invocation") == CLOCK_PROBE:
+        # Metadata inspection needs no business publication authority or Store.
+        # Preflight and the dedicated clock probe may only inspect metadata here;
+        # business runtimes still use the publication check below.
+        from decision_kernel.interfaces.daily_visibility_cli import _repository
+        _repository(api)
+        main = api.request("GET", PREFIX + "/git/ref/heads/main")
+        require(isinstance(main, dict) and main.get("ref") == "refs/heads/main"
+            and isinstance(main.get("object"), dict) and main["object"].get("type") == "commit"
+            and main["object"].get("sha") == selected["code_sha"], "FTSHARE_MAIN_MOVED")
+    else:
+        check_private(api, selected)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))
     require(run.get("id") == selected["run_id"] and type(run.get("id")) is int
         and run.get("head_sha") == selected["code_sha"] and run.get("head_branch") == "main"
         and run.get("event") == selected["event"] and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
         and run.get("name") == TITLE and run.get("status") == "in_progress"
+        and (selected.get("invocation") not in {EXTERNAL_CLOCK, CLOCK_PROBE}
+             or run.get("display_title") == run_title(selected["invocation"]))
         and run.get("repository", {}).get("id") == 1420041744
         and run.get("head_repository", {}).get("id") == 1420041744, "DAILY_MARKET_NATIVE_RUN")
     ci = api.request("GET", PREFIX + "/actions/workflows/ci.yml/runs?" + urlencode({
@@ -614,7 +633,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
 @diagnosed
 def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily):
     approved = policy(_json(_regular(POLICY_FILE, 8192)))
-    selected = settings(event, env, approved)
+    selected = settings(event, env, approved, clock=load_clock_policy())
     require(isinstance(env.get(TOKEN_ENV), str) and bool(env[TOKEN_ENV]), "STORE_TOKEN_REQUIRED")
     root, out = Path(env["RUNNER_TEMP"]).resolve(strict=True), Path(out)
     require(not out.exists() and not out.is_symlink() and out.parent.resolve().is_relative_to(root)
@@ -636,7 +655,8 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         repair_options["master_refresh"] = master_policy(_json(_regular(MASTER_POLICY_FILE, 8192)))
     now = datetime.now(timezone.utc)
     # Freeze admission to the native invocation clock, even if a queue or a
-    # safe quota wait later crosses midnight. Only schedule/recover-late may
+    # safe quota wait later crosses midnight. Only the selected automatic clock
+    # and explicit recover-late may
     # select the latest elapsed weekday slot; source timestamps stay real.
     created = _stamp(proof["native_run_created_at"])
     require(0 <= (now - created).total_seconds() < 24 * 3600, "DAILY_MARKET_NATIVE_CLOCK")
@@ -649,16 +669,51 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         guard=lambda current: check_private(current, selected), progress=progress,
         calendar_client_factory=lambda: RelayHTTP(credential=env.get(SECRET_ENV, ""), request_timeout_seconds=90),
         admission_at=created.isoformat(),
-        allow_late=selected["invocation"] in {"schedule", "recover-late"}, **repair_options)
+        allow_late=selected["invocation"] in {"schedule", "recover-late", EXTERNAL_CLOCK}, **repair_options)
     check_private(api, selected)
     progress(executed["receipt"], executed["control"])
     print(json.dumps({**executed["receipt"], **selected}, ensure_ascii=False))
     return 0 if executed["receipt"]["status"] in {"read", "complete", "already-complete", "no-new-session", "paused", "not-due"} else 2
 
 
+def run_clock_probe(event, env, out, *, api=None):
+    """Inspect this engineering entry only; never open records or a source client."""
+    clock = load_clock_policy()
+    approved = policy(_json(_regular(POLICY_FILE, 8192)))
+    selected = settings(event, env, approved, clock=clock, allow_probe=True)
+    require(selected["invocation"] == CLOCK_PROBE, "DAILY_CLOCK_PROBE_ONLY")
+    require(isinstance(env.get(TOKEN_ENV), str) and bool(env[TOKEN_ENV]), "STORE_TOKEN_REQUIRED")
+    root, out = Path(env["RUNNER_TEMP"]).resolve(strict=True), Path(out)
+    require(not out.exists() and not out.is_symlink() and out.parent.resolve().is_relative_to(root)
+        and out.resolve() != root, "DAILY_MARKET_OUTPUT")
+    api = GitHubAPI(env[TOKEN_ENV]) if api is None else api
+    proof = native_ready(api, selected)
+    report = {"schema": "daily-clock-probe-v1", "scope": "native-metadata-only", **selected,
+        "status": "metadata-ok", "clock_primary": clock["primary"], "native_proof": proof,
+        "external_origin_verified": False, "business_execution": False,
+        "source_requests": 0, "records_read": False, "records_written": False,
+        "dispatches": 0, "notifications": 0}
+    # Recheck the same native evidence before releasing even this small report.
+    require(native_ready(api, selected) == proof, "DAILY_CLOCK_PROBE_CHANGED")
+    markdown = ("# 日更外部时钟连接检查\n\n"
+        "状态：metadata-ok；仅核工程元数据，不证明外部服务已经启用或自然触发。\n\n"
+        f"当前主时钟：`{clock['primary']}`。\n\n"
+        f"代码：`{selected['code_sha']}`；运行：{selected['run_id']} / attempt 1；"
+        f"原生事件：`{selected['event']}`；入口：`{selected['invocation']}`。\n\n"
+        f"适用 main CI：{proof['main_ci_run']}。\n\n"
+        "来源请求、records 读取/写入、工作流派发、通知均为 0；未读取研究或 Brief。\n")
+    out.mkdir(parents=False, exist_ok=False)
+    with (out / "probe.json").open("xb") as stream:
+        stream.write(encoded(report))
+    with (out / "probe.md").open("x", encoding="utf-8") as stream:
+        stream.write(markdown)
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("runtime", "release"))
+    parser.add_argument("command", choices=("runtime", "release", "clock-probe"))
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -667,6 +722,8 @@ def main(argv=None):
             return 0
         require(args.out is not None, "DAILY_MARKET_OUTPUT")
         event = _json(_regular(Path(os.environ["GITHUB_EVENT_PATH"]), 1024 * 1024))
+        if args.command == "clock-probe":
+            return run_clock_probe(event, os.environ, args.out)
         return run_runtime(event, os.environ, args.out)
     except Exception as exc:
         print(_reason(exc, os.environ), file=sys.stderr)

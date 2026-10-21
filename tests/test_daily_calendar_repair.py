@@ -284,8 +284,8 @@ def test_workflow_uses_the_existing_serial_writer_and_no_new_source_secret_route
     root = Path(__file__).resolve().parents[1]
     flow = yaml.load((root / '.github/workflows/daily-market.yml').read_text(), Loader=yaml.BaseLoader)
     assert flow['on']['workflow_dispatch']['inputs']['operation']['options'] == [
-        'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write']
-    assert set(flow['jobs']) == {'visibility', 'status', 'daily'} and flow['permissions'] == {}
+        'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write', 'external-clock', 'clock-probe']
+    assert set(flow['jobs']) == {'visibility', 'status', 'daily', 'clock-probe'} and flow['permissions'] == {}
     assert flow['concurrency'] == {'group': 'decision-os-relay-source', 'cancel-in-progress': 'false'}
     assert "inputs.operation == 'repair-calendar'" in flow['jobs']['daily']['if']
     assert 'secrets.' not in json.dumps(flow['jobs']['visibility'])
@@ -294,7 +294,8 @@ def test_workflow_uses_the_existing_serial_writer_and_no_new_source_secret_route
     event, env = native_context()
     selected = cli.settings(event, env, approved_for(history[3]))
     assert selected['operation'] == 'update' and selected['invocation'] == 'repair-calendar'
-    assert visibility.selection(event, env)['operation'] == 'repair-calendar'
+    assert visibility.selection(event, env)['operation'] == 'update'
+    assert visibility.selection(event, env)['invocation'] == 'repair-calendar'
     event['inputs']['extra_budget'] = 100
     with pytest.raises(RecordError, match='DAILY_MARKET_INPUT'):
         cli.settings(event, env, approved_for(history[3]))

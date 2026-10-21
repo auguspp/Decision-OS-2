@@ -23,7 +23,7 @@ from decision_kernel.domain.records import RecordError, digest, encoded, require
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed, measure_phase, timed
-from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, native_ready, settings
+from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, load_clock_policy, native_ready, settings
 from decision_kernel.interfaces.ftshare_check_cli import _regular, _safe_error
 from decision_kernel.interfaces.market_collection_cli import REGISTRY, _records_runtime_binding
 from decision_kernel.interfaces.reading_commands import check_ai_brief_output, perform
@@ -292,7 +292,7 @@ def read_discovery_receipt(out, selected, receipt):
 def run_runtime(event, env, out, *, api=None, clock=None):
     with measure_phase("reading.execute"):
         approved = policy(_json(_regular(POLICY_FILE, 8192)))
-        selected = settings(event, env, approved)
+        selected = settings(event, env, approved, clock=load_clock_policy())
         token = env.get("GITHUB_TOKEN")
         require(isinstance(token, str) and bool(token), "DAILY_READING_TOKEN_REQUIRED")
         root, out = Path(env["RUNNER_TEMP"]).resolve(strict=True), Path(out)

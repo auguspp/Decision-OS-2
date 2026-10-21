@@ -20,7 +20,7 @@ python -m decision_kernel.interfaces.store_runtime runtime-health \
 
 查看store-runtime、research-runtime、news-rolling、daily-market四个现役宿主。每个读取最近20个main运行，按窗口内实际attempt启动时刻排序，同时保留最近尝试与最近可见成功及原生event；新失败不会被旧成功顶替。总数量、返回数量、历史是否完整和窗口内在途条目明示。旧run在窗口外重试可能不在结果中，不能据此签全局无writer、没有其他活动采集、当前业务最新或允许切换。daily的`status`和`daily`作业分别标明；原生作业名不包含update/recover-late等确切输入时不猜具体操作。
 
-确切run/attempt的jobs与对应产物名、run/head、摘要声明、到期日期分别核对；不借旧attempt附件。jobs/artifact分页超过100不截断为完整，返回未知。末次重复核同运行、工作流和列表，变化显示changed-during-inspection，不自动重试；仓库身份/可见性与main/records再次核对。最多56个GET：仓库/两分支前后6，四宿主各至多10，当前巡检自身3，指定backup4，自然schedule页前后2，固定策略1。同一原API的512累计预算不重置，元数据总8MiB、输出256KiB。供应商原文、任务payload、用户反馈、账号字段和签名下载地址不进入报告。
+确切run/attempt的jobs与对应产物名、run/head、摘要声明、到期日期分别核对；不借旧attempt附件。jobs/artifact分页超过100不截断为完整，返回未知。末次重复核同运行、工作流和列表，变化显示changed-during-inspection，不自动重试；仓库身份/可见性与main/records再次核对。最多62个GET：原56（仓库/两分支前后6、四宿主各至多10、当前巡检自身3、指定backup4、自然schedule页前后2、固定生产策略1），另加固定clock配置1、独立dispatch页前后2、最多一条尚未核过的外部入口详情3；已有同run详情直接复用。同一原API的512累计预算不重置，元数据总8MiB、输出256KiB。供应商原文、任务payload、用户反馈、账号字段和签名下载地址不进入报告。
 
 `metadata-ok` 仅表示本次有限原生执行/产物元数据检查通过，不叫“业务健康”。workflow `active` 不证明已配置schedule；作业成功不证明正文已保存或真实资料完整；产物未过期不证明字节校验/当前records覆盖/异地保管。临到期提示固定为剩余不超过7天，仅提示，不自动复制、删档或通知。指定backup仍必须是原生成功backup作业，不能用health或retain-guide替代；内容和恢复资格仍读取原report与bundle校验。
 
@@ -32,9 +32,19 @@ python -m decision_kernel.interfaces.store_runtime runtime-health \
 
 期待槽和每条run的归槽直接复用生产`admission_slot(..., allow_late=True)`：以评估时钟找不足24小时的最近已过工作日18:35槽，每条run只按native `created_at`归槽，排队启动跨午夜不改业务日期。周二18:35前仍观察周一槽；周六18:35前仍观察周五槽。无最近有效槽时显示no-recent-slot，旧失败与成功摘要仍保留，不宣称历史缺口已恢复。
 
-当前槽无符合证据显示not-observed，不推断未触发、平台丢弃或来源根因。24小时只是原生产入场边界，不是GitHub永久丢失证明。同槽任何首次attempt不可见或任何在途运行均保留unknown/in-progress，较晚成功不遮住它们；其余才按最近完成尝试呈现结果。原生在途、非成功、未知或当前槽未观察到均使daily宿主和整份巡检不能为metadata-ok，最近手动成功不替代它们。native-success只表示该页原生首次attempt成功；自然子节不另读jobs、附件或payload，也不认证行情更新、Watch、Brief或业务正文。一般宿主的最近run详情与自然子节是分别声明的观察范围；两页中相同run的元数据冲突也显示changed。
+当前槽无符合证据显示not-observed，不推断未触发、平台丢弃或来源根因。24小时只是原生产入场边界，不是GitHub永久丢失证明。同槽任何首次attempt不可见或任何在途运行均保留unknown/in-progress，较晚成功不遮住它们；其余才按最近完成尝试呈现结果。当前primary为github-schedule时，原生在途、非成功、未知或当前槽未观察到均使daily宿主和整份巡检不能为metadata-ok，最近手动成功不替代它们。native-success只表示该页原生首次attempt成功；自然子节不另读jobs、附件或payload，也不认证行情更新、Watch、Brief或业务正文。一般宿主的最近run详情与自然子节是分别声明的观察范围；两页中相同run的元数据冲突也显示changed。
 
-本观察不新增时钟、后台检查、通知、dispatch或恢复动作。复用Kernel的有界元数据检查与事件身份区分；其真实[计数1/空列表反例](https://github.com/auguspp/decision-kernel/issues/297#issuecomment-5829043734)要求不完整证据保持未知，[后继交付对账教训](https://github.com/auguspp/decision-kernel/issues/297#issuecomment-5831654154)要求最近状态不能遮住交付缺口。没有移植Kernel外部定时器、自动补采或历史重建。原生接口与延迟边界依据GitHub的[workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow)和[schedule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
+本观察不新增时钟、后台检查、通知、dispatch或恢复动作。复用Kernel的有界元数据检查与事件身份区分；其真实[计数1/空列表反例](https://github.com/auguspp/decision-kernel/issues/297#issuecomment-5829043734)要求不完整证据保持未知，[后继交付对账教训](https://github.com/auguspp/decision-kernel/issues/297#issuecomment-5831654154)要求最近状态不能遮住交付缺口。外部时钟的实际准备与切换走下节独立合同，不由巡检自动执行；没有移植旧自动补采或历史重建。原生接口与延迟边界依据GitHub的[workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow)和[schedule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
+
+## 单主时钟与外部入口观察
+
+另读同一固定main的`config/daily-market-clock.json`，同样核文件身份、严格JSON、大小、Git blob及字节摘要；报告保留`clock_policy`和实际primary。默认github-schedule只要求原schedule证据，尚未启用的外部入口作为备用观察，不额外要求每天出现。将来按[外部日更时钟合同](external-daily-clock.md)切到external-cron后，原schedule仍显示历史，但不再要求已退役的时钟每天有新run。clock配置无法核定时保持unknown，不能默认任一钟已启用。
+
+独立前后读取最近20个main的`event=workflow_dispatch`。固定run-name把`external-clock`入口与`clock-probe`、其他手动调用区分；原生event仍是workflow_dispatch，外部服务身份与实际job配置均未由此证明。计数、完整性和当前槽覆盖先按整页dispatch判断，再挑外部入口；不能用过滤后的数量充当完整历史，或因20个较新status挤掉外部run就说从未触发。
+
+外部目标槽同样保留任何在途/首次attempt不可见/观察变化，不让probe success或较晚success遮盖。原生run success不足以取得`daily-job-success`：还须当前主线策略下的确切入口、稳定原生详情、完整jobs中实际daily成功且未skip、对应未过期产物元数据；历史代码策略未核时单列未知。这里只核最多一条外部运行详情并复用已有同run结果，不下载业务附件。`clock-probe`的独立job和`dos2-daily-clock`产物被识别为元数据探针，不能补签daily生产槽。
+
+即使是`daily-job-success`，`natural_origin=unverified`、服务商配置未检查、业务结果未检查仍保持。服务商计划/执行时间、原HTTP结果与确切GitHub run、源完成和Watch/Brief采用须沿原件另验；当前primary配置只是受审意图，不证明外部账户真的enabled。切换/回退、停用配置和零业务副作用probe用法在[外部日更时钟合同](external-daily-clock.md)。
 
 ## 持久备份与恢复目标：待用户批准的默认方案
 
@@ -48,7 +58,7 @@ python -m decision_kernel.interfaces.store_runtime runtime-health \
 
 ## 实际启用、停止和回退
 
-启用前在原任务核四类事实：用户批准的具体周期/渠道/目标；唯一业务writer及当前所有来源/写入/排队/未知效果；确切main及适用CI、最后合格业务引用与可恢复快照；新旧执行责任和回退入口。巡检只覆盖四条宿主及daily的有限自然页，不能单独解除这四项前提。定时不会默认启动新的Full、复活暂停来源或记录用户接受。
+启用前在原任务核四类事实：用户批准的具体周期/渠道/目标；唯一业务writer及当前所有来源/写入/排队/未知效果；确切main及适用CI、最后合格业务引用与可恢复快照；新旧执行责任和回退入口。巡检只覆盖四条宿主及daily的有限schedule/dispatch页，不能单独解除这四项前提。定时不会默认启动新的Full、复活暂停来源或记录用户接受。
 
 停止只在获得该操作授权后阻止后续触发；已运行任务先检查实际副作用，不自动cancel或假定取消等于回滚。失败写入沿原submission/expected/ref只读对账，不换key再发。来源429/权限拒绝沿原owner停止规则，不由巡检器代作重试。
 
@@ -58,4 +68,4 @@ python -m decision_kernel.interfaces.store_runtime runtime-health \
 
 GitHub提供原生runs、attempt jobs和artifact metadata；现成GitHub CLI可人工查看，但本组组合不同宿主的原生身份、原项目预算及公开摘要，直接复用已有GitHubAPI而非再装客户端或搭建监控服务。2026-10-17核读官方[workflow runs](https://docs.github.com/en/rest/actions/workflow-runs)、[workflow jobs](https://docs.github.com/en/rest/actions/workflow-jobs)、[artifacts](https://docs.github.com/en/rest/actions/artifacts)及[workflows](https://docs.github.com/en/rest/actions/workflows)；2026-10-21补核schedule及workflow-scoped event/branch过滤。服务端字段/分页变更时更新同范围消费者和反例，不以宽松解析吞掉未知状态。
 
-维护 `application/runtime_health.py`、窄策略解释器 `application/daily_schedule_health.py`、`interfaces/runtime_health_commands.py` 及原store-runtime显式health路由。退役用普通PR一起撤health选项/job、CLI/专属测试及原单次安装helper；若只退役日更自然观察，同步撤该子节、额外只读预算与专属反例，原宿主/共享保护继续。原backup/retain-guide、恢复包、CI和业务保管不退。真实生产启用、外部持久副本和业务/人工验收仍各自留原件，不能由本说明代签。
+维护 `application/runtime_health.py`、窄策略解释器 `application/daily_schedule_health.py`、`interfaces/runtime_health_commands.py` 及原store-runtime显式health路由；单主时钟配置/准入共享`application/daily_clock.py`，不另造解释。退役用普通PR一起撤health选项/job、CLI/专属测试及原单次安装helper；若只退役日更或外部入口观察，同步撤对应子节、额外只读预算与专属反例，原宿主/共享保护继续。原backup/retain-guide、恢复包、CI和业务保管不退。真实生产启用、外部持久副本和业务/人工验收仍各自留原件，不能由本说明代签。

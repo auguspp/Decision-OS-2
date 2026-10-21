@@ -1,4 +1,5 @@
 name: decision-os-daily-market
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'external-clock' && 'decision-os-daily-market / external-clock' || github.event_name == 'workflow_dispatch' && inputs.operation == 'clock-probe' && 'decision-os-daily-market / clock-probe' || 'decision-os-daily-market' }}
 on:
   schedule:
     - cron: '35 10 * * 1-5'
@@ -6,14 +7,14 @@ on:
     inputs:
       operation:
         type: choice
-        options: [status, update, recover-late, repair-calendar, reconcile-write]
+        options: [status, update, recover-late, repair-calendar, reconcile-write, external-clock, clock-probe]
         default: status
         required: true
-        description: 'Read or update the bounded daily cycle; repair-calendar and reconcile-write require their fixed reviewed config and preserve original requests and holds'
+        description: 'Read or update the bounded daily cycle; external-clock requires the selected clock policy, clock-probe reads metadata only, and explicit repairs keep their fixed grants'
       code_sha:
         type: string
         required: true
-        description: 'Exact reviewed current main commit; automatic schedule uses native main SHA'
+        description: 'Exact reviewed current main commit; external-clock and clock-probe require the literal current-main and verify the native checkout and main CI'
 permissions: {}
 concurrency:
   group: decision-os-relay-source
@@ -29,6 +30,7 @@ jobs:
     outputs:
       visibility: ${{ steps.visibility.outputs.visibility }}
       runtime_authorized: ${{ steps.visibility.outputs.runtime_authorized }}
+      admitted: ${{ steps.visibility.outputs.admitted }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -44,7 +46,7 @@ jobs:
         run: python -m decision_kernel.interfaces.daily_visibility_cli --use-runtime-authorization
   status:
     needs: visibility
-    if: needs.visibility.outputs.runtime_authorized == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
+    if: needs.visibility.outputs.runtime_authorized == 'true' && needs.visibility.outputs.admitted == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'status'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -87,7 +89,7 @@ jobs:
           retention-days: 30
   daily:
     needs: visibility
-    if: needs.visibility.outputs.runtime_authorized == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late' || inputs.operation == 'repair-calendar' || inputs.operation == 'reconcile-write')))
+    if: needs.visibility.outputs.runtime_authorized == 'true' && needs.visibility.outputs.admitted == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late' || inputs.operation == 'repair-calendar' || inputs.operation == 'reconcile-write' || inputs.operation == 'external-clock')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:
@@ -135,4 +137,36 @@ jobs:
           name: dos2-daily-market-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dos2-daily-market/
           if-no-files-found: warn
+          retention-days: 30
+  clock-probe:
+    needs: visibility
+    if: needs.visibility.result == 'success' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && inputs.operation == 'clock-probe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: contracts
+      - name: Inspect the clock entry without source credentials or records reads
+        id: probe
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+        run: python -m decision_kernel.interfaces.daily_market_cli clock-probe --out "$RUNNER_TEMP/dos2-daily-clock"
+      - name: Show the metadata-only clock receipt
+        if: steps.probe.outcome == 'success'
+        run: cat "$RUNNER_TEMP/dos2-daily-clock/probe.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain this exact clock probe
+        if: always() && steps.probe.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-daily-clock-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dos2-daily-clock/
+          if-no-files-found: error
           retention-days: 30

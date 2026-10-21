@@ -82,10 +82,10 @@ def check_private(api, selected):
             and os.environ.get('GITHUB_WORKFLOW_REF') == REPO + '/.github/workflows/daily-market.yml@refs/heads/main':
         # The existing release command supplies only the code SHA. Recover its
         # normal operation from the SAME native event, never from source text.
-        from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, settings as daily_settings
+        from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, load_clock_policy, settings as daily_settings
         event = _json(_regular(Path(os.environ['GITHUB_EVENT_PATH']), 1024 * 1024))
         approved = _json(_regular(POLICY_FILE, 8192))
-        authorization_selection = daily_settings(event, os.environ, approved)
+        authorization_selection = daily_settings(event, os.environ, approved, clock=load_clock_policy())
     require(meta.get('id') == 1420041744 and meta.get('full_name') == REPO
         and (meta.get('private') is True or meta.get('private') is False
              and native_publication_basis(authorization_selection) is not None)

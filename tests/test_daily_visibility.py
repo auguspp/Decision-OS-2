@@ -30,14 +30,25 @@ class NativeAPI:
         self.run = {"id": 8001, "head_sha": SHA, "head_branch": "main", "run_attempt": 1,
             "event": "schedule" if scheduled else "workflow_dispatch", "path": cli.WORKFLOW,
             "name": cli.WORKFLOW_NAME, "status": "in_progress",
-            "repository": {"id": cli.REPOSITORY_ID}, "head_repository": {"id": cli.REPOSITORY_ID}}
+            "repository": {"id": cli.REPOSITORY_ID}, "head_repository": {"id": cli.REPOSITORY_ID},
+            "created_at": "2026-10-19T12:10:00+00:00"}
+        self.main = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": SHA}}
+        self.ci = {"total_count": 1, "workflow_runs": [{
+            "id": 6001, "head_sha": SHA, "head_branch": "main", "event": "push", "run_attempt": 1,
+            "path": ".github/workflows/ci.yml", "name": "decision-os-ci",
+            "status": "completed", "conclusion": "success", "repository": {"id": cli.REPOSITORY_ID},
+            "head_repository": {"id": cli.REPOSITORY_ID}}]}
         self.final_meta = None
 
     def request(self, method, path):
         assert method == "GET", "This probe must never write."
         self.calls.append((method, path))
         if path == cli.PREFIX:
-            return deepcopy(self.final_meta if len(self.calls) == 3 and self.final_meta is not None else self.meta)
+            return deepcopy(self.final_meta if len(self.calls) >= 3 and self.final_meta is not None else self.meta)
+        if path == cli.PREFIX + "/git/ref/heads/main":
+            return deepcopy(self.main)
+        if path.startswith(cli.PREFIX + "/actions/workflows/ci.yml/runs?"):
+            return deepcopy(self.ci)
         assert path == cli.PREFIX + "/actions/runs/8001", "No data, artifact, source or records endpoints."
         return deepcopy(self.run)
 
@@ -49,7 +60,8 @@ def test_explicit_routes_and_truthful_metadata_only_result(operation, private):
     api = NativeAPI(private=private)
     report, code = cli.preflight(event, env, api)
     assert report["repository_visibility"] == ("private" if private else "public")
-    assert report["operation"] == operation and report["code_sha"] == SHA
+    assert report["operation"] == ("status" if operation == "status" else "update")
+    assert report["invocation"] == operation and report["code_sha"] == SHA
     assert report["scope"] == "native-metadata-only"
     assert report["source_requests"] == 0 and report["records_read"] is False and report["records_written"] is False
     assert report["data_freshness"] == "not-checked" and report["historical_exposure_remediated"] is False
@@ -69,9 +81,13 @@ def test_explicit_routes_and_truthful_metadata_only_result(operation, private):
 def test_schedule_without_repository_payload_uses_native_metadata(private):
     event, env = context(scheduled=True)
     assert "repository" not in event
-    report, code = cli.preflight(event, env, NativeAPI(private=private, scheduled=True))
+    api = NativeAPI(private=private, scheduled=True)
+    report, code = cli.preflight(event, env, api)
     assert code == (0 if private else 2)
     assert report["operation"] == "update" and report["event"] == "schedule"
+    assert len(api.calls) == (7 if private else 3)
+    if private:
+        assert report["native_proof"]["main_ci_run"] == 6001
 
 
 @pytest.mark.parametrize("private", [False, True])
@@ -238,7 +254,8 @@ def test_workflow_native_preflight_does_not_depend_on_missing_schedule_repositor
     assert job["permissions"] == {"contents": "read", "actions": "read"}
     assert "repository.private" not in job["if"] and "schedule" in job["if"]
     assert job["outputs"] == {"visibility": "${{ steps.visibility.outputs.visibility }}",
-                              "runtime_authorized": "${{ steps.visibility.outputs.runtime_authorized }}"}
+                              "runtime_authorized": "${{ steps.visibility.outputs.runtime_authorized }}",
+                              "admitted": "${{ steps.visibility.outputs.admitted }}"}
     commands = [step for step in job["steps"] if "run" in step]
     assert len(commands) == 1 and commands[0]["id"] == "visibility"
     assert shlex.split(commands[0]["run"]) == ["python", "-m", cli.__name__, "--use-runtime-authorization"]
@@ -249,6 +266,7 @@ def test_workflow_native_preflight_does_not_depend_on_missing_schedule_repositor
         child = workflow["jobs"][name]
         assert child["needs"] == "visibility"
         assert child["if"].startswith("needs.visibility.outputs.runtime_authorized == 'true' && ")
+        assert "needs.visibility.outputs.admitted == 'true'" in child["if"]
         assert "always()" not in child["if"] and "github.event.repository.private" not in child["if"]
         # Do not remove the original last native check guarding full outputs.
         assert any(step.get("id") == "release" for step in child["steps"])

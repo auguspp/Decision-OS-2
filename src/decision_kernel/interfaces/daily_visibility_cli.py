@@ -13,6 +13,10 @@ from pathlib import Path
 import re
 import sys
 
+from decision_kernel.application.daily_clock import (
+    CLOCK_PATH, CLOCK_PROBE, EXTERNAL_CLOCK, admit_clock, clock_policy,
+    dispatch_selection, run_title,
+)
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.github_store import GitHubAPI
 from decision_kernel.infrastructure.runtime_publication import native_publication_basis
@@ -24,6 +28,7 @@ WORKFLOW_NAME = "decision-os-daily-market"
 PREFIX = "/repos/" + REPOSITORY
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 MAX_EVENT_BYTES = 65536
+CLOCK_POLICY_FILE = Path(CLOCK_PATH)
 SCHEMA = "daily-runtime-visibility-v1"
 PUBLIC_REASON = "PUBLIC_DAILY_RUNTIME_NOT_AUTHORIZED"
 ERROR_CODES = frozenset({
@@ -31,10 +36,13 @@ ERROR_CODES = frozenset({
     "DAILY_VISIBILITY_CODE_SHA", "DAILY_VISIBILITY_RUN_ID", "DAILY_VISIBILITY_TOKEN",
     "DAILY_VISIBILITY_REPOSITORY", "DAILY_VISIBILITY_NATIVE_RUN",
     "DAILY_VISIBILITY_CHANGED", "DAILY_VISIBILITY_OUTPUT", "DAILY_VISIBILITY_FAILED",
+    "DAILY_CLOCK_POLICY", "DAILY_CLOCK_NOT_PRIMARY", "DAILY_CLOCK_INVOCATION",
+    "DAILY_CLOCK_METADATA_MODE", "DAILY_MARKET_NATIVE_RUN", "DAILY_MARKET_MAIN_CI",
+    "FTSHARE_MAIN_MOVED",
 })
 
 
-def selection(event, env):
+def selection(event, env, *, clock=None):
     """Validate trusted workflow coordinates; event privacy is not authoritative."""
     require(isinstance(env, Mapping)
         and env.get("GITHUB_REPOSITORY") == REPOSITORY
@@ -55,15 +63,13 @@ def selection(event, env):
         # owns the approved cron, due slot, calendar, holds and source budgets.
         require(isinstance(event.get("schedule"), str) and 0 < len(event["schedule"]) <= 128
             and not event.get("inputs"), "DAILY_VISIBILITY_EVENT")
-        operation = "update"
+        operation, invocation = "update", "schedule"
+        admit_clock(invocation, clock)
     else:
-        inputs = event.get("inputs")
-        require(isinstance(inputs, dict) and set(inputs) == {"operation", "code_sha"}
-            and inputs.get("operation") in {"status", "update", "recover-late", "repair-calendar", "reconcile-write"},
-            "DAILY_VISIBILITY_INPUT")
-        require(inputs["code_sha"] == sha, "DAILY_VISIBILITY_CODE_SHA")
-        operation = inputs["operation"]
-    return {"operation": operation, "event": env["GITHUB_EVENT_NAME"],
+        selected = dispatch_selection(event.get("inputs"), sha, clock,
+            input_error="DAILY_VISIBILITY_INPUT", sha_error="DAILY_VISIBILITY_CODE_SHA")
+        operation, invocation = selected["operation"], selected["invocation"]
+    return {"operation": operation, "invocation": invocation, "event": env["GITHUB_EVENT_NAME"],
         "code_sha": sha, "run_id": int(run_id), "run_attempt": 1}
 
 
@@ -78,9 +84,13 @@ def _repository(api):
     return visibility
 
 
-def preflight(event, env, api, *, use_authorization=False):
-    """Use only three native metadata GETs; never query records, artifacts or data."""
-    selected = selection(event, env)
+def preflight(event, env, api, *, use_authorization=False, clock=None):
+    """Three metadata GETs, seven for an admitted clock; no records or source I/O.
+
+    Automatic producers must still be the current main with applicable native
+    CI before their job receives source secrets. The runtime checks again.
+    """
+    selected = selection(event, env, clock=clock)
     visibility = _repository(api)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))
     require(isinstance(run, dict) and type(run.get("id")) is int and run["id"] == selected["run_id"]
@@ -88,21 +98,28 @@ def preflight(event, env, api, *, use_authorization=False):
         and run.get("event") == selected["event"] and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
         and run.get("name") == WORKFLOW_NAME and run.get("status") == "in_progress"
+        and (selected["invocation"] not in {EXTERNAL_CLOCK, CLOCK_PROBE}
+             or run.get("display_title") == run_title(selected["invocation"]))
         and all(isinstance(run.get(key), dict) and type(run[key].get("id")) is int
             and run[key]["id"] == REPOSITORY_ID for key in ("repository", "head_repository")),
         "DAILY_VISIBILITY_NATIVE_RUN")
-    require(_repository(api) == visibility, "DAILY_VISIBILITY_CHANGED")
     public = visibility == "public"
     require(type(use_authorization) is bool, "DAILY_VISIBILITY_INPUT")
-    basis = native_publication_basis(selected, env=env) if public and use_authorization else None
+    probe = selected["invocation"] == CLOCK_PROBE
+    basis = native_publication_basis(selected, env=env) if public and use_authorization and not probe else None
     allowed = not public or basis is not None
-    if selected["operation"] == "repair-calendar" and allowed:
+    proof = None
+    if allowed and selected["invocation"] in {"schedule", EXTERNAL_CLOCK}:
+        from decision_kernel.interfaces.daily_market_cli import native_ready
+        proof = native_ready(api, selected, metadata_only=True)
+    require(_repository(api) == visibility, "DAILY_VISIBILITY_CHANGED")
+    if selected["invocation"] == "repair-calendar" and allowed:
         from decision_kernel.application.daily_calendar_repair import load_grant
         load_grant()
-    if selected["operation"] == "reconcile-write" and allowed:
+    if selected["invocation"] == "reconcile-write" and allowed:
         from decision_kernel.application.daily_write_reconciliation import load_grant
         load_grant()
-    blocked = public and not allowed and selected["operation"] != "status"
+    blocked = public and not allowed and selected["operation"] != "status" and not probe
     report = {"schema": SCHEMA, "scope": "native-metadata-only", **selected,
         "repository_visibility": visibility,
         "status": "blocked" if blocked else "metadata-only" if public else "private-runtime-pending",
@@ -110,9 +127,15 @@ def preflight(event, env, api, *, use_authorization=False):
         "source_requests": 0, "records_read": False, "records_written": False,
         "data_freshness": "not-checked", "historical_exposure_remediated": False}
     if use_authorization:
-        report.update(runtime_authorized=allowed, publication_authority=basis)
-        if public and allowed:
+        report.update(runtime_authorized=allowed and not probe, admitted=allowed and not probe,
+                      publication_authority=basis)
+        if public and allowed and not probe:
             report.update(status="public-runtime-pending", reason_code=None)
+    if proof is not None:
+        report["native_proof"] = proof
+    if probe:
+        report.update(status="clock-probe-metadata-only", reason_code=None,
+            clock_primary=admit_clock(CLOCK_PROBE, clock), external_origin_verified=False)
     return report, 2 if blocked else 0
 
 
@@ -120,7 +143,9 @@ def summary(report):
     """Render only the fixed, validated diagnostic fields, never provider output."""
     if report["status"] == "failed":
         return "## 日常运行准入检查失败\n\n未取得可用准入回执；未读取资料或调用来源。\n\n原因：`" + report["reason_code"] + "`\n"
-    if report["repository_visibility"] == "private":
+    if report.get("invocation") == CLOCK_PROBE:
+        note = "本次仅为时钟连接检查；后续只核当前主线与原生 CI，不进入行情、资料、研究或 Brief 读取与写入。外部调度来源尚未证明。"
+    elif report["repository_visibility"] == "private":
         note = "已核仓库为 Private；后续作业仍须通过原有权限、代码、来源及输出检查。此回执不证明数据已更新。"
     elif report.get("runtime_authorized") is True:
         note = "已核仓库为 Public，并采用已登记的用户公开授权；后续正常行情、研究与 Brief 作业获准接续。此预检不代表数据已更新。"
@@ -129,18 +154,18 @@ def summary(report):
     else:
         note = "仓库为 Public；本次 status 仅完成元数据诊断，没有读取行情、研究或 Brief，也没有生成阅读页。"
     return ("## 日常运行状态（仅元数据）\n\n" + note + "\n\n"
-        + "操作：`" + report["operation"] + "`；状态：`" + report["status"] + "`。\n\n"
+        + "操作：`" + report.get("invocation", report["operation"]) + "`；状态：`" + report["status"] + "`。\n\n"
         + "来源请求：0；records 读取/写入：未执行；资料新鲜度：未检查。\n\n"
         + "已有明确公开权利的手动入口仍按原合同使用。此检查未隐藏或清理历史 records、日志和附件。\n")
 
 
-def _event(path):
+def _event(path, *, max_bytes=MAX_EVENT_BYTES):
     require(isinstance(path, str) and bool(path), "DAILY_VISIBILITY_EVENT")
     target = Path(path)
     require(target.is_file() and not target.is_symlink(), "DAILY_VISIBILITY_EVENT")
     with target.open("rb") as stream:
-        raw = stream.read(MAX_EVENT_BYTES + 1)
-    require(len(raw) <= MAX_EVENT_BYTES, "DAILY_VISIBILITY_EVENT")
+        raw = stream.read(max_bytes + 1)
+    require(len(raw) <= max_bytes, "DAILY_VISIBILITY_EVENT")
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -148,6 +173,11 @@ def _event(path):
             result[key] = value
         return result
     return json.loads(raw, object_pairs_hook=unique)
+
+
+def load_clock_policy():
+    """Load the reviewed checkout file; missing or malformed config never defaults."""
+    return clock_policy(_event(str(CLOCK_POLICY_FILE), max_bytes=8192))
 
 
 def _append(env, key, text):
@@ -166,16 +196,19 @@ def main(argv=None, *, env=None, api_factory=GitHubAPI):
         require(args in ([], ["--use-runtime-authorization"]), "DAILY_VISIBILITY_INPUT")
         use_authorization = bool(args)
         event = _event(env.get("GITHUB_EVENT_PATH"))
-        selection(event, env)  # Reject malformed contexts before creating a client.
+        clock = load_clock_policy()
+        selection(event, env, clock=clock)  # Reject malformed contexts before creating a client.
         token = env.get(TOKEN_ENV)
         require(isinstance(token, str) and bool(token), "DAILY_VISIBILITY_TOKEN")
-        report, exit_code = preflight(event, env, api_factory(token), use_authorization=use_authorization)
+        report, exit_code = preflight(event, env, api_factory(token),
+            use_authorization=use_authorization, clock=clock)
         _append(env, "GITHUB_STEP_SUMMARY", summary(report))
         # Emit the two-value enum only after both live visibility reads agree.
         # Routing is necessary, not sufficient: the existing jobs recheck again.
         output = "visibility=" + report["repository_visibility"] + "\n"
         if use_authorization:
             output += "runtime_authorized=" + ("true" if report["runtime_authorized"] else "false") + "\n"
+            output += "admitted=" + ("true" if report["admitted"] else "false") + "\n"
         _append(env, "GITHUB_OUTPUT", output)
     except Exception as exc:
         code = str(exc) if isinstance(exc, RecordError) and str(exc) in ERROR_CODES else "DAILY_VISIBILITY_FAILED"

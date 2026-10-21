@@ -184,6 +184,40 @@ def test_canonical_root_is_checked_across_leaf_identity_declarations(store, decl
         assert 'INDUSTRY_COVERAGE_CANONICAL_NOT_ROOT' in result['entries'][0]['reasons']
 
 
+def test_alias_of_already_merged_subject_cannot_be_silently_ignored(store):
+    _, body, raw = prepare(store)
+    retained_root = Entity('synthetic-existing-root-b', 'commodity', 'Synthetic retained root B')
+    target = Entity('synthetic-existing-root-c', 'commodity', 'Synthetic retained root C')
+    root_leaf, _, root_raw = alias_leaf(store, body, raw, entity=retained_root, different_specification=True)
+    target_leaf, _, _ = alias_leaf(store, body, raw, entity=target, different_specification=True)
+    combined = deepcopy(raw)
+    combined['series'].extend(root_raw['series'])
+    body['inputs'][0]['reference'] = asdict(original_packet(store, combined))
+    body['candidates'][0].update(commodity_id=retained_root.entity_id,
+        identity_evidence=[proof(store, entities=(SUBJECT, retained_root))[0]])
+    merged_leaf = packet(store, body)
+    root, _ = save_coverage(store, [merged_leaf, root_leaf, target_leaf], aliases=[{
+        'commodity_id': SUBJECT.entity_id, 'canonical_id': target.entity_id,
+        'evidence': [proof(store, entities=(SUBJECT, target))[0]]}])
+    result = read(store, root)
+    assert result['aliases'][0]['status'] == 'unavailable'
+    assert 'INDUSTRY_COVERAGE_ALIAS_SOURCE_NOT_LEAF_ROOT' in result['aliases'][0]['reasons']
+    assert result['status'] == 'partial' and result['sets']['qualified_goods'] == [target.entity_id]
+    assert result['sets']['fresh_goods'] == [target.entity_id]
+    assert all(not e['qualified'] and 'INDUSTRY_COVERAGE_ALIAS_UNAVAILABLE' in e['reasons']
+               for e in result['entries'][:2])
+    assert result['entries'][0]['canonical_id'] == retained_root.entity_id
+    # Only an explicit declaration of the actual leaf root, with its own bound
+    # evidence, resolves this identity; the reader never infers B -> C from A.
+    corrected, _ = save_coverage(store, [merged_leaf, root_leaf, target_leaf], aliases=[{
+        'commodity_id': retained_root.entity_id, 'canonical_id': target.entity_id,
+        'evidence': [proof(store, entities=(retained_root, target))[0]]}])
+    resolved = read(store, corrected)
+    assert resolved['status'] == 'read' and not resolved['conflicts']
+    assert all(e['qualified'] and e['canonical_id'] == target.entity_id for e in resolved['entries'])
+    assert resolved['sets']['qualified_goods'] == resolved['sets']['fresh_goods'] == [target.entity_id]
+
+
 @pytest.mark.parametrize('cycle', [False, True])
 def test_alias_chains_and_cycles_are_not_followed_or_repaired(store, cycle):
     first, body, raw = prepare(store)

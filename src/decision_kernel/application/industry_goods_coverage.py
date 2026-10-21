@@ -110,6 +110,7 @@ def _candidate(batch_id, entry, sources, entities, bound):
 def _aliases(declarations, reader, prepared, entities, bound, candidates):
     """Only direct, evidenced aliases to actual retained commodity roots apply."""
     named = {a['commodity_id']: a for a in declarations}
+    leaf_roots = {item['entry']['commodity_id'] for item in candidates}
     chained = set()
     for source, alias in named.items():
         if alias['canonical_id'] in named:
@@ -123,6 +124,8 @@ def _aliases(declarations, reader, prepared, entities, bound, candidates):
     for alias, proofs in zip(declarations, retained):
         source, target = alias['commodity_id'], alias['canonical_id']
         reasons = []
+        if source not in leaf_roots:
+            reasons.append('INDUSTRY_COVERAGE_ALIAS_SOURCE_NOT_LEAF_ROOT')
         if source in chained:
             reasons.append('INDUSTRY_COVERAGE_ALIAS_NOT_DIRECT_ROOT')
         if not {source, target} <= bound:
@@ -165,6 +168,13 @@ def _aliases(declarations, reader, prepared, entities, bound, candidates):
 
 def _cross_batch(candidates, aliases, invalid_aliases, entities, source_declarations):
     conflicts, subject_owners, fact_owners = [], {}, {}
+    # A rejected alias can name an original subject already merged by its leaf.
+    # Preserve that uncertainty for every candidate sharing the affected root;
+    # otherwise the unconsumed declaration could silently leave two good counts.
+    affected_roots = {aliases.get(e['commodity_id'], e['commodity_id'])
+                      for item in candidates for e in (item['entry'],)
+                      if e['commodity_id'] is not None and
+                      (e['subject_id'] in invalid_aliases or e['commodity_id'] in invalid_aliases)}
     bad_entities = {key for key, variants in entities.items() if len(variants) > 1}
     bad_sources = set()
     families = {}
@@ -183,7 +193,7 @@ def _cross_batch(candidates, aliases, invalid_aliases, entities, source_declarat
         original = entry['commodity_id']
         entry['canonical_id'] = aliases.get(original, original)
         canonical, subject = entry['canonical_id'], entry['subject_id']
-        if original in invalid_aliases:
+        if original in invalid_aliases or subject in invalid_aliases or canonical in affected_roots:
             item['coverage_reasons'].add('INDUSTRY_COVERAGE_ALIAS_UNAVAILABLE')
         if {subject, original, canonical} & bad_entities:
             item['coverage_reasons'].add('INDUSTRY_COVERAGE_ENTITY_CONFLICT')

@@ -451,17 +451,26 @@ def test_512_real_synthetic_series_pass_original_remote_request_and_size_limits(
     model.git.repository = model.binding.repository
     store = VersionedStore(model.git)
     leaves = many_goods(store)
+    _, unrelated, _ = prepare(store)
+    unrelated['sources'][0].update(rights='unknown',
+        reopen_when='Applicable evidence for this unrelated source is supplied.')
+    leaves.append(packet(store, unrelated))
     root, _ = save_coverage(store, leaves)
     head = model.git.head()
     api = transport(model)
     reader = VersionedStore(GitHubStore(replace(model.binding, write_enabled=False), api))
     result = read(reader, root)
-    assert result['scope']['declared_batches'] == result['scope']['read_batches'] == 16
-    assert result['scope']['candidate_records'] == result['scope']['comparable_series'] == 512
+    assert result['scope']['declared_batches'] == result['scope']['read_batches'] == 17
+    assert result['scope']['candidate_records'] == result['scope']['comparable_series'] == 513
     assert result['scope']['distinct_qualified_goods'] == result['scope']['fresh_goods'] == 512
+    assert result['scope']['unresolved_candidates'] == 1
+    assert result['outcomes'][-1]['subject_id'] == SUBJECT.entity_id
+    assert result['outcomes'][-1]['status'] == 'unresolved'
+    assert SUBJECT.entity_id not in result['sets']['qualified_goods']
     assert len(result['sets']['qualified_goods']) == len(set(result['sets']['qualified_goods'])) == 512
     assert result['scope']['global_fresh_goods'] is None and not result['conflicts']
     assert result['quantity_milestone']['status'] == 'established-in-declared-scope'
-    assert result['status'] == 'read' and len(encoded(result)) <= coverage.MAX_RESULT_BYTES == 2 * 1024 * 1024
+    assert result['quantity_milestone']['reasons'] == []
+    assert result['status'] == 'partial' and len(encoded(result)) <= coverage.MAX_RESULT_BYTES == 2 * 1024 * 1024
     assert 0 < api._requests <= MAX_REQUESTS == 512
     assert model.writes == 0 and model.git.head() == head

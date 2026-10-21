@@ -339,8 +339,6 @@ def read_industry_goods_coverage(reference, store, *, evaluation_at, subject_id=
             reasons.append('DECLARED_BATCH_INPUTS_UNAVAILABLE')
         if conflicts:
             reasons.append('CROSS_BATCH_IDENTITY_OR_SOURCE_CONFLICT')
-        if unresolved:
-            reasons.append('CANDIDATE_IDENTITIES_OR_QUALIFICATION_UNRESOLVED')
         if len(fresh) < 500:
             reasons.append('FEWER_THAN_500_FRESH_QUALIFIED_GOODS')
         scope = {'declared_batches': len(batches), 'read_batches': len(batches) - missing,

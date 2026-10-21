@@ -20,6 +20,16 @@ from test_store_snapshot import public_api, base_public_api
 STAMP = "2026-10-16T12:00:00Z"
 
 
+def bundle_inputs(api, directory, plan):
+    binding, snapshot = replace(api.binding, write_enabled=False), api.git.head()
+    bundle = directory / "records.bundle"
+    bundle_from_bare(api.git.root, binding, snapshot, bundle)
+    (directory / "binding.json").write_bytes(encoded(asdict(binding)))
+    (directory / "plan.json").write_bytes(encoded(plan))
+    return Namespace(bundle=bundle, bundle_sha256=digest(bundle.read_bytes()), binding=directory / "binding.json",
+                     snapshot=snapshot, plan=directory / "plan.json", out=directory / "restored", market_registry=None)
+
+
 def make_case(api, directory):
     from decision_kernel.application.brief_delivery import build_edition
     from decision_kernel.application.news_rolling_index import rolling_index
@@ -41,15 +51,48 @@ def make_case(api, directory):
         artifacts = ResearchArtifacts(store)
         doc, _ = build_edition(store.read_source, artifacts, {"window": asdict(window_ref), "cutoff": STAMP, "kind": "adhoc"})
         brief = artifacts.put("brief", ArtifactInput.from_bytes("brief", "edition.json", "application/json", encoded(doc)))
-    binding, snapshot = replace(api.binding, write_enabled=False), api.git.head()
-    bundle = directory / "records.bundle"
-    bundle_from_bare(api.git.root, binding, snapshot, bundle)
     plan = {"as_of": STAMP, "brief": asdict(brief)}
-    (directory / "binding.json").write_bytes(encoded(asdict(binding)))
-    (directory / "plan.json").write_bytes(encoded(plan))
-    args = Namespace(bundle=bundle, bundle_sha256=digest(bundle.read_bytes()), binding=directory / "binding.json",
-                     snapshot=snapshot, plan=directory / "plan.json", out=directory / "restored", market_registry=None)
-    return args, doc, revision
+    return bundle_inputs(api, directory, plan), doc, revision
+
+
+def make_odds_case(directory, *, retained_market):
+    """Original saved Odds through a real bundle, using only synthetic inputs."""
+    from contextlib import nullcontext
+    from decision_kernel.application.conditional_odds import ConditionalOdds
+    from decision_kernel.infrastructure.git_snapshot import GitSnapshot
+    from test_conditional_odds import authorized, price_payload, spec_payload
+    from test_ftshare_odds import build_case, conditional_input, EVALUATED, SyntheticClock
+    from test_github_store import GitAPI
+    api = GitAPI(directory / "original-odds.git")
+    binding = replace(api.binding, branch="records")
+    anchor = api.git.commit({"store.json": binding.marker()}, expected=api.git.head())
+    api.binding = replace(binding, anchor=anchor)
+    store = VersionedStore(GitHubStore(api.binding, api))
+    # The synthetic API owns only local Git; original Odds use its verified read-only snapshot.
+    store.backend.ftshare_close_read_scope = lambda: nullcontext(
+        GitSnapshot(api.git.root, replace(api.binding, write_enabled=False), api.git.head()))
+    with patch("decision_kernel.application.versioned_store._now", lambda: "2026-10-19T12:03:00+00:00"), \
+         patch("decision_kernel.application.conditional_odds.datetime", SyntheticClock), \
+         patch("decision_kernel.application.probability_odds.datetime", SyntheticClock):
+        if retained_market:
+            fresh = lambda: VersionedStore(GitHubStore(replace(api.binding, write_enabled=False), api))
+            case = build_case(storage=(api.git, store, fresh))
+            service, calculation = case["conditional"], conditional_input(case)
+        else:
+            source = store.put_source("odds-source", SourceInput("odds-source", "content", "Synthetic evidence",
+                "synthetic:recovery-odds", "Synthetic economic assumptions only"))
+            research = store.submit_revision("odds-research", RevisionInput("odds-case", "r1", "full",
+                "Synthetic research", "Synthetic commission", "synthetic", (source,), unresolved=("Unverified assumptions",)))
+            service = ConditionalOdds(store)
+            spec = service.freeze(authorized("spec", spec_payload(asdict(research))), submission_id="odds-spec")["reference"]
+            calculation = {"spec_ref": spec, "price": price_payload()}
+        ref = service.save(authorized("calculation", calculation), submission_id="recovery-odds")["reference"]
+        original = service.read(ref)
+    plan = {"as_of": EVALUATED, "odds_book_view": {"query": {"limit": 8, "scan_limit": 32}, "page_limit": 4,
+            "detail": {"operation": "read-odds", "payload": {"reference": ref}}}}
+    args = bundle_inputs(api, directory, plan)
+    shutil.rmtree(api.git.root)  # Only this helper's synthetic store; the bundle is now the sole copy.
+    return args, original
 
 
 @pytest.fixture
@@ -62,6 +105,7 @@ def test_independent_offline_recovery_restores_original_brief_and_research(recov
     def no_network(*_, **__): raise AssertionError("Offline recovery must not create a remote API")
     monkeypatch.setattr(GitHubAPI, "from_environment", no_network)
     shutil.rmtree(public_api.git.root)  # This test's owned synthetic live store, not production.
+    outside = args.out.parent / "outside"; outside.mkdir(); monkeypatch.chdir(outside)
     first = recover_room(args)
     assert first["status"] == "completed" and first["audit"]["status"] == "verified"
     assert first["write"] == "not-requested" and first["source_acquisition"] is False
@@ -76,6 +120,48 @@ def test_independent_offline_recovery_restores_original_brief_and_research(recov
     assert (args.out / "room.json").read_bytes() == (other.out / "room.json").read_bytes()
     assert (args.out / "reading-room.html").read_bytes() == (other.out / "reading-room.html").read_bytes()
     assert first["failover"] == "not-performed" and first["production_backup_policy"] == "not-certified"
+
+
+@pytest.mark.parametrize("retained_market", [False, True], ids=["declared-price-no-registry", "retained-ftshare-registry"])
+def test_original_odds_detail_from_foreign_cwd(tmp_path, monkeypatch, retained_market):
+    from test_market_relay_inputs import REGISTRY_PATH
+    args, original = make_odds_case(tmp_path, retained_market=retained_market)
+    if retained_market:
+        args.market_registry = REGISTRY_PATH
+    assert "market" not in json.loads(args.plan.read_bytes())
+    outside = tmp_path / "outside"; outside.mkdir(); monkeypatch.chdir(outside)
+    monkeypatch.setattr(GitHubAPI, "from_environment", lambda *a, **k: pytest.fail("offline reader created an API"))
+    report = recover_room(args)
+    assert report["status"] == "completed" and report["audit"]["status"] == "verified"
+    model = json.loads((args.out / "room.json").read_bytes())
+    detail = model["odds_book_view"]["detail"]
+    assert detail["status"] == "readable" and detail["result"] == original
+    assert detail["result"]["recalculation"] == "matches"
+    if retained_market:
+        assert detail["result"]["result"]["market"]["source_requests"] == 0
+    assert report["html_sha256"] == digest((args.out / "reading-room.html").read_bytes())
+
+
+@pytest.mark.parametrize("invalid", ["missing", "malformed"])
+def test_explicit_invalid_registry_without_market_rejected_before_audit_and_output(recovery, monkeypatch, invalid):
+    args = recovery[0]
+    args.market_registry = args.out.parent / "registry.json"
+    if invalid == "malformed":
+        args.market_registry.write_bytes(b"{}")
+    monkeypatch.setattr("decision_kernel.interfaces.recovery_commands.restored_bundle",
+                        lambda *a, **k: pytest.fail("invalid Registry reached bundle restoration"))
+    with pytest.raises(RecordError, match="RELAY_REGISTRY_INVALID"):
+        recover_room(args)
+    assert not args.out.exists()
+
+
+def test_market_plan_still_requires_explicit_registry(recovery, public_api):
+    args, _, revision = recovery
+    source = VersionedStore(GitHubStore(public_api.binding, public_api)).read_revision(revision)["record"]["input"]["sources"][0]
+    args.plan.write_bytes(encoded({"as_of": STAMP, "market": {"reference": source}}))
+    with pytest.raises(RecordError, match="RECOVERY_MARKET_REGISTRY_REQUIRED"):
+        recover_room(args)
+    assert not args.out.exists()
 
 
 def test_bundle_digest_rejection_precedes_restore_and_output(recovery):
@@ -159,6 +245,8 @@ def exercise_installed_recovery(outside, python, env, _store):
     anchor = api.git.commit({"store.json": binding.marker()}, expected=api.git.head())
     api.binding = replace(binding, anchor=anchor); api.meta["private"] = False
     args, original, _ = make_case(api, directory)
+    odds_directory = outside / "recovery-odds-input"; odds_directory.mkdir()
+    odds_args, original_odds = make_odds_case(odds_directory, retained_market=True)
     shutil.rmtree(api.git.root)
     clean = {k: v for k, v in env.items() if not any(x in k.upper() for x in ("TOKEN", "SECRET", "KEY", "GITHUB", "PYTHONPATH"))}
     command = [str(python), "-I", "-m", "decision_kernel.interfaces.store_runtime", "recover-room",
@@ -174,3 +262,22 @@ def exercise_installed_recovery(outside, python, env, _store):
         assert model["brief"]["view"] == original
         results.append(((target / "room.json").read_bytes(), (target / "reading-room.html").read_bytes()))
     assert results[0] == results[1]
+    from test_market_relay_inputs import REGISTRY_PATH
+    registry_dir = odds_directory / "registry"; registry_dir.mkdir()
+    metadata = json.loads(REGISTRY_PATH.read_bytes())
+    for relative in ("relay-registry.json", metadata["manual"]["path"], metadata["live_catalogue"]["path"],
+                     metadata["live_catalogue"]["receipt_path"]):
+        target = registry_dir / relative; target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REGISTRY_PATH.parent / relative, target)
+    registry = registry_dir / "relay-registry.json"
+    run = subprocess.run([str(python), "-I", "-m", "decision_kernel.interfaces.store_runtime", "recover-room",
+        "--bundle", str(odds_args.bundle), "--bundle-sha256", odds_args.bundle_sha256,
+        "--binding", str(odds_args.binding), "--snapshot", odds_args.snapshot, "--plan", str(odds_args.plan),
+        "--market-registry", str(registry), "--out", str(odds_args.out)],
+        cwd=odds_directory, env=clean, capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stderr + run.stdout
+    assert json.loads(run.stdout)["status"] == "completed"
+    model = json.loads((odds_args.out / "room.json").read_bytes())
+    assert "market" not in model["plan"]
+    assert model["odds_book_view"]["detail"]["status"] == "readable"
+    assert model["odds_book_view"]["detail"]["result"] == original_odds

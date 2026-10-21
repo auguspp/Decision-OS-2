@@ -1,0 +1,37 @@
+{
+  "job": {
+    "title": "Decision OS2 Daily Market",
+    "enabled": false,
+    "saveResponses": true,
+    "url": "https://api.github.com/repos/auguspp/Decision-OS-2/actions/workflows/daily-market.yml/dispatches",
+    "requestMethod": 1,
+    "requestTimeout": 30,
+    "redirectSuccess": false,
+    "schedule": {
+      "timezone": "Asia/Shanghai",
+      "expiresAt": 0,
+      "hours": [18],
+      "minutes": [35],
+      "mdays": [-1],
+      "months": [-1],
+      "wdays": [1, 2, 3, 4, 5]
+    },
+    "notification": {
+      "onFailure": false,
+      "onSuccess": false,
+      "onDisable": false,
+      "onSslCertExpiry": false,
+      "mode": 0,
+      "selectedChannels": []
+    },
+    "extendedData": {
+      "headers": {
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Authorization": "Bearer REPLACE_IN_PROVIDER_UI_ONLY"
+      },
+      "body": "{\"ref\":\"main\",\"inputs\":{\"operation\":\"external-clock\",\"code_sha\":\"current-main\"}}"
+    }
+  }
+}

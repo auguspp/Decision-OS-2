@@ -53,6 +53,14 @@ def markdown(report):
                 lines.append(f"产物 {text(a['name'])}：{text(d['artifact_state'])}；到期 {text(a['expires_at'])}；{a['size_in_bytes']} 字节。仅元数据存在，未下载验字节。")
             else:
                 lines.append("没有取得当前attempt对应的产物；不借用旧attempt附件充数。")
+        clock_policy = p.get("clock_policy")
+        if clock_policy:
+            lines += ["", "### 日更主时钟选择", ""]
+            if "primary" in clock_policy:
+                lines += ["当前主时钟：" + text(clock_policy["primary"]) + "；配置只声明仓库准入，不证明外部账户已配置或启用。",
+                          f"固定main {text(clock_policy['main'])} / {text(clock_policy['path'])}；Git blob {text(clock_policy['git_blob'])}；SHA256 {text(clock_policy['sha256'])}。"]
+            else:
+                lines.append("时钟策略无法核验：" + text(clock_policy.get("error", "unknown")))
         schedule = p.get("schedule")
         if schedule:
             lines += ["", "### 日更自然 schedule 观察", "",
@@ -84,6 +92,27 @@ def markdown(report):
                 lines += ["目标槽原生运行：" + (text(", ".join(str(item["run"]["id"]) for item in schedule["current_slot_runs"])) or "未观察到"),
                           "自然子节只核原生运行摘要，不另读任务payload、jobs、附件或业务正文；成功不代签行情更新、Watch或Brief。",
                           "未观察到不推断GitHub未触发、排队丢弃或其他根因；24小时只是原入场限制，不是平台永久丢失的证明。"]
+        external = p.get("external_entry")
+        if external:
+            primary = (clock_policy or {}).get("primary")
+            lines += ["", "### 外部时钟入口观察", "",
+                      "当前观察：" + text(external["status"]) + "；" + ("被选为主时钟。" if primary == "external-cron" else "当前不作为主时钟验收依据。"),
+                      "固定run-name只标识外部入口请求；不证明cron-job.org、其他服务商或自然触发来源。外部配置与自然来源未核验；probe不能代替生产。"]
+            if "error" in external:
+                lines.append("核验限制：" + text(external["error"]))
+            if "recent_scope" in external:
+                scope = external["recent_scope"]
+                lines.append(f"独立event=workflow_dispatch页返回 {scope['returned']} / {scope['total']}，入口匹配 {external['matched_entries']}；完整历史={text(scope['complete_history'])}，目标槽覆盖={text(scope['expected_slot_covered'])}。覆盖按完整dispatch页计算，其他手动操作不会被算作外部生产。")
+                for title, key in (("最近可见外部入口尝试", "latest"), ("最近可见入口原生成功（未代签业务）", "last_visible_success"),
+                                   ("最近可见入口非成功", "last_visible_non_success")):
+                    item = external[key]
+                    lines.append(title + "：" + run(item) + ("；" + item["run"]["url"] if item else "。"))
+                detail = external["latest_detail"]
+                if detail:
+                    lines.append("最近入口作业元数据：" + text(", ".join(f"{j['name']}={j['conclusion'] or j['status']}" for j in detail["jobs"])) + "；只核此运行，不下载附件或业务正文。")
+                probe = external["latest_probe"]
+                lines.append("最近probe：" + (run({"run": probe}) if probe else "本页未取得") + "；probe不进入生产成功计数。")
+                lines.append("只有当前main、目标槽与实际daily作业成功均经核验，才报告daily-job-success；其含义仍不包括外部自然来源、业务验收或历史缺口恢复。")
     b = report["specified_backup"]
     lines += ["", "## 指定备份（独立于巡检运行）", "",
               "状态：" + text(b["status"])]

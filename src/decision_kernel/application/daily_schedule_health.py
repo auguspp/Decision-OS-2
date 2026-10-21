@@ -9,6 +9,9 @@ import base64
 import hashlib
 from datetime import datetime
 
+from decision_kernel.application.daily_clock import (
+    CLOCK_PATH, CLOCK_PROBE, EXTERNAL_CLOCK, EXTERNAL_RUN_TITLE, PROBE_RUN_TITLE, clock_policy,
+)
 from decision_kernel.application.daily_market import admission_slot, policy
 from decision_kernel.domain.records import RecordError, SHA, digest, require
 from decision_kernel.infrastructure.github_store import _json
@@ -16,31 +19,50 @@ from decision_kernel.infrastructure.github_store import _json
 WORKFLOW = "daily-market.yml"
 POLICY_PATH = "config/daily-market.json"
 SCHEDULE_QUERY = "/runs?branch=main&event=schedule&per_page=20"
+DISPATCH_QUERY = "/runs?branch=main&event=workflow_dispatch&per_page=20"
 MAX_POLICY_BYTES = 8192
+
+
+def _read_config(get, main, path, error):
+    value = get(f"/contents/{path}?ref={main}")
+    require(isinstance(value, dict) and value.get("type") == "file"
+            and value.get("path") == path and value.get("encoding") == "base64"
+            and type(value.get("size")) is int and 0 < value["size"] <= MAX_POLICY_BYTES
+            and isinstance(value.get("sha"), str) and SHA.fullmatch(value["sha"])
+            and isinstance(value.get("content"), str)
+            and len(value["content"]) <= 2 * MAX_POLICY_BYTES, error + "_FILE")
+    try:
+        raw = base64.b64decode(value["content"].replace("\n", ""), validate=True)
+    except ValueError:
+        raise RecordError(error + "_ENCODING") from None
+    require(len(raw) == value["size"], error + "_SIZE")
+    blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+    require(blob == value["sha"], error + "_BLOB")
+    return raw, {"main": main, "path": path, "git_blob": blob,
+                 "sha256": digest(raw), "size": len(raw),
+                 "interpretation": "pinned-current-main-policy-not-historical-policy-proof"}
 
 
 def read_policy(get, main):
     """One fixed Contents GET; retain identity/digests, never the seed reference."""
-    value = get(f"/contents/{POLICY_PATH}?ref={main}")
-    require(isinstance(value, dict) and value.get("type") == "file"
-            and value.get("path") == POLICY_PATH and value.get("encoding") == "base64"
-            and type(value.get("size")) is int and 0 < value["size"] <= MAX_POLICY_BYTES
-            and isinstance(value.get("sha"), str) and SHA.fullmatch(value["sha"])
-            and isinstance(value.get("content"), str)
-            and len(value["content"]) <= 2 * MAX_POLICY_BYTES, "HEALTH_DAILY_POLICY_FILE")
-    try:
-        raw = base64.b64decode(value["content"].replace("\n", ""), validate=True)
-    except ValueError:
-        raise RecordError("HEALTH_DAILY_POLICY_ENCODING") from None
-    require(len(raw) == value["size"], "HEALTH_DAILY_POLICY_SIZE")
-    blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
-    require(blob == value["sha"], "HEALTH_DAILY_POLICY_BLOB")
+    raw, proof = _read_config(get, main, POLICY_PATH, "HEALTH_DAILY_POLICY")
     approved = policy(_json(raw))
-    proof = {"main": main, "path": POLICY_PATH, "git_blob": blob,
-             "sha256": digest(raw), "size": len(raw), "enabled": approved["enabled"],
-             "schedule_utc": approved["schedule_utc"], "not_before_local": approved["not_before_local"],
-             "interpretation": "pinned-current-main-policy-not-historical-policy-proof"}
+    proof.update(enabled=approved["enabled"], schedule_utc=approved["schedule_utc"],
+                 not_before_local=approved["not_before_local"])
     return approved, proof
+
+
+def read_clock_policy(get, main):
+    raw, proof = _read_config(get, main, CLOCK_PATH, "HEALTH_DAILY_CLOCK_POLICY")
+    approved = clock_policy(_json(raw))
+    return {**proof, "primary": approved["primary"]}
+
+
+def clock_entry(row):
+    """Retain only a fixed entry label, never raw titles, actors or provenance."""
+    title = row.get("display_title")
+    return (EXTERNAL_CLOCK if title == EXTERNAL_RUN_TITLE else
+            CLOCK_PROBE if title == PROBE_RUN_TITLE else "unclassified")
 
 
 def _clock(value):
@@ -64,7 +86,7 @@ def _slot_key(value):
 
 
 def describe(approved, proof, rows, *, total, limit, as_of, observed_from,
-             stable, workflow_state, default_branch, explicit_clock):
+             stable, workflow_state, default_branch, explicit_clock, entry=None):
     """Describe a bounded observed slot, using created_at exactly like production."""
     now = _clock(as_of)
     require(_clock(observed_from) <= now, "HEALTH_SCHEDULE_CLOCK_REVERSED")
@@ -74,7 +96,8 @@ def describe(approved, proof, rows, *, total, limit, as_of, observed_from,
     first_slot = _slot(approved, observed_from)
     recent = sorted(rows, key=lambda row: (_clock(row["run_started_at"]), row["id"]), reverse=True)
     interpreted = [{"run": row, "admission_slot": _slot(approved, row["created_at"]),
-                    "first_attempt_visible": row["run_attempt"] == 1} for row in recent]
+                    "first_attempt_visible": row["run_attempt"] == 1} for row in recent
+                   if entry is None or row.get("clock_entry") == entry]
     matches = [item for item in interpreted if expected is not None
                and _slot_key(item["admission_slot"]) == _slot_key(expected)]
     complete = total == len(rows)
@@ -119,4 +142,44 @@ def describe(approved, proof, rows, *, total, limit, as_of, observed_from,
         latest = matches[0]["run"]
         report["status"] = ("native-success" if latest["conclusion"] == "success"
                             else "native-non-success")
+    return report
+
+
+def describe_external(approved, proof, rows, *, clock_proof, detail, **options):
+    """A named dispatch entry is observable; its external origin is not proven."""
+    report = describe(approved, proof, rows, entry=EXTERNAL_CLOCK, **options)
+    report.update(entry_marker=EXTERNAL_CLOCK, clock_policy=clock_proof,
+                  natural_origin="unverified", provider_configuration="not-inspected",
+                  entry_identification="fixed-run-name-not-payload-or-provider-proof",
+                  matched_entries=sum(row.get("clock_entry") == EXTERNAL_CLOCK for row in rows),
+                  latest_detail=detail, dispatch_payload="not-inspected")
+    report.pop("schedule_payload")
+    probes = sorted((row for row in rows if row.get("clock_entry") == CLOCK_PROBE),
+                    key=lambda row: (_clock(row["run_started_at"]), row["id"]), reverse=True)
+    report["latest_probe"] = probes[0] if probes else None
+    report["jobs_and_artifacts"] = "latest-external-entry-metadata-only" if detail else "not-inspected"
+    if detail and detail["artifact"]:
+        require(_clock(detail["artifact"]["created_at"]) <= _clock(options["as_of"]),
+                "HEALTH_FUTURE_EXTERNAL_ARTIFACT")
+    report["native_entry_status"] = report["status"]
+    if report["status"] == "native-success":
+        selected = report["current_slot_runs"][0]["run"]
+        if selected["head_sha"] != clock_proof["main"]:
+            report["status"] = "policy-at-run-unverified"
+        elif detail is None or detail["run"] != selected:
+            report.update(status="unknown", error="HEALTH_EXTERNAL_CURRENT_RUN_NOT_INSPECTED")
+        elif detail["status"] != "inspected":
+            report["status"] = "changed-during-inspection"
+        elif detail["job_state"] != "complete":
+            report["status"] = "in-progress"
+        else:
+            executed = [job for job in detail["jobs"] if job["name"] == "daily"
+                        and job["conclusion"] != "skipped"]
+            artifact = detail["artifact"]
+            if len(executed) != 1 or executed[0]["conclusion"] != "success":
+                report["status"] = "daily-not-successful"
+            elif artifact is None or artifact["expired"] or _clock(artifact["expires_at"]) <= _clock(options["as_of"]):
+                report["status"] = "delivery-metadata-unavailable"
+            else:
+                report["status"] = "daily-job-success"
     return report

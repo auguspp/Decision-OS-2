@@ -7,6 +7,9 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from decision_kernel.application import daily_market as daily
+from decision_kernel.application.daily_clock import (
+    CLOCK_SCHEMA, CURRENT_MAIN, EXTERNAL_CLOCK, EXTERNAL_CRON, EXTERNAL_RUN_TITLE,
+)
 from decision_kernel.application.ftshare_collection import restore_ftshare_collection
 from decision_kernel.application.ftshare_single import restore_single
 from decision_kernel.domain.records import RecordError, UnknownWrite, encoded
@@ -99,6 +102,12 @@ def native_runtime(tmp_path, monkeypatch, approved, *, invocation, admitted_at, 
         env["GITHUB_EVENT_NAME"] = "schedule"
     else:
         event["inputs"]["operation"] = invocation
+    if invocation == EXTERNAL_CLOCK:
+        from decision_kernel.interfaces import daily_visibility_cli as visibility
+        event["inputs"]["code_sha"] = CURRENT_MAIN
+        clock_file = tmp_path / "clock.json"
+        clock_file.write_bytes(encoded({"schema": CLOCK_SCHEMA, "primary": EXTERNAL_CRON}))
+        monkeypatch.setattr(visibility, "CLOCK_POLICY_FILE", clock_file)
     env.update(RUNNER_TEMP=str(tmp_path), DECISION_OS_STORE_TOKEN="synthetic-daily-slot-only")
     config = tmp_path / "policy.json"
     config.write_bytes(encoded(approved))
@@ -113,13 +122,15 @@ def native_runtime(tmp_path, monkeypatch, approved, *, invocation, admitted_at, 
     monkeypatch.setattr(cli, "datetime", ActualClock)
     api = NativeAPI()
     api.run.update(path=cli.WORKFLOW, name=cli.TITLE, event=env["GITHUB_EVENT_NAME"], created_at=admitted_at)
+    if invocation == EXTERNAL_CLOCK:
+        api.run["display_title"] = EXTERNAL_RUN_TITLE
     api.ci.update(total_count=1)
     api.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
         repository={"id": 1420041744}, head_repository={"id": 1420041744})
     return event, env, api
 
 
-@pytest.mark.parametrize("invocation", ["schedule", "recover-late", "update"])
+@pytest.mark.parametrize("invocation", ["schedule", "recover-late", "update", EXTERNAL_CLOCK])
 def test_native_admission_is_frozen_across_next_cutoff_and_only_explicit_late_modes_collect(
         tmp_path, monkeypatch, invocation):
     host = WindowHost()
@@ -137,7 +148,7 @@ def test_native_admission_is_frozen_across_next_cutoff_and_only_explicit_late_mo
 
     out = tmp_path / "daily"
     assert cli.run_runtime(event, env, out, api=api, execute=execute) == 0
-    selected = cli.settings(event, env, host.approved)
+    selected = cli.settings(event, env, host.approved, clock=cli.load_clock_policy())
     receipt = read_update_receipt(out, selected)
     assert selected["invocation"] == invocation and selected["operation"] == "update"
     assert len(calls) == 1 and calls[0]["admission_at"] == "2026-10-19T17:07:33+00:00"
@@ -176,7 +187,7 @@ def test_native_admission_is_frozen_across_next_cutoff_and_only_explicit_late_mo
         assert captured["acquired_at"] == host.now
         assert max(row["trade_date"] for rows in captured["normalized"]["series"].values()
                    for row in rows) == "2026-10-19"
-    if invocation == "recover-late":
+    if invocation in {"recover-late", EXTERNAL_CLOCK}:
         # The normal consumer must not accept a receipt relabelled as an ordinary update.
         (out / "result.json").write_bytes(encoded({**receipt, "invocation": "update"}))
         with pytest.raises(RecordError, match="DAILY_READING_RUNTIME_MISMATCH"):

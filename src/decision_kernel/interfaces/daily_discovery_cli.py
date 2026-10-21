@@ -22,7 +22,7 @@ from decision_kernel.domain.records import RecordError, SourceRef, digest, encod
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed
-from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, _admit, native_ready, settings
+from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, _admit, load_clock_policy, native_ready, settings
 from decision_kernel.interfaces.daily_reading_cli import read_update_receipt
 from decision_kernel.interfaces.ftshare_check_cli import _regular, _safe_error
 from decision_kernel.interfaces.market_collection_cli import REGISTRY, _records_runtime_binding
@@ -46,7 +46,7 @@ def _open_writer(api):
 @diagnosed
 def run_runtime(event, env, out, *, api=None, clock=None):
     approved = policy(_json(_regular(POLICY_FILE, 8192)))
-    selected = settings(event, env, approved)
+    selected = settings(event, env, approved, clock=load_clock_policy())
     require(selected["operation"] == "update", "DAILY_DISCOVERY_WRITE_OPERATION_REQUIRED")
     token = env.get("GITHUB_TOKEN")
     require(isinstance(token, str) and bool(token), "DAILY_DISCOVERY_TOKEN_REQUIRED")

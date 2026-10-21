@@ -22,15 +22,22 @@ STAMP = '2026-10-17T09:00:00Z'
 OLD = '2026-10-16T09:00:00Z'
 SHA = 'a' * 40
 SCHEDULE_PAGE = '/actions/workflows/daily-market.yml/runs?branch=main&event=schedule&per_page=20'
+DISPATCH_PAGE = '/actions/workflows/daily-market.yml/runs?branch=main&event=workflow_dispatch&per_page=20'
 POLICY_CONTENT = '/contents/config/daily-market.json?ref=' + SHA
+CLOCK_CONTENT = '/contents/config/daily-market-clock.json?ref=' + SHA
 
 
-def policy_content(raw=None):
+def policy_content(raw=None, *, path='config/daily-market.json'):
     raw = (ROOT / 'config/daily-market.json').read_bytes() if raw is None else raw
-    return {'type': 'file', 'path': 'config/daily-market.json', 'encoding': 'base64',
+    return {'type': 'file', 'path': path, 'encoding': 'base64',
             'size': len(raw), 'content': base64.b64encode(raw).decode(),
             'sha': hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest(),
             'download_url': 'https://PRIVATE_SENTINEL.invalid/signed?token=SECRET'}
+
+
+def clock_content(primary='github-schedule'):
+    return policy_content(encoded({'schema': 'daily-market-clock-v1', 'primary': primary}),
+                          path='config/daily-market-clock.json')
 
 
 def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, status='completed'):
@@ -44,7 +51,7 @@ def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, s
 
 def fixture(*, failure=False, self_run=False):
     values = {'': {'id': BINDING.repository_id, 'full_name': BINDING.repository, 'private': False,
-                   'default_branch': 'main'}, POLICY_CONTENT: policy_content()}
+                   'default_branch': 'main'}, POLICY_CONTENT: policy_content(), CLOCK_CONTENT: clock_content()}
     for name in ('main', BINDING.branch):
         values['/git/ref/heads/' + name] = {'ref': 'refs/heads/' + name, 'object': {'type': 'commit', 'sha': SHA}}
     for wid, (filename, prefix) in enumerate(h.WORKFLOWS.items(), 1):
@@ -60,6 +67,7 @@ def fixture(*, failure=False, self_run=False):
                 'news-rolling.yml': 'build', 'daily-market.yml': 'status'}[filename]
             add_details(values, r, operation, prefix)
         if filename == 'daily-market.yml':
+            values[DISPATCH_PAGE] = {'total_count': len(rows), 'workflow_runs': rows}
             natural = run(wid, filename, 490, stamp='2026-10-16T10:36:00Z')
             natural['event'] = 'schedule'
             values[SCHEDULE_PAGE] = {'total_count': 1, 'workflow_runs': [natural]}
@@ -71,10 +79,10 @@ def add_details(values, r, operation, prefix):
     values[f'/actions/runs/{ident}'] = r
     values[f'/actions/runs/{ident}/attempts/{attempt}/jobs?per_page=100'] = {'total_count': 1, 'jobs': [
         {'id': ident * 10, 'name': operation, 'run_id': ident, 'run_attempt': attempt,
-         'head_sha': SHA, 'status': r['status'], 'conclusion': r['conclusion']}]}
-    prefix = 'dos2-health' if operation == 'health' else prefix
+         'head_sha': r['head_sha'], 'status': r['status'], 'conclusion': r['conclusion']}]}
+    prefix = 'dos2-health' if operation == 'health' else 'dos2-daily-clock' if operation == 'clock-probe' else prefix
     values[f'/actions/runs/{ident}/artifacts?per_page=100'] = {'total_count': 1, 'artifacts': [
-        {'id': ident * 100, 'name': f'{prefix}-{ident}-{attempt}', 'workflow_run': {'id': ident, 'head_sha': SHA},
+        {'id': ident * 100, 'name': f'{prefix}-{ident}-{attempt}', 'workflow_run': {'id': ident, 'head_sha': r['head_sha']},
          'expired': False, 'created_at': r['created_at'], 'expires_at': '2026-11-16T09:00:00Z',
          'size_in_bytes': 123, 'digest': 'sha256:' + 'b' * 64,
          'archive_download_url': 'https://PRIVATE_SENTINEL.invalid/signed?token=SECRET'}]}
@@ -101,7 +109,7 @@ class API:
 def test_latest_failure_is_not_replaced_by_old_success_and_bytes_not_certified():
     api = API(fixture(failure=True)); report = h.inspect_runtime(BINDING, api, as_of=NOW, backup_run_id=101)
     assert report['status'] == 'needs-attention'
-    assert report['native_reads'] == len(api.calls) == 53
+    assert report['native_reads'] == len(api.calls) == 56
     for p in report['workflows']:
         assert p['latest']['run']['conclusion'] == 'failure'
         assert p['last_visible_success']['run']['conclusion'] == 'success'

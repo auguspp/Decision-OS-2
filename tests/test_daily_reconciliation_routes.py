@@ -25,7 +25,8 @@ def test_reconciliation_needs_deployment_and_fixed_grant_before_records_or_crede
     if enabled:
         receipt, code = visibility.preflight(event, env, api, use_authorization=True)
         assert code == 0 and receipt['runtime_authorized'] is True
-        assert receipt['operation'] == 'reconcile-write' and receipt['source_requests'] == 0
+        assert receipt['operation'] == 'update' and receipt['invocation'] == 'reconcile-write'
+        assert receipt['source_requests'] == 0
         assert receipt['records_read'] is receipt['records_written'] is False
     else:
         with pytest.raises(RecordError, match='NOT_AUTHORIZED'):

@@ -26,7 +26,7 @@ from decision_kernel.infrastructure.runtime_performance import annotate_performa
 from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, native_ready, settings
 from decision_kernel.interfaces.ftshare_check_cli import _regular, _safe_error
 from decision_kernel.interfaces.market_collection_cli import REGISTRY, _records_runtime_binding
-from decision_kernel.interfaces.reading_commands import perform
+from decision_kernel.interfaces.reading_commands import check_ai_brief_output, perform
 from decision_kernel.interfaces.reading_page import render_page
 
 OUTPUTS = ("reading-room.html", "reading-room.json", "reading-summary.md")
@@ -64,7 +64,8 @@ def build_reading(store, market_store, registry, approved, update_receipt, *, as
         "source_http_requests": 0, "records_write": "not-requested", "research_executed": False,
         "brief_created": False, "notification_sent": False,
         "discovery_update": deepcopy(discovery_receipt), "discovery": None}
-    plan = {"as_of": as_of, "catalogue": {"limit": 4}, "brief": {"select": "latest-saved"}}
+    plan = {"as_of": as_of, "catalogue": {"limit": 4}, "brief": {"select": "latest-saved"},
+            "ai_brief": {"select": "latest-ai-brief"}}
     reference = None
     try:
         resolved = daily_market_reference(market_store, registry, approved)
@@ -205,6 +206,15 @@ def _summary_lines(model):
             "missing": "缺失", "invalid": "校验未通过", "unavailable": "暂不可用", "partial": "最新发现尚不完整",
             "not-included": "超过当前读取容量", "permission-required": "反馈导出条件未通过",
             "sources-permission-required": "来源导出条件未通过"}.get(brief["status"], "当前未能读回") + "。")
+    ai_brief = model.get("ai_brief")
+    if ai_brief is not None:
+        if ai_brief["status"] == "readable":
+            doc = ai_brief["view"]["document"]
+            lines.append("已存 AI 晚报：" + doc["execution_date"] + "；原内容截止 " + doc["cutoff"] + "。")
+        else:
+            lines.append("AI 晚报：" + {"no-saved-handoff": "最近七天尚无已存对象，任务执行状态未知",
+                "partial": "发现尚不完整", "missing": "确切对象缺失", "invalid": "原对象校验未通过",
+                "not-included": "显示容量不足，请用确切引用读取"}.get(ai_brief["status"], "当前未能读回") + "。")
     catalogue = model["catalogue"]
     lines.append("研究目录：" + str(catalogue["total_cases"]) + " 个已存案例，本页 " + str(catalogue["returned"]) + " 个；原文及待复核问题在阅读页。")
     return lines
@@ -316,6 +326,7 @@ def run_runtime(event, env, out, *, api=None, clock=None):
     # Shared main/CI/private host eligibility is checked again immediately
     # before material leaves the reader. The workflow still owns release.
     native_ready(api, selected)
+    check_ai_brief_output(store, model)
     for name, data in zip(OUTPUTS, exports, strict=True):
         with (out / name).open("xb") as stream:
             stream.write(data)

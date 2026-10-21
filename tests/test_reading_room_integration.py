@@ -145,7 +145,7 @@ def test_existing_workflow_exposes_only_a_new_read_operation():
 
 
 def exercise_installed_room(outside,python,env,store):
-    """Consume the structured research and Brief from the existing cold-wheel helper."""
+    """Consume original research and both Brief owners in the one existing wheel."""
     script=r'''
 import base64,json,sys
 from dataclasses import asdict
@@ -153,6 +153,8 @@ from pathlib import Path
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.application.research_artifacts import ResearchArtifacts
+from decision_kernel.application import hosted_handoff
+from decision_kernel.domain.records import digest
 from decision_kernel.domain.research_artifacts import ArtifactInput
 s=VersionedStore(GitStore(Path(sys.argv[1])))
 head=s.backend.head()
@@ -162,9 +164,17 @@ artifacts=ResearchArtifacts(s)
 original=artifacts.read(s.backend.reference(head,paths[0]))
 artifacts.put('installed-discovery-edition',ArtifactInput.from_bytes('news-edition-installed-discovery',
  'news-edition.json','application/json',base64.b64decode(original['data_base64'])))
+research=s.current('mixed-research')
+ai_doc={'schema':'hosted-ai-handoff-v1','kind':'brief','execution_date':'2026-10-16',
+ 'cutoff':'2026-10-16T12:00:00Z','scope':'Synthetic installed author Brief, no investment task',
+ 'gaps':['No actual business acceptance'],'baseline':None,'body':'# Synthetic AI Brief\r\nOriginal saved author text.\n',
+ 'adoptions':[{'reference':asdict(research),'body_sha256':digest(s.read_revision(research)['body'].encode()),
+              'used_change':'Preserve the original synthetic research challenge'}]}
+ai_saved=hosted_handoff.save(s,ai_doc,'installed-room-ai-brief')
 head=s.backend.head()
 plan={'as_of':'2026-10-16T12:00:00Z','catalogue':{'limit':1},
  'reference':asdict(s.current('mixed-research')),'brief':{'select':'latest-saved'},
+ 'ai_brief':ai_saved['reference'],
  'odds_book':{'research_ref':asdict(s.current('odds-case')),'limit':8,'scan_limit':32}}
 Path('room-plan.json').write_text(json.dumps(plan),encoding='utf-8')
 print(head)
@@ -182,6 +192,14 @@ print(head)
     assert first==second and first['catalogue']['snapshot']==setup.stdout.strip()
     assert first['brief_discovery']['status']=='selected' and first['brief_discovery']['complete'] is True
     assert first['plan']['brief']==first['brief']['reference']
+    from decision_kernel.domain.records import digest
+    ai=first['ai_brief']
+    assert ai['status']=='readable' and ai['reference']==first['plan']['ai_brief']
+    assert ai['view']['document']['body']=='# Synthetic AI Brief\r\nOriginal saved author text.\n'
+    assert ai['view']['body_sha256']==digest(ai['view']['document']['body'].encode())
+    assert ai['view']['document']['adoptions'][0]['reference']==first['plan']['reference']
+    assert ai['view']['research'][0]['reference']==first['plan']['reference']
+    assert ai['watch_publication_required'] is False
     pinned=next(r for r in first['readings'] if r.get('case_id')=='mixed-research')
     assert pinned['case_id']=='mixed-research' and pinned['brief_relation']['status']=='included'
     assert 'Original finding.' in pinned['body'] and first['persistence']=='not-written'

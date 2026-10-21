@@ -26,6 +26,27 @@ HTML 自包含、离线只读，支持目录搜索/类型筛选、研究原文�
 
 原竞价名单的给定分钟原件使用可选 `auction_minute`，见[09:40 分钟观察](opening-auction-minute.md)。确切 seed、完整五组/BJ/未知和未尝试成员先恢复再分页；只接唯一 09:39–09:40 点，保留原取得时钟，跨来源收益不计算。沿原来源确认、整次终态与 2 MiB 展示上限；不增加分钟采集或实际来源额度。
 
+<a id="ai-brief"></a>
+## AI Brief 作者正文
+
+可选 `plan.ai_brief` 接入已保存的 `ai-brief-YYYYMMDD`，支持确切 ArtifactRef 或显式 `{"select":"latest-ai-brief"}`。省略或 null 不读；不接受用户自填正文、采用结果、权限位或保存字段。原 `brief` / `latest-saved` 仍仅表示机械资料简报，两类可以同页分别阅读。
+
+```json
+{"plan":{"as_of":"2026-10-21T11:30:00+08:00","ai_brief":{"select":"latest-ai-brief"}}}
+```
+
+`application/reading_ai_brief.py` 调用原 `hosted_handoff.open_handoff` / `latest`，沿 Hosted 的 v1/v2、研究正文摘要、精确 Full Watch 检查/问题/结果摘要及原 cutoff 校验。AI 原作者正文、scope、gaps、baseline 与 used_change 原样保留，下载仍为同一正文 UTF-8 字节；已验证的研究正文仅保留引用和摘要，不将大篇研究重复塞进晚报。Watch 原结果按原 reader 的有限投影呈现，unknown、review-required 等不改写为无变化或买卖建议。
+
+最新发现固定在 Catalogue 的同一 snapshot，沿原七天日期范围、最多32个候选及返回1份的现役限额；不扫描任意名字族。选中后 plan 和后继翻页冻结确切 ArtifactRef；显式刷新才重新发现，确切引用请求的普通刷新仍保留该引用。损坏或未来截止候选导致 partial 时，不把较旧良好候选称为完整最新，可另导出它的确切读取请求。最近七天没有对象不表示任务未运行；已存旧正文不表示今天更新。显式历史引用可读时保留原 cutoff 与阅读钟的年龄关系，不宣称历史 PIT。
+
+页面独立显示 AI 晚报、原文下载、精确 baseline 请求、研究与 Watch 采用。采用只按完整确切引用匹配；同公司、同页出现或另一个版本不推定采用。所有按钮只导出正常读取请求或在已读本页跳转，不自动调用宿主。日常 `daily_reading_cli` 默认请求此面板；缺对象仍显示真实状态，不生成替代正文。
+
+原生宿主在组合读取前核 Hosted 公开资格；读后按验证的原文和精确前版判断是否需要 `watch/sources/research/brief`，并沿原 `checked_handoff_visibility` 核验。原生 Room、日常 CLI 和 store CLI 在纯 HTML 渲染完成后、任何正文附件输出前再次核同一原 adapter 与要求；精确前版有 Watch 而本期没有也必须保留该依赖。缺权、撤销或 private→public 反转不输出 report.result、HTML 或精确 inputs。原生 scope 的 fail-closed 保护也适用于显式 AI 面板，访问、请求额度及范围终态不能被可选面板转换成局部成功。
+
+本面板沿原768KiB、完整模型6MiB和HTML8MiB限额；显示副本放不下时整项省略并保留确切读取请求，原件不截断。同一API512、来源scope32等既有边界保持。实现不保存新Brief、不执行Watch、不获取新来源、不修改来源预算、正式人工Decision或经济接受；平台对旧保存操作的拒绝不会因阅读工程而解除。退役面板时同时移除组合接线、默认日常请求与专属测试，原Hosted保存/恢复和机械Brief保留。
+
+有限合成消费者覆盖真实 Git 保存后的 v1/v2 原文与采用、历史 cursor 下重新发现、原生 scope/撤权/省略后权限、三个输出入口的最后核验、6MiB完整模型及实际页面下载字节。唯一既有 cold-wheel 的 Reading Room helper 在同一安装与合成 store 中打开确切 AI Brief，不另设安装门。真实既存原件、浏览器宽窄屏、自然日运行与人工接受仍分别留原生证据，合成验证不代签。
+
 ## Research Book
 
 原研究区以 `Research Book` 导航进入，仍使用正常 `reading-room` 操作和原 `plan`，不新增宿主参数、运行操作或保存对象。`application/research_book.py` 直接消费 `ReadingRoom._research` 已读到的研究字典，调用原 `domain.research_work.read_workpaper` 校验工作底稿；不再次读取修订或来源，也不遍历完整历史。`interfaces/reading_research_book_page.py` 仅投影原模型。

@@ -12,7 +12,7 @@ import json
 import re
 
 from decision_kernel.application.research_artifacts import ResearchArtifacts
-from decision_kernel.domain.records import BlobRef, Conflict, RecordError, checked_text, digest, encoded, require
+from decision_kernel.domain.records import BlobRef, Conflict, RecordError, SHA, checked_text, digest, encoded, require
 from decision_kernel.domain.research_artifacts import ArtifactInput, ARTIFACT_PATH, artifact_reference
 from decision_kernel.observations.announcement_discovery import observed_clock
 
@@ -173,13 +173,24 @@ def open_handoff(store, ref):
     return {"reference": asdict(exact), **resolve(store, _document(store, exact))}
 
 
-def latest(store, *, kind, as_of, limit=3):
+def latest(store, *, kind, as_of, limit=3, snapshot=None, strict=False):
+    """Restore the original bounded family, optionally at a caller's fixed snapshot.
+
+    Snapshot/strict are internal composition arguments, not new runtime payload
+    fields. Room uses them to share Catalogue's historical page and preserve a
+    native access/transport failure instead of treating it as a bad candidate.
+    """
     require(kind in PREFIXES and type(limit) is int and 1 <= limit <= 3, "HOSTED_LATEST_INPUT")
     at = observed_clock(as_of)
     from zoneinfo import ZoneInfo
     today = at.astimezone(ZoneInfo("Asia/Singapore")).date()
     days = {(today - timedelta(days=n)).strftime("%Y%m%d") for n in range(7)}
-    snapshot = store.backend.head()
+    if snapshot is None:
+        snapshot = store.backend.head()
+    else:
+        require(isinstance(snapshot, str) and SHA.fullmatch(snapshot) is not None,
+                "HOSTED_SNAPSHOT_INVALID")
+        store.backend.check_commit(snapshot)
     prefix = "research/artifacts/" + PREFIXES[kind]
     paths = [p for p in store.backend.paths(snapshot, "research/artifacts/") if p.startswith(prefix)
              and ARTIFACT_PATH.fullmatch(p) and p.split("/")[2].rsplit("-", 1)[-1] in days]
@@ -191,7 +202,11 @@ def latest(store, *, kind, as_of, limit=3):
             doc = _document(store, ref)
             require(doc["kind"] == kind and observed_clock(doc["cutoff"]) <= at, "HOSTED_FUTURE_HANDOFF")
             candidates.append((doc["cutoff"], ref))
-        except (RecordError, TypeError, KeyError, ValueError):
+        except (RecordError, TypeError, KeyError, ValueError) as error:
+            if strict:
+                from decision_kernel.application.market_reading_scope import operation_failure
+                if operation_failure(error) or str(error) == "PATH_OUTSIDE_STORE":
+                    raise
             gaps.append({"path": path, "error": "HOSTED_CANDIDATE_UNREADABLE"})
     candidates.sort(key=lambda x: observed_clock(x[0]), reverse=True)
     selected = [open_handoff(store, ref) for _, ref in candidates[:limit]]

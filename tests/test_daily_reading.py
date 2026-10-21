@@ -71,6 +71,7 @@ def test_same_reading_room_receives_exact_market_and_latest_selector_without_wri
     result = cli.build_reading(*readers, "trusted-registry", approved(), original, as_of=AT)
     _, payload, registry = calls[1]
     assert payload["plan"]["brief"] == {"select": "latest-saved"}
+    assert payload["plan"]["ai_brief"] == {"select": "latest-ai-brief"}
     assert payload["plan"]["market"]["reference"] == approved()["seed_reference"]
     assert payload["plan"]["market"]["entity_id"] is None and registry == "trusted-registry"
     assert result["daily_update"]["source_http_requests"] == 0

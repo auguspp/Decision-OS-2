@@ -80,7 +80,7 @@ for(const action of input.actions){
 }
 assert.equal(vm.runInContext('JSON.stringify(D)',context),original,'local interaction mutated the fixed receipt');
 assert(!created.some(node=>node.tag==='img'||node.tag==='iframe'),'source text became active content');
-(async()=>{const exports=[];for(const item of downloads)exports.push({name:item.name,value:JSON.parse(await item.blob.text())});
+(async()=>{const exports=[];for(const item of downloads){const text=await item.blob.text();exports.push({name:item.name,value:item.name.endsWith('.json')?JSON.parse(text):text});}
  process.stdout.write(JSON.stringify({states,exports,notice:text('notice')}));})();
 '''
     run = subprocess.run([node, "-e", runner], input=json.dumps({"page": page, "actions": actions}),

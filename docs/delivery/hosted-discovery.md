@@ -61,7 +61,7 @@ AI Brief交接D：`schema/kind=brief/execution_date/cutoff/scope/gaps` 加 `body
 
 采用时重新读取检查、冻结 Watch、原 Full 及其相依，核 v3 Full Watch 准入、问题链接、结果摘要和 `cutoff`。保存检查的记录时钟不得晚于本期截止；后来保管／读回时间不冒充历史已知。缺失、损坏、未来检查或虚构问题不能用自由文本绕过。一个已存检查及其同一问题的引用别名不构成另一条采用；读回、基线比较和 latest 恢复仍读取原实际字节，不以 task 的启动时间或保存回执代替。
 
-固定artifact_id分别为 `hosted-quick-YYYYMMDD` 和 `ai-brief-YYYYMMDD`；一天同类一份，原正文冲突拒绝而非另起随机名。v1/v2 共用原 `ai-brief-YYYYMMDD` 名字族；切换 schema 不为同日另开一份。相同意图重放不再写；补充/更正沿研究原版本合同并进入下一期，历史正文不覆盖。最新发现只针对这两个名字族，不宣称扫描任意存储中的所有材料，也不改变原机械Brief的latest-saved含义。Hosted 交接保存不自动进入 Reading Room 的 `news-edition-*` 面板；各自仍经原读取入口消费。
+固定artifact_id分别为 `hosted-quick-YYYYMMDD` 和 `ai-brief-YYYYMMDD`；一天同类一份，原正文冲突拒绝而非另起随机名。v1/v2 共用原 `ai-brief-YYYYMMDD` 名字族；切换 schema 不为同日另开一份。相同意图重放不再写；补充/更正沿研究原版本合同并进入下一期，历史正文不覆盖。最新发现只针对这两个名字族，不宣称扫描任意存储中的所有材料，也不改变原机械Brief的latest-saved含义。已存 AI Brief 也可经[Reading Room](reading-room.md#ai-brief) 的独立 `ai_brief` 面板打开；它复用原 Hosted reader，在 Catalogue 同快照上发现后冻结确切引用，不进入或改写 `news-edition-*` 面板。保存、阅读接入和实际保存被拒仍分别记录；此只读接线不会补写失败日键。
 
 ## 4. AI Brief 的接续责任
 

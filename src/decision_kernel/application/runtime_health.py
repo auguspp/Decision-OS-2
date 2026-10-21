@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from urllib.parse import quote
 
+from decision_kernel.application import daily_schedule_health
 from decision_kernel.domain.records import RecordError, StoreUnavailable, SHA, digest, encoded, require
 from decision_kernel.infrastructure.github_store import GitHubBinding
 
@@ -15,10 +16,13 @@ WORKFLOWS = {
     "store-runtime.yml": "dos2-store",
     "research-runtime.yml": "dos2-research",
     "news-rolling.yml": "dos2-news-roll",
+    "daily-market.yml": "dos2-daily-market",
 }
 RUN_LIMIT = 20
 DETAIL_LIMIT = 100
-MAX_READS = 44
+# 6 repository/heads + 4*10 host metadata + 3 self + 4 explicit backup
+# + 2 independent schedule pages + 1 pinned policy. No source/artifact-body GET.
+MAX_READS = 56
 MAX_METADATA_BYTES = 8 * 1024 * 1024
 ACTIVE = {"queued", "in_progress", "requested", "waiting", "pending"}
 CONCLUSIONS = {"success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"}
@@ -106,6 +110,11 @@ def _detail(get, run, binding, filename, workflow_id):
         operation = operations[0] if operations else "not-executed"
         if operation == "health":
             artifact_prefix = "dos2-health"
+    elif filename == daily_schedule_health.WORKFLOW:
+        operations = [j["name"] for j in summaries if j["name"] in {"status", "daily"}
+                      and j["conclusion"] != "skipped"]
+        require(len(operations) <= 1, "HEALTH_DAILY_OPERATION_AMBIGUOUS")
+        operation = operations[0] if operations else "not-executed"
     expected_name = f"{artifact_prefix}-{ident}-{run['run_attempt']}"
     matches = [a for a in artifacts if a.get("name") == expected_name]
     require(len(matches) <= 1, "HEALTH_DUPLICATE_ARTIFACT")
@@ -139,6 +148,7 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
             "HEALTH_READ_ONLY_BINDING_REQUIRED")
     if as_of is not None:
         clock(as_of)  # Invalid caller clocks fail before I/O.
+    observed_from = as_of or datetime.now(timezone.utc).isoformat()
     require(expected_head is None or isinstance(expected_head, str) and SHA.fullmatch(expected_head),
             "HEALTH_EXPECTED_HEAD_INVALID")
     if backup_run_id is not None:
@@ -167,6 +177,7 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
                 and not (verified_private and actual_private is False), "HEALTH_REPOSITORY_MISMATCH")
         if binding.private_upgrade_allowed and actual_private is True:
             verified_private = True
+        return value.get("default_branch")
     def heads():
         values = {}
         for name in ("main", binding.branch):
@@ -176,7 +187,8 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
                     and isinstance(obj.get("sha"), str) and SHA.fullmatch(obj["sha"]), "HEALTH_REF_INVALID")
             values[name] = obj["sha"]
         return values
-    repository(); before = heads(); panels = []; store_workflow_id = None; self_verified = False
+    default_before = repository(); before = heads(); panels = []; store_workflow_id = None; self_verified = False
+    schedule_observation = None
     for filename in WORKFLOWS:
         path = "/actions/workflows/" + filename
         panel = {"path": ".github/workflows/" + filename}
@@ -200,6 +212,22 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
                         "HEALTH_SELF_NOT_INSPECTION")
                 self_verified = True
             recent = sorted([r for r in rows if r not in self_rows], key=_order, reverse=True)
+            schedule_before = None
+            if filename == daily_schedule_health.WORKFLOW:
+                try:
+                    approved, policy_proof = daily_schedule_health.read_policy(get, before["main"])
+                    def schedule_page():
+                        value = get(path + daily_schedule_health.SCHEDULE_QUERY)
+                        items = [run_summary(r, binding, filename, wid)
+                                 for r in listing(value, "workflow_runs", RUN_LIMIT)]
+                        require(all(r["event"] == "schedule" for r in items), "HEALTH_SCHEDULE_EVENT")
+                        return value, items
+                    schedule_before = schedule_page()
+                except StoreUnavailable:
+                    raise
+                except (KeyError, TypeError, ValueError) as error:
+                    panel["schedule"] = {"status": "unknown", "error": str(error)
+                        if isinstance(error, RecordError) else "HEALTH_SCHEDULE_NATIVE_SHAPE"}
             latest = recent[0] if recent else None
             successful = next((r for r in recent if r["conclusion"] == "success"), None)
             details = {}
@@ -213,6 +241,24 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
                       and final_workflow.get("state") == state and native["total_count"] == final_runs["total_count"]
                       and sorted(final_rows, key=_order) == sorted(rows, key=_order)
                       and all(d["status"] == "inspected" for d in details.values()))
+            if schedule_before is not None:
+                try:
+                    schedule_after = schedule_page()
+                    ordinary_before = {r["id"]: r for r in rows}
+                    ordinary_after = {r["id"]: r for r in final_rows}
+                    schedule_stable = (schedule_before[0]["total_count"] == schedule_after[0]["total_count"]
+                        and sorted(schedule_before[1], key=_order) == sorted(schedule_after[1], key=_order)
+                        and all(r == ordinary_before[r["id"]] for r in schedule_before[1] if r["id"] in ordinary_before)
+                        and all(r == ordinary_after[r["id"]] for r in schedule_after[1] if r["id"] in ordinary_after)
+                        and final_workflow.get("id") == wid and final_workflow.get("path") == panel["path"]
+                        and final_workflow.get("state") == state)
+                    schedule_observation = (panel, approved, policy_proof, schedule_before,
+                                            schedule_stable, state)
+                except StoreUnavailable:
+                    raise
+                except (KeyError, TypeError, ValueError) as error:
+                    panel["schedule"] = {"status": "unknown", "error": str(error)
+                        if isinstance(error, RecordError) else "HEALTH_SCHEDULE_NATIVE_SHAPE"}
             status = ("changed-during-inspection" if not stable else "disabled" if state != "active"
                       else "not-run" if latest is None else "in-progress" if latest["status"] != "completed"
                       else "metadata-ok" if latest["conclusion"] == "success" else "needs-attention")
@@ -241,9 +287,20 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
             raise
         except (KeyError, TypeError, ValueError) as error:
             backup = {"status": "unknown", "error": str(error) if isinstance(error, RecordError) else "HEALTH_NATIVE_SHAPE"}
-    after = heads(); repository()  # Recheck access before any public output.
+    after = heads(); default_after = repository()  # Recheck access before any public output.
     evaluated = as_of or datetime.now(timezone.utc).isoformat()
     now = clock(evaluated)
+    if schedule_observation is not None:
+        panel, approved, policy_proof, (native_schedule, schedule_rows), stable_schedule, state = schedule_observation
+        try:
+            panel["schedule"] = daily_schedule_health.describe(approved, policy_proof, schedule_rows,
+                total=native_schedule["total_count"], limit=RUN_LIMIT, as_of=evaluated,
+                observed_from=observed_from, explicit_clock=as_of is not None,
+                stable=stable_schedule and before["main"] == after["main"] and default_before == default_after,
+                workflow_state=state, default_branch=default_before)
+        except (KeyError, TypeError, ValueError) as error:
+            panel["schedule"] = {"status": "unknown", "error": str(error)
+                if isinstance(error, RecordError) else "HEALTH_SCHEDULE_NATIVE_SHAPE"}
     for panel in [*panels, {"latest": backup if "run" in backup else None, "status": "backup"}]:
         for name in ("latest", "last_visible_success"):
             detail = panel.get(name)
@@ -258,6 +315,11 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
                 require(clock(a["created_at"]) <= now, "HEALTH_FUTURE_ARTIFACT")
         if panel["status"] == "metadata-ok" and panel["latest"]["artifact_state"] != "metadata-available":
             panel["status"] = "needs-attention"
+        if panel.get("schedule", {}).get("status") == "changed-during-inspection":
+            panel["status"] = "changed-during-inspection"
+        elif panel["status"] == "metadata-ok" and "schedule" in panel:
+            if panel["schedule"]["status"] not in {"native-success", "no-recent-slot"}:
+                panel["status"] = "needs-attention"
     if "run" in backup and backup["status"] == "inspected" and backup["artifact_state"] != "metadata-available":
         backup["status"] = "needs-attention"
     changed = before != after or expected_head is not None and before[binding.branch] != expected_head
@@ -268,7 +330,7 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
               "heads_changed_or_unexpected": changed, "workflows": panels, "specified_backup": backup,
               "excluded_inspection": self_run if self_verified else None, "native_reads": len(evidence),
               "native_metadata_bytes": used, "evidence": evidence,
-              "scope": "three-delivery-hosts; latest-attempt-within-recent-20-main-runs; not-global-writer-lock",
+              "scope": "four-delivery-hosts; latest-attempt-within-recent-20-main-runs; independent-daily-schedule-page; not-global-writer-lock",
               "automatic_schedule": "not-established-by-workflow-active-state",
               "durable_backup": "not-established-by-actions-artifact",
               "source_freshness": "not-inspected", "business_acceptance": "not-inspected",

@@ -10,6 +10,30 @@ OPERATION = "reading-room"
 COMMAND = "research-room"
 
 
+def check_ai_brief_output(store, model=None):
+    """Native admission/final export gate for a composed Hosted AI Brief.
+
+    The dependency bit is produced only by the validated Room reader (including
+    its immediate baseline), and survives optional display omission. It is not
+    accepted in any command/plan payload. The caller keeps its original adapter
+    so a private-to-public reversal cannot reset that adapter's access latch.
+    """
+    from decision_kernel.application.reading_ai_brief import selected
+    from decision_kernel.infrastructure.github_store import GitHubStore
+    from decision_kernel.infrastructure.runtime_publication import checked_handoff_visibility
+    if model is not None and not selected(model.get("plan")):
+        return
+    if not isinstance(getattr(store, "backend", None), GitHubStore):
+        return
+    watch_required = False
+    if model is not None:
+        panel = model.get("ai_brief")
+        require(isinstance(panel, dict) and type(panel.get("watch_publication_required")) is bool,
+                "ROOM_AI_BRIEF_PUBLICATION_REQUIREMENT_INVALID")
+        watch_required = panel["watch_publication_required"]
+    checked_handoff_visibility(store.backend, watch_required=watch_required)
+
+
 def preflight(operation, payload, *, public=True):
     if operation != OPERATION:
         return
@@ -64,8 +88,12 @@ def perform(store, payload, *, public=True, market_registry=None):
     original_backend = store.backend
     preflight(OPERATION, payload, public=False)
     native_book = selected(payload["plan"]) and isinstance(original_backend, GitHubStore)
+    from decision_kernel.application.reading_ai_brief import selected as ai_selected
+    native_ai = ai_selected(payload["plan"]) and isinstance(original_backend, GitHubStore)
     if native_book:
         checked_odds_book_visibility(original_backend)
+    if native_ai:
+        check_ai_brief_output(store)
     adopted_publication = False
     binding = getattr(original_backend, "binding", None)
     if publication_basis(binding, "reading") is not None:
@@ -79,7 +107,7 @@ def perform(store, payload, *, public=True, market_registry=None):
     preflight(OPERATION, payload, public=public)
     from decision_kernel.interfaces.news_rolling_cli import _SourceReads
     # Exit checks run before returning the model to any HTML/report writer.
-    with reading_scope(store.backend, fail_closed=selected(payload["plan"])) as backend:
+    with reading_scope(store.backend, fail_closed=selected(payload["plan"]) or ai_selected(payload["plan"])) as backend:
         store = VersionedStore(backend)
         reads = _SourceReads(store.read_source)
         result = ReadingRoom(store, source_reader=reads, market_registry=market_registry).build(
@@ -97,6 +125,8 @@ def perform(store, payload, *, public=True, market_registry=None):
         require(publication_basis(binding, "reading") is not None, "ROOM_PUBLIC_RESEARCH_NOT_CONFIRMED")
     if native_book:
         checked_odds_book_visibility(original_backend)
+    if native_ai:
+        check_ai_brief_output(VersionedStore(original_backend), result)
     return result
 
 
@@ -128,5 +158,12 @@ def execute(args, store, load):
         from decision_kernel.application.relay_registry import RelayRegistry
         registry = RelayRegistry(args.market_registry)
     result = perform(store, {"plan": load(args.input)}, public=False, market_registry=registry)
-    write_page(args.out, result)
+    from decision_kernel.application.reading_ai_brief import selected as ai_selected
+    if ai_selected(result["plan"]):
+        from decision_kernel.interfaces.reading_page import render_page
+        html = render_page(result)
+        check_ai_brief_output(store, result)
+        write_html(args.out, html)
+    else:
+        write_page(args.out, result)
     return result

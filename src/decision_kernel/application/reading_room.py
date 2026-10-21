@@ -27,7 +27,7 @@ def plan_input(value):
     from decision_kernel.domain.research_artifacts import artifact_reference
 
     require(isinstance(value, dict) and "as_of" in value and set(value) <= {
-        "as_of", "catalogue", "reference", "agenda", "brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure", "odds_book", "odds_book_view"}, "ROOM_PLAN_INVALID")
+        "as_of", "catalogue", "reference", "agenda", "brief", "ai_brief", "materials", "review", "industry", "market", "global_context", "auction", "auction_minute", "auction_next_session", "discovery", "participants", "event_calendar", "decision_preparation", "outcome", "structure", "odds_book", "odds_book_view"}, "ROOM_PLAN_INVALID")
     clock(value["as_of"])
     catalogue = value.get("catalogue", {})
     require(isinstance(catalogue, dict) and set(catalogue) <= {"cursor", "limit"},
@@ -41,6 +41,9 @@ def plan_input(value):
             result[name] = deepcopy(value[name])
         else:
             result[name] = asdict(artifact_reference(value[name])) if value.get(name) is not None else None
+    if value.get("ai_brief") is not None:
+        from decision_kernel.application.reading_ai_brief import selection
+        result["ai_brief"] = selection(value["ai_brief"])
     if value.get("materials") is not None:
         from decision_kernel.application.reading_materials import material_plan
         result["materials"] = material_plan(value["materials"])
@@ -191,6 +194,9 @@ class ReadingRoom:
         require(not plan.get("structure") or market_export is True, "ROOM_PUBLIC_STRUCTURE_NOT_CONFIRMED")
         # A repository/cursor failure must not masquerade as an empty catalogue.
         catalogue = self._catalogue(plan["catalogue"])
+        if "ai_brief" in plan:
+            from decision_kernel.application.reading_ai_brief import bind_plan
+            bind_plan(plan, catalogue)
         if "odds_book" in plan:
             from decision_kernel.application.reading_odds_book import bind_query
             bind_query(plan, catalogue)
@@ -245,6 +251,10 @@ class ReadingRoom:
                 if not watch_export and export_required(doc.get("research") or {}):
                     brief = {"reference": plan["brief"], "status": "sources-permission-required",
                              "error": "ROOM_PUBLIC_WATCH_EVIDENCE_NOT_CONFIRMED"}
+        ai_brief = None
+        if "ai_brief" in plan:
+            from decision_kernel.application.reading_ai_brief import read_panel
+            ai_brief = read_panel(self.store, plan, snapshot=catalogue["snapshot"])
         readings, projections, used = [], [], 0
         for ref in refs:
             row = {"reference": deepcopy(ref),
@@ -452,9 +462,9 @@ class ReadingRoom:
             result["structure"] = structure
             partial = partial or structure["status"] != "readable" or structure.get("partial", False)
         result["status"] = "partial" if partial else "readable"
-        if ("odds_book" in plan or "odds_book_view" in plan) and callable(getattr(self.source_reader, "usage", None)):
+        if any(name in plan for name in ("odds_book", "odds_book_view", "ai_brief")) and callable(getattr(self.source_reader, "usage", None)):
             # The command adds this original news-only counter to the final model.
-            # Include those same bytes before admitting the optional Odds display.
+            # Include those same bytes before admitting optional composite displays.
             result["news_source_reads"] = self.source_reader.usage()
         # Validate the original view first. Book has no I/O and a separate
         # display budget; its duplicate structured fields cannot evict bodies.
@@ -473,6 +483,10 @@ class ReadingRoom:
             view, detail = read_view(self.store, plan["odds_book_view"], registry=self.market_registry)
             attach_view(result, view, detail, max_panel_bytes=MAX_PANEL_BYTES,
                         max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
+        if ai_brief is not None:
+            from decision_kernel.application.reading_ai_brief import attach_panel
+            attach_panel(result, ai_brief, max_panel_bytes=MAX_PANEL_BYTES,
+                         max_view_bytes=MAX_VIEW_BYTES, render_model=render_page)
         raw = encoded(result)
         require(len(raw) <= MAX_VIEW_BYTES, "ROOM_VIEW_BOUND")
         # Final mutable access check after every component and before any export.

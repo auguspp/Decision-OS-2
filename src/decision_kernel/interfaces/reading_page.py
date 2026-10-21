@@ -42,6 +42,7 @@ function show(c){
  pane.append(el('p',c.mandate||'原委托见确切研究。','muted'));
  pane.append(el('span',label(r?r.status:c.status),'badge'),el('span',c.pinned?'显式指定版本，不判断是否为当前版':'固定目录快照中的版本','badge'));
  if(r)pane.append(el('p',`指定简报关系：${label(r.brief_relation.status)}`));
+ if(r?.ai_brief_relation)pane.append(el('p',`AI 晚报关系：${({adopted:'已采用此确切版本','not-adopted-in-this-ai-brief':'未采用此确切版本',unknown:'关系未知'})[r.ai_brief_relation.status]||r.ai_brief_relation.status}`));
  const actions=el('div',undefined,'actions');
  if(ref)actions.append(button('原附件、来源与前版',()=>{if(D.materials&&same(D.materials.reference,ref))location.hash='materials';else materialRequest(ref);}));
  if(ref)actions.append(button('导出确切研究读取请求',()=>request('research-read.json',r?r.open_request:{operation:c.open_operation||'resume',payload:{reference:ref}})));
@@ -99,6 +100,7 @@ from decision_kernel.interfaces.reading_auction_minute_page import CSS as MINUTE
 from decision_kernel.interfaces.reading_auction_next_session_page import CSS as AUCTION_NEXT_CSS, JS as AUCTION_NEXT_JS
 
 from decision_kernel.interfaces.reading_overview_page import CSS as OVERVIEW_CSS, JS as OVERVIEW_JS
+from decision_kernel.interfaces.reading_ai_brief_page import JS as AI_BRIEF_JS
 from decision_kernel.interfaces.reading_discovery_page import CSS as DISCOVERY_CSS, JS as DISCOVERY_JS
 from decision_kernel.interfaces.reading_watch_page import JS as WATCH_JS
 from decision_kernel.interfaces.reading_participant_page import CSS as PARTICIPANT_CSS, JS as PARTICIPANT_JS
@@ -155,6 +157,8 @@ def render_page(model):
         odds_included = bool(model.get("odds_book", {}).get("view"))
         js = (JS + ODDS_JS if odds_included else JS) + ODDS_OVERVIEW_DISCOVERY_JS
         css = CSS + ODDS_CSS if odds_included else CSS
+    if "ai_brief" in model:
+        js += AI_BRIEF_JS
     def sha(text):
         return base64.b64encode(hashlib.sha256(text.encode()).digest()).decode()
     policy = ("default-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'; "
@@ -183,13 +187,17 @@ def render_page(model):
     auction_next_nav = '<a href="#auction-next">原名单下一开市日</a>' if "auction_next_session" in model else ''
     auction_next_panel = ('<section class="panel" id="auction-next"><h2>原竞价名单的下一开市日开收盘</h2>'
                           '<div id="auction-next-content"></div></section>') if "auction_next_session" in model else ''
+    ai_brief_nav = '<a href="#ai-brief">AI 晚报</a>' if "ai_brief" in model else ''
+    ai_brief_panel = ('<section class="panel" id="ai-brief"><h2>AI 晚报 · 已存作者正文</h2>'
+                      '<div id="ai-brief-content"></div></section>') if "ai_brief" in model else ''
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="{escape(policy, quote=True)}">
 <title>Decision OS · 统一阅读室</title><style>{css}</style></head><body>
 <header><p>DECISION OS 2.0</p><h1>日常阅读</h1><p id="scope"></p><p id="clock"></p>
-<nav aria-label="阅读区域"><a href="#daily">日常概览</a><a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">Research Book · 研究</a><a href="#odds-book">Odds Book</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
+<nav aria-label="阅读区域"><a href="#daily">日常概览</a>{ai_brief_nav}<a href="#brief">已存简报</a><a href="https://github.com/auguspp/Decision-OS-2/actions/workflows/news-rolling.yml" target="_blank" rel="noopener noreferrer" title="选择 latest-desk；只读发现已保管新闻，不更新来源">News Desk</a><a href="#research">Research Book · 研究</a><a href="#odds-book">Odds Book</a><a href="#agenda">待复核问题</a><a href="#discovery">状态发现</a><a href="#market">A股行情</a>{global_nav}{auction_nav}{minute_nav}{auction_next_nav}{structure_nav}<a href="#industry">产业与公司角色</a><a href="#materials">原件与来源</a><a href="#review">按需复核</a>{outcome_nav}</nav></header>
 <main><div id="health" class="banner"></div><p id="notice" aria-live="polite">页面是只读快照，不会自动刷新、提交或公开新内容。</p>
 <section class="panel" id="daily"><h2>日常概览</h2><div id="overview-content"></div></section>
+{ai_brief_panel}
 <section class="panel" id="brief"><h2>已存简报</h2><div id="brief-content"></div></section>
 <div class="workspace" id="research"><aside class="panel"><h2>Research Book</h2><p class="muted">本页原研究、作者问题与后续核验；沿原目录分母。</p><label for="query">案例、版本或原委托</label><input id="query" type="search" placeholder="仅搜索本页">
 <label for="kind">研究类型</label><select id="kind"><option value="">全部</option><option value="quick">Quick</option><option value="full">Full</option></select>

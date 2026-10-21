@@ -75,7 +75,7 @@ def recover_room(args) -> dict:
             del raw
             with restored_bundle(frozen, binding, args.snapshot) as backend:
                 store = VersionedStore(backend)
-                audit = audit_store(store, args.snapshot)
+                audit = audit_store(store, args.snapshot, registry=registry)
                 result = perform(store, {"plan": plan}, public=False, market_registry=registry)
                 raw_result, page = encoded(result), render_page(result).encode("utf-8")
                 report.update(audit=audit, reading_status=result["status"],

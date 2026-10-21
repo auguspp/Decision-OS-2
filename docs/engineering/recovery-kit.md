@@ -51,7 +51,7 @@ env -i PATH="$PATH" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
   --out /new/recovered-reading
 ```
 
-用受信绝对路径显式指定 Registry 后，可从任意工作目录或已安装的 reader 启动。`--market-registry` 同时传给市场面板和 Odds 等原阅读消费者；没有顶层 `market` 的计划也会使用该参数。读取保留行情的 Odds 详情仍需要原 Registry，不能只凭顶层面板推断它不需要。Registry使用随源码保留的手册和能力快照，不访问Relay。显式传入的路径或内容无效时，在完整数据审计和创建输出目录前拒绝；计划含 `market` 时仍必须传此参数。不需要 Registry 的计划（例如仅研究/Brief、原 declared-price Odds）可以省略。
+用受信绝对路径显式指定 Registry 后，可从任意工作目录或已安装的 reader 启动。`--market-registry` 同时传给完整数据审计中的 Watch 引用消费者，以及市场面板和 Odds 等原阅读消费者；没有顶层 `market` 的计划也会使用该参数。完整审计会核包内已登记的 Full Watch 及其原 Odds，计划未展示 Watch 不会跳过这条依赖。读取保留行情的 Odds 详情或审计绑定此类 Odds 的 Full Watch 仍需要原 Registry，不能只凭顶层面板推断它不需要。Registry使用随源码保留的手册和能力快照，不访问Relay。显式传入的路径或内容无效时，在完整数据审计和创建输出目录前拒绝；计划含 `market` 时仍必须传此参数。计划和完整审计均不需要 Registry 时（例如无保留行情 Watch 的仅研究/Brief、原 declared-price Odds及其Full Watch）可以省略。
 
 不按公司名找新源，不以计数回执代替市场根。计划含历史目录cursor仍保持它的确切快照；整个恢复包的snapshot不是将所有对象升级到“最新”的命令。
 
@@ -65,7 +65,7 @@ env -i PATH="$PATH" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
 
 ## 验证、维护和退出
 
-专属验证保护确切Git字节/脏工作树排除、归档属性/链接/路径/容量、绑定、既有bundle回归、坏摘要/快照/目录、完整审计、实际Brief与研究恢复、部分失败及安装后独立进程消费；非项目工作目录中的保留行情 Odds 详情验证显式 Registry 传递，原 declared-price 路径保留无 Registry 支持。合成工程、真实备份、无网络恢复阅读、长期持久保管和正式运行分别验收，不用本说明代签结果。
+专属验证保护确切Git字节/脏工作树排除、归档属性/链接/路径/容量、绑定、既有bundle回归、坏摘要/快照/目录、完整审计、实际Brief与研究恢复、部分失败及安装后独立进程消费；非项目工作目录及原安装消费者中的保留行情 Odds 详情和已登记 Full v3 Watch 验证显式 Registry 同时到达完整审计与阅读消费者，原 declared-price Odds及其Full Watch保留无 Registry 支持。合成工程、真实备份、无网络恢复阅读、长期持久保管和正式运行分别验收，不用本说明代签结果。
 
 `reader_archive`只拥有代码归档；`git_snapshot`仍拥有Git恢复；`recovery_commands`只组合原阅读消费者；`store_runtime`仍是原显式宿主。退役用普通PR同时撤源码归档接线、恢复子命令、专属测试/安装helper和此说明，原 `verify-bundle`、GitSnapshot、SourceRef/Artifact/研究历史及共享保护继续；不得删除已保管历史或扩大读取权利。
 

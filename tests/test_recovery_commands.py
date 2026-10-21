@@ -56,13 +56,19 @@ def make_case(api, directory):
 
 
 def make_odds_case(directory, *, retained_market):
-    """Original saved Odds through a real bundle, using only synthetic inputs."""
+    """Original Odds and managed Full Watch through a real synthetic bundle."""
     from contextlib import nullcontext
     from decision_kernel.application.conditional_odds import ConditionalOdds
+    from decision_kernel.application.odds_watch import OddsWatch
+    from decision_kernel.application.watch_activity import WatchActivity
     from decision_kernel.infrastructure.git_snapshot import GitSnapshot
     from test_conditional_odds import authorized, price_payload, spec_payload
+    from test_full_watch import full_watch
     from test_ftshare_odds import build_case, conditional_input, EVALUATED, SyntheticClock
     from test_github_store import GitAPI
+    from test_market_snapshot import local_fetch
+    from test_watch_activity import change
+    from test_watch_conditions import numeric
     api = GitAPI(directory / "original-odds.git")
     binding = replace(api.binding, branch="records")
     anchor = api.git.commit({"store.json": binding.marker()}, expected=api.git.head())
@@ -73,7 +79,10 @@ def make_odds_case(directory, *, retained_market):
         GitSnapshot(api.git.root, replace(api.binding, write_enabled=False), api.git.head()))
     with patch("decision_kernel.application.versioned_store._now", lambda: "2026-10-19T12:03:00+00:00"), \
          patch("decision_kernel.application.conditional_odds.datetime", SyntheticClock), \
-         patch("decision_kernel.application.probability_odds.datetime", SyntheticClock):
+         patch("decision_kernel.application.probability_odds.datetime", SyntheticClock), \
+         patch("decision_kernel.application.odds_watch.datetime", SyntheticClock), \
+         patch("decision_kernel.application.watch_activity.datetime", SyntheticClock), \
+         patch("decision_kernel.infrastructure.watch_snapshot._fetch_market_branch", local_fetch(api, [])):
         if retained_market:
             fresh = lambda: VersionedStore(GitHubStore(replace(api.binding, write_enabled=False), api))
             case = build_case(storage=(api.git, store, fresh))
@@ -88,11 +97,23 @@ def make_odds_case(directory, *, retained_market):
             calculation = {"spec_ref": spec, "price": price_payload()}
         ref = service.save(authorized("calculation", calculation), submission_id="recovery-odds")["reference"]
         original = service.read(ref)
+        # The whole-store audit follows this activity even though the Room plan
+        # asks only for Odds. Full v3 restores the original retained calculation.
+        value = full_watch(calculation["spec_ref"], ref, conditions=[numeric("price")])
+        value["activation"]["as_of"] = value["window"]["starts_at"] = EVALUATED
+        if retained_market:
+            value["data_policy"] = {"price_kind": "retained-ftshare-raw-close", "market_policy": case["policy"]}
+        watch = OddsWatch(store, service.registry).freeze(authorized("watch", value),
+                                                        submission_id="recovery-full-watch")
+        activity = WatchActivity(store, service.registry).change(
+            authorized("change", change(watch["reference"], at="2026-10-19T13:01:00+00:00")),
+            submission_id="recovery-watch-register")
+        expected_activity = {watch["watch_sha256"]: activity["reference"]}
     plan = {"as_of": EVALUATED, "odds_book_view": {"query": {"limit": 8, "scan_limit": 32}, "page_limit": 4,
             "detail": {"operation": "read-odds", "payload": {"reference": ref}}}}
     args = bundle_inputs(api, directory, plan)
     shutil.rmtree(api.git.root)  # Only this helper's synthetic store; the bundle is now the sole copy.
-    return args, original
+    return args, original, expected_activity
 
 
 @pytest.fixture
@@ -123,9 +144,9 @@ def test_independent_offline_recovery_restores_original_brief_and_research(recov
 
 
 @pytest.mark.parametrize("retained_market", [False, True], ids=["declared-price-no-registry", "retained-ftshare-registry"])
-def test_original_odds_detail_from_foreign_cwd(tmp_path, monkeypatch, retained_market):
+def test_original_odds_and_full_watch_audit_from_foreign_cwd(tmp_path, monkeypatch, retained_market):
     from test_market_relay_inputs import REGISTRY_PATH
-    args, original = make_odds_case(tmp_path, retained_market=retained_market)
+    args, original, activity = make_odds_case(tmp_path, retained_market=retained_market)
     if retained_market:
         args.market_registry = REGISTRY_PATH
     assert "market" not in json.loads(args.plan.read_bytes())
@@ -133,6 +154,8 @@ def test_original_odds_detail_from_foreign_cwd(tmp_path, monkeypatch, retained_m
     monkeypatch.setattr(GitHubAPI, "from_environment", lambda *a, **k: pytest.fail("offline reader created an API"))
     report = recover_room(args)
     assert report["status"] == "completed" and report["audit"]["status"] == "verified"
+    assert report["audit"]["watch_activities"] == activity
+    assert report["audit"]["watch_activity_replay"] == "not-performed; use activity reader"
     model = json.loads((args.out / "room.json").read_bytes())
     detail = model["odds_book_view"]["detail"]
     assert detail["status"] == "readable" and detail["result"] == original
@@ -246,7 +269,7 @@ def exercise_installed_recovery(outside, python, env, _store):
     api.binding = replace(binding, anchor=anchor); api.meta["private"] = False
     args, original, _ = make_case(api, directory)
     odds_directory = outside / "recovery-odds-input"; odds_directory.mkdir()
-    odds_args, original_odds = make_odds_case(odds_directory, retained_market=True)
+    odds_args, original_odds, original_activity = make_odds_case(odds_directory, retained_market=True)
     shutil.rmtree(api.git.root)
     clean = {k: v for k, v in env.items() if not any(x in k.upper() for x in ("TOKEN", "SECRET", "KEY", "GITHUB", "PYTHONPATH"))}
     command = [str(python), "-I", "-m", "decision_kernel.interfaces.store_runtime", "recover-room",
@@ -276,7 +299,8 @@ def exercise_installed_recovery(outside, python, env, _store):
         "--market-registry", str(registry), "--out", str(odds_args.out)],
         cwd=odds_directory, env=clean, capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stderr + run.stdout
-    assert json.loads(run.stdout)["status"] == "completed"
+    report = json.loads(run.stdout)
+    assert report["status"] == "completed" and report["audit"]["watch_activities"] == original_activity
     model = json.loads((odds_args.out / "room.json").read_bytes())
     assert "market" not in model["plan"]
     assert model["odds_book_view"]["detail"]["status"] == "readable"

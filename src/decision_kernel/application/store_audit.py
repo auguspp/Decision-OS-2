@@ -10,7 +10,7 @@ from decision_kernel.application.versioned_store import MAX_STORE_VERSIONS, Vers
 from decision_kernel.domain.records import BlobRef, RecordError, Selection, SourceRef, require
 
 
-def audit_store(store: VersionedStore, snapshot: str) -> dict:
+def audit_store(store: VersionedStore, snapshot: str, *, registry=None) -> dict:
     backend = store.backend
     backend.check_commit(snapshot)
     paths = backend.paths(snapshot)
@@ -76,7 +76,7 @@ def audit_store(store: VersionedStore, snapshot: str) -> dict:
     if activity_paths:
         from decision_kernel.application.watch_activity import WatchActivity
         from decision_kernel.application.watch_history import event_record
-        service, selected = WatchActivity(store), {}
+        service, selected = WatchActivity(store, registry=registry), {}
         for path in activity_paths:
             key = path.split("/")[2]
             ref = service._current_for_use(key, snapshot, store)

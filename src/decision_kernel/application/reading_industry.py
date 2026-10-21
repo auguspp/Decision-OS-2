@@ -8,10 +8,11 @@ from decision_kernel.application.vehicle_flows import read_vehicle_flows
 from decision_kernel.application.livestock_weekly import read_livestock_weekly
 from decision_kernel.application.industry_uses import read_industry_uses
 from decision_kernel.application.industry_goods import read_industry_goods
+from decision_kernel.application.industry_goods_coverage import read_industry_goods_coverage
 from decision_kernel.application.industry_reading import _clock
 from decision_kernel.domain.records import Selection, SourceRef, encoded, identifier, require
 
-VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses", "industry-goods")
+VIEWS = ("industry", "operating-cycle", "vehicle-flows", "livestock-weekly", "industry-uses", "industry-goods", "industry-goods-coverage")
 MAX_INDUSTRY_BYTES = 2 * 1024 * 1024
 
 
@@ -29,9 +30,11 @@ def industry_plan(value):
             identifier(selector)
     require(value["view"] != "operating-cycle" or company is None,
             "OPERATING_COMPANY_QUERY_USE_ORIGINAL_INDUSTRY_READER")
+    require(value["view"] != "industry-goods-coverage" or company is None,
+            "INDUSTRY_COVERAGE_COMPANY_QUERY_USE_BATCH")
     result = {"reference": asdict(ref), "view": value["view"],
               "subject_id": subject, "company_id": company}
-    if value["view"] == "industry-goods":
+    if value["view"] in ("industry-goods", "industry-goods-coverage"):
         _clock(value.get("evaluation_at"))
         result["evaluation_at"] = value["evaluation_at"]
     else:
@@ -44,7 +47,9 @@ def open_industry(store, value):
     plan = industry_plan(value)
     ref = SourceRef.from_dict(plan["reference"])
     query = {key: plan[key] for key in ("subject_id", "company_id")}
-    if plan["view"] == "industry-goods":
+    if plan["view"] == "industry-goods-coverage":
+        result = read_industry_goods_coverage(ref, store, evaluation_at=plan["evaluation_at"], **query)
+    elif plan["view"] == "industry-goods":
         result = read_industry_goods(ref, store, evaluation_at=plan["evaluation_at"], **query)
     elif plan["view"] == "industry-uses":
         result = read_industry_uses(ref, store, **query)

@@ -115,7 +115,9 @@ A→B→C 或环不能把中间身份当新商品。共同上游可以发布不�
 
 此判断只覆盖本次声明并实际恢复的有限输入。来源 family 与商品归并关系的语义仍需
 整理者核实；代码不能证明未提供的镜像、统计族、别名或其他批次都已去重。
-跨批完整集合的固定、权利和去重是后续真实扩展验收，不能把若干批次数简单相加。
+跨批完整集合可以用[固定范围的跨批读取](industry-goods-coverage.md)重新核验；
+它重新消费每个原包并检查跨批冲突，不能把若干批次数简单相加。
+实际身份、权利、真实增量和500商品验收仍在原事项继续。
 
 ## 原始比较、来源权利与时效
 
@@ -191,7 +193,7 @@ python -m decision_kernel.interfaces.industry_cli --path dedicated-synthetic.git
 
 原 `industry-read` payload 或 Room 的 `plan.industry` 使用
 `view: industry-goods`、根 `reference` 和必需的 `evaluation_at`；
-其他视图不接受此时刻字段。实际读取准入及公开来源输出授权全部复用现役宿主，
+跨批覆盖视图也须提供此时刻，其他视图不接受该字段。实际读取准入及公开来源输出授权全部复用现役宿主，
 本声明的 retained-use 权利不能替代它。Private 历史产物也不是 Public 资料权利。
 
 [同一阅读室](../delivery/reading-industry.md) 显示四组数、时效未知、全范围未知、

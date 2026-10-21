@@ -1,6 +1,9 @@
 """Native-shaped metadata fixtures; no source collection, mutation or timer."""
 from copy import deepcopy
 from dataclasses import asdict, replace
+from datetime import datetime
+import base64
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -18,6 +21,16 @@ NOW = '2026-10-17T10:00:00Z'
 STAMP = '2026-10-17T09:00:00Z'
 OLD = '2026-10-16T09:00:00Z'
 SHA = 'a' * 40
+SCHEDULE_PAGE = '/actions/workflows/daily-market.yml/runs?branch=main&event=schedule&per_page=20'
+POLICY_CONTENT = '/contents/config/daily-market.json?ref=' + SHA
+
+
+def policy_content(raw=None):
+    raw = (ROOT / 'config/daily-market.json').read_bytes() if raw is None else raw
+    return {'type': 'file', 'path': 'config/daily-market.json', 'encoding': 'base64',
+            'size': len(raw), 'content': base64.b64encode(raw).decode(),
+            'sha': hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest(),
+            'download_url': 'https://PRIVATE_SENTINEL.invalid/signed?token=SECRET'}
 
 
 def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, status='completed'):
@@ -30,7 +43,8 @@ def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, s
 
 
 def fixture(*, failure=False, self_run=False):
-    values = {'': {'id': BINDING.repository_id, 'full_name': BINDING.repository, 'private': False}}
+    values = {'': {'id': BINDING.repository_id, 'full_name': BINDING.repository, 'private': False,
+                   'default_branch': 'main'}, POLICY_CONTENT: policy_content()}
     for name in ('main', BINDING.branch):
         values['/git/ref/heads/' + name] = {'ref': 'refs/heads/' + name, 'object': {'type': 'commit', 'sha': SHA}}
     for wid, (filename, prefix) in enumerate(h.WORKFLOWS.items(), 1):
@@ -42,8 +56,13 @@ def fixture(*, failure=False, self_run=False):
             rows.insert(0, run(wid, filename, 999, None, status='in_progress'))
         values[base + '/runs?branch=main&per_page=20'] = {'total_count': len(rows), 'workflow_runs': rows}
         for r in rows:
-            operation = 'health' if r['id'] == 999 else {'store-runtime.yml': 'backup', 'research-runtime.yml': 'read', 'news-rolling.yml': 'build'}[filename]
+            operation = 'health' if r['id'] == 999 else {'store-runtime.yml': 'backup', 'research-runtime.yml': 'read',
+                'news-rolling.yml': 'build', 'daily-market.yml': 'status'}[filename]
             add_details(values, r, operation, prefix)
+        if filename == 'daily-market.yml':
+            natural = run(wid, filename, 490, stamp='2026-10-16T10:36:00Z')
+            natural['event'] = 'schedule'
+            values[SCHEDULE_PAGE] = {'total_count': 1, 'workflow_runs': [natural]}
     return values
 
 
@@ -82,7 +101,7 @@ class API:
 def test_latest_failure_is_not_replaced_by_old_success_and_bytes_not_certified():
     api = API(fixture(failure=True)); report = h.inspect_runtime(BINDING, api, as_of=NOW, backup_run_id=101)
     assert report['status'] == 'needs-attention'
-    assert report['native_reads'] == len(api.calls) == 40
+    assert report['native_reads'] == len(api.calls) == 53
     for p in report['workflows']:
         assert p['latest']['run']['conclusion'] == 'failure'
         assert p['last_visible_success']['run']['conclusion'] == 'success'
@@ -92,6 +111,19 @@ def test_latest_failure_is_not_replaced_by_old_success_and_bytes_not_certified()
     assert report['specified_backup']['status'] == 'inspected'
     assert 'PRIVATE_SENTINEL' not in encoded(report).decode()
     assert 'SECRET' not in command.markdown(report)
+
+
+def test_daily_manual_success_does_not_fill_unobserved_natural_slot():
+    report = h.inspect_runtime(BINDING, API(), as_of='2026-10-21T11:00:00Z')
+    panels = {p['path']: p for p in report['workflows']}
+    assert '.github/workflows/daily-market.yml' in panels
+    daily = panels['.github/workflows/daily-market.yml']
+    assert daily['latest']['run']['event'] == 'workflow_dispatch'
+    assert daily['latest']['run']['conclusion'] == 'success'
+    assert daily['schedule']['status'] == 'not-observed'
+    assert daily['schedule']['expected_slot']['business_date'] == '20261021'
+    assert daily['status'] == report['status'] == 'needs-attention'
+    assert '目标槽原生运行：未观察到' in command.markdown(report)
 
 
 def test_actual_self_only_is_excluded_and_explicit_backup_is_separate():
@@ -288,10 +320,18 @@ def test_real_host_route_reads_only_metadata_and_original_backup_jobs_are_unchan
     monkeypatch.chdir(ROOT)
     for key,value in {'GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main',
         'GITHUB_REPOSITORY':BINDING.repository,'GITHUB_SHA':SHA,'GITHUB_RUN_ID':'999','GITHUB_RUN_ATTEMPT':'1'}.items():monkeypatch.setenv(key,value)
-    with patch.object(store_runtime.GitHubAPI,'from_environment',return_value=API(fixture(self_run=True))):
+    class FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromisoformat(NOW.replace('Z', '+00:00'))
+    monkeypatch.setattr(h, 'datetime', FrozenClock)
+    api = API(fixture(self_run=True))
+    with patch.object(store_runtime.GitHubAPI,'from_environment',return_value=api):
         assert store_runtime.main(['operate','--operation','health','--expected-head',SHA,'--backup-run-id','101','--out',str(tmp_path/'host')])==0
     doc=json.loads((tmp_path/'host/health.json').read_bytes())
     assert doc['dispatches']==doc['writes']==0 and doc['specified_backup']['observed_operation']=='backup'
+    assert doc['workflows'][-1]['schedule']['status'] == 'native-success'
+    assert api.calls.count(SCHEDULE_PAGE) == 2 and api.calls.count(POLICY_CONTENT) == 1
 
 
 def exercise_installed_runtime_health(outside, python, env, store):
@@ -318,6 +358,13 @@ assert code==2
 r=json.loads(Path(sys.argv[1],'health.json').read_bytes())
 assert r['workflows'][0]['latest']['run']['conclusion']=='failure'
 assert r['specified_backup']['observed_operation']=='backup'
+daily=r['workflows'][-1]
+assert daily['path']=='.github/workflows/daily-market.yml'
+assert daily['schedule']['status']=='native-success'
+assert daily['schedule']['expected_slot']['business_date']=='20261016'
+assert daily['schedule']['policy']['main']=='a'*40
+assert daily['schedule']['business_result']=='not-inspected'
+assert 'seed_reference' not in json.dumps(r) and 'PRIVATE_SENTINEL' not in json.dumps(r)
 assert r['writes']==r['dispatches']==0
 '''
     for name in ('health-first','health-fresh'):

@@ -245,11 +245,11 @@ def test_visibility_reversal_in_cli_does_not_leave_a_success_output(tmp_path, ca
     assert not Path(env["GITHUB_OUTPUT"]).exists()
 
 
-def test_workflow_native_preflight_does_not_depend_on_missing_schedule_repository_metadata():
+def test_workflow_native_preflight_dispatch_only_keeps_original_gates():
     root = Path(__file__).resolve().parents[1]
     workflow = yaml.load((root / cli.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
     assert workflow["permissions"] == {} and workflow["concurrency"]["group"] == "decision-os-relay-source"
-    assert workflow["on"]["schedule"] == [{"cron": "35 10 * * 1-5"}]
+    assert set(workflow["on"]) == {"workflow_dispatch"}
     job = workflow["jobs"]["visibility"]
     assert job["permissions"] == {"contents": "read", "actions": "read"}
     assert "repository.private" not in job["if"] and "schedule" in job["if"]

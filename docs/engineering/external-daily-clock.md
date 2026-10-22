@@ -6,7 +6,7 @@
 
 外部 cron 只向既有 `daily-market.yml` 发一次固定 `workflow_dispatch`。同一个 GitHub workflow 继续执行准入、原六股日更、保管、发现状态和正常阅读；不增加中转服务、内部二次 dispatch、数据真源或来源队列。
 
-`config/daily-market-clock.json` 只有 schema 与 primary 两个字段。primary 可为 `github-schedule` 或 `external-cron`；缺件、未知字段、坏 JSON 或未知值拒绝准入。仓库交付默认选择 `github-schedule`，保留现有工作日 18:35 的 GitHub cron。只有明确完成后面的切换流程，才把 primary 改为 `external-cron` 并退役同责 native schedule。
+`config/daily-market-clock.json` 只有 schema 与 primary 两个字段。primary 可为 `github-schedule` 或 `external-cron`；缺件、未知字段、坏 JSON 或未知值拒绝准入。初始主时钟为 `github-schedule`，保留工作日18:35的GitHub schedule。正式切换 PR 必须一次将 primary 改为 `external-cron` 且退役同责 workflow `on.schedule`；只有服务商原任务已保存、保持 Inactive、按原配置独立读回、原时钟在途/未知效果已核并获得适用完整CI，才可将此PR合入。合入的代码配置不证明服务商已启用、请求来自该服务商或自然日更成功。
 
 原 `config/daily-market.json`、policy digest、seed、cycle schema 和已保管 generation 不因换钟改变。业务时间仍由原 policy 的工作日上海 18:35 及不足 24 小时的迟到窗口解释；证券交易日以原日历和 completed-session 资格为准，不能用星期或外部任务自报日期替代。
 

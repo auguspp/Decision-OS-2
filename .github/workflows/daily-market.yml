@@ -1,8 +1,6 @@
 name: decision-os-daily-market
 run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'external-clock' && 'decision-os-daily-market / external-clock' || github.event_name == 'workflow_dispatch' && inputs.operation == 'clock-probe' && 'decision-os-daily-market / clock-probe' || 'decision-os-daily-market' }}
 on:
-  schedule:
-    - cron: '35 10 * * 1-5'
   workflow_dispatch:
     inputs:
       operation:

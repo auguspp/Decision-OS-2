@@ -64,8 +64,8 @@ def select_repair(item, grant, *, at):
 
 
 def eligible(state, grant):
-    from decision_kernel.application.daily_market import SCHEMA, VENUES
-    require(state["schema"] == SCHEMA and state["status"] == "blocked"
+    from decision_kernel.application.daily_market import MASTER_SCHEMA, SCHEMA, VENUES
+    require(state["schema"] in {SCHEMA, MASTER_SCHEMA} and state["status"] == "blocked"
         and state["reason_code"] == "RELAY_HTTP_UNAVAILABLE"
         and state["price_end"] is None and state["market_reference"] is None,
         "DAILY_CALENDAR_REPAIR_NOT_TRANSPORT_FAILURE")
@@ -77,21 +77,23 @@ def eligible(state, grant):
 
 
 def reserve(item, grant, *, at):
-    from decision_kernel.application.daily_market import next_state
+    from decision_kernel.application.daily_market import MASTER_REPAIR_SCHEMA, MASTER_SCHEMA, next_state
     require(select_repair(item, grant, at=at), "DAILY_CALENDAR_REPAIR_ALREADY_SPENT")
     calendars = deepcopy(item["cycle"]["calendars"])
     calendars[grant["venue"]] = {"status": "in-flight", "reserved_requests": 2,
                                   "reference": None, "reason_code": None}
-    return next_state(item, at=at, schema=CYCLE_SCHEMA, calendar_repair=proof(grant),
+    schema = MASTER_REPAIR_SCHEMA if item["cycle"]["schema"] == MASTER_SCHEMA else CYCLE_SCHEMA
+    return next_state(item, at=at, schema=schema, calendar_repair=proof(grant),
                       calendars=calendars, status="calendar-pending", reason_code=None)
 
 
 def transition(previous, current):
     """Historical verification is independent of later grant revocation."""
-    from decision_kernel.application.daily_market import _stamp
+    from decision_kernel.application.daily_market import MASTER_REPAIR_SCHEMA, MASTER_SCHEMA, _stamp
     grant = proof(current.get("calendar_repair"))
     eligible(previous, grant)
-    require(current["schema"] == CYCLE_SCHEMA and current["predecessor"] == grant["original_reference"]
+    schema = MASTER_REPAIR_SCHEMA if previous["schema"] == MASTER_SCHEMA else CYCLE_SCHEMA
+    require(current["schema"] == schema and current["predecessor"] == grant["original_reference"]
         and current["revision"] == previous["revision"] + 1
         and _stamp(current["updated_at"]) >= _stamp(previous["updated_at"]),
         "DAILY_CALENDAR_REPAIR_EDGE")

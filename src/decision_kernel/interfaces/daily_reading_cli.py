@@ -138,7 +138,7 @@ def _summary_lines(model):
         lines.append("已存日更任务：" + str(cycle["date"]) + "，" + STATES.get(cycle["status"], cycle["status"]) + "。")
         if cycle.get("reason_code") and cycle["reason_code"] != receipt.get("reason_code"):
             lines.append("任务保留的限制：" + cycle["reason_code"])
-        if cycle.get("schema") == "daily-market-cycle-v4":
+        if cycle.get("schema") in {"daily-market-cycle-v4", "daily-market-cycle-v5"}:
             if cycle["status"] == "complete":
                 lines.append("证券主表：本轮两所完整主表已被行情版本采用，资料取得时间按原页保留。")
             elif cycle["status"] == "master-pending":

@@ -19,7 +19,7 @@ from decision_kernel.application.daily_clock import (
     CLOCK_PROBE, EXTERNAL_CLOCK, admit_clock, dispatch_selection, run_title,
 )
 from decision_kernel.application.daily_market import (
-    MASTER_SCHEMA, SUCCESS, VENUES, _stamp, calendar_plan, check_cycle_frontier,
+    MASTER_SCHEMAS, SUCCESS, VENUES, _stamp, calendar_plan, check_cycle_frontier,
     completed_session, daily_market_reference, initial_cycle, latest_cycle,
     next_state, policy, price_configuration, retain_cycle,
 )
@@ -303,7 +303,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
             report["write_reconciliation"] = _reconciliation_summary(item["cycle"])
         elif item is not None:
             report.pop("write_reconciliation", None)
-        if item is not None and item["cycle"]["schema"] == MASTER_SCHEMA:
+        if item is not None and item["cycle"]["schema"] in MASTER_SCHEMAS:
             report["master_refresh"] = deepcopy(item["cycle"]["master_refresh"])
             report["master_reserved_queries"] = sum(row["reserved_queries"]
                 for row in item["cycle"]["masters"].values())
@@ -424,6 +424,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 repair_new = select_repair(current, calendar_repair, at=now)
                 require(current["cycle"]["policy_sha256"] == policy_digest(approved),
                     "DAILY_MARKET_POLICY_CHANGED")
+                if current["cycle"]["schema"] in MASTER_SCHEMAS:
+                    require(master_refresh == current["cycle"]["master_refresh"], "DAILY_MASTER_POLICY_CHANGED")
                 prepared = {"existing": current, "candidate": None, "admission": {
                     "mode": "explicit-calendar-repair", "business_date": current["cycle"]["date"],
                     "admitted_at": now, "authorization_ref": calendar_repair["authorization_ref"]}}
@@ -517,7 +519,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     try:
                         session = completed_session(item["cycle"], registry, fresh_market_reader(store, fresh))
                         save(next_state(item, at=clock(), price_end=session["price_end"],
-                            status=("master-pending" if item["cycle"]["schema"] == MASTER_SCHEMA else "market-pending")
+                            status=("master-pending" if item["cycle"]["schema"] in MASTER_SCHEMAS else "market-pending")
                                 if session["new_session"] else "no-new-session",
                             market_reference=None if session["new_session"] else item["cycle"]["base_market_reference"]),
                             store, fresh)
@@ -543,7 +545,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                             guard=guard, progress=price_progress, clock=clock, monotonic=monotonic,
                             sleep=sleep, capacity=capacity, calendar_references=references,
                             **({"master_references": {v: item["cycle"]["masters"][v]["reference"] for v in VENUES}}
-                                if item["cycle"]["schema"] == MASTER_SCHEMA else {}),
+                                if item["cycle"]["schema"] in MASTER_SCHEMAS else {}),
                             quota_wait=getattr(open_unit, "quota_wait", None))
                     price = executed["receipt"]
                     report["price_source_requests"], report["price_execution"] = price["source_requests"], price
@@ -598,7 +600,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                         calendar_source_budget=3, calendar_repair=deepcopy(current["calendar_repair"]))
                 pending_control.update(generation=current["market_generation"], calendar_references={venue: row["reference"]
                     for venue, row in current["calendars"].items() if row["reference"] is not None})
-                if current["schema"] == MASTER_SCHEMA:
+                if current["schema"] in MASTER_SCHEMAS:
                     pending_control["master_references"] = {venue: row["reference"]
                         for venue, row in current["masters"].items() if row["reference"] is not None}
                 pending_report.update(cycle_date=current["date"], cycle_status=current["status"],
@@ -650,7 +652,7 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         repair_options["write_reconciliation"] = load_grant()
         repair_options["reconciliation_verifier"] = lambda grant: verify_native_reconciliation(
             api, grant, token=env[TOKEN_ENV])
-    elif selected["operation"] == "update":
+    if selected["operation"] == "update" and selected["invocation"] != "reconcile-write":
         from decision_kernel.application.daily_master_refresh import policy as master_policy
         repair_options["master_refresh"] = master_policy(_json(_regular(MASTER_POLICY_FILE, 8192)))
     now = datetime.now(timezone.utc)

@@ -30,6 +30,8 @@ from decision_kernel.domain.records import (
 
 SCHEMA = "daily-market-cycle-v1"
 MASTER_SCHEMA = "daily-market-cycle-v4"
+MASTER_REPAIR_SCHEMA = "daily-market-cycle-v5"
+MASTER_SCHEMAS = frozenset({MASTER_SCHEMA, MASTER_REPAIR_SCHEMA})
 POLICY_SCHEMA = "daily-market-policy-v1"
 PREFIX = "daily-market-cycle-"
 VENUES = ("SSE", "SZSE")
@@ -90,11 +92,11 @@ def _exact(value, repository):
 
 def _source(state):
     limitations = LIMITATIONS
-    if state["schema"] in {"daily-market-cycle-v2", "daily-market-cycle-v3"}:
+    if state["schema"] in {"daily-market-cycle-v2", "daily-market-cycle-v3", MASTER_REPAIR_SCHEMA}:
         limitations = LIMITATIONS[:2] + ("EXPLICIT_ONE_ADDITIONAL_CALENDAR_REQUEST_ORIGINAL_FAILURE_PRESERVED",) + LIMITATIONS[3:]
     if state["schema"] == "daily-market-cycle-v3":
         limitations += ("EXACT_SETTLED_WRITE_RECONCILIATION_ZERO_ADDITIONAL_SOURCE_REQUESTS",)
-    if state["schema"] == MASTER_SCHEMA:
+    if state["schema"] in MASTER_SCHEMAS:
         limitations += ("FULL_CURRENT_L_MASTER_REFRESH_ON_EACH_NEW_COMPLETED_SESSION",
             "MASTER_PAGE_AND_RETRY_BUDGETS_REMAIN_OWNED_BY_ORIGINAL_RELAY_CHECKPOINTS",)
     return SourceInput(source_id=PREFIX + state["date"] + "-r" + str(state["revision"]).zfill(3),
@@ -110,18 +112,20 @@ def validate_cycle(value):
     from decision_kernel.application.daily_calendar_repair import CYCLE_SCHEMA, proof
     from decision_kernel.application.daily_write_reconciliation import CYCLE_SCHEMA as RECONCILED_SCHEMA, proof as write_proof
     reconciled = isinstance(value, dict) and value.get("schema") == RECONCILED_SCHEMA
-    repaired = isinstance(value, dict) and value.get("schema") in {CYCLE_SCHEMA, RECONCILED_SCHEMA}
-    refreshed = isinstance(value, dict) and value.get("schema") == MASTER_SCHEMA
+    repaired = isinstance(value, dict) and value.get("schema") in {CYCLE_SCHEMA, RECONCILED_SCHEMA, MASTER_REPAIR_SCHEMA}
+    refreshed = isinstance(value, dict) and value.get("schema") in MASTER_SCHEMAS
     repair = proof(value.get("calendar_repair")) if repaired else None
     if reconciled:
         write_proof(value.get("write_reconciliation"))
     require(isinstance(value, dict) and set(value) == fields | ({"calendar_repair"} if repaired else set())
         | ({"write_reconciliation"} if reconciled else set())
         | ({"daily_policy", "master_refresh", "masters"} if refreshed else set())
-        and value["schema"] == (MASTER_SCHEMA if refreshed else RECONCILED_SCHEMA if reconciled else CYCLE_SCHEMA if repaired else SCHEMA)
+        and value["schema"] == (MASTER_REPAIR_SCHEMA if refreshed and repaired else MASTER_SCHEMA if refreshed
+            else RECONCILED_SCHEMA if reconciled else CYCLE_SCHEMA if repaired else SCHEMA)
         and isinstance(value["date"], str) and re.fullmatch(r"[0-9]{8}", value["date"])
         and type(value["revision"]) is int and (9 if reconciled else 3 if repaired else 0)
-            <= value["revision"] <= (11 if refreshed else 10 if reconciled else 8 if repaired else 6)
+            <= value["revision"] <= (13 if refreshed and repaired else 11 if refreshed
+                else 10 if reconciled else 8 if repaired else 6)
         and value["calendar_end"] == value["date"]
         and value["market_generation"] == "daily-" + value["date"]
         and isinstance(value["policy_sha256"], str)
@@ -216,8 +220,8 @@ def _validate_masters(value):
 
 def _verify_master_edges(previous, current, registry, store):
     """Validate a newly completed master once, at its original history edge."""
-    if current["schema"] != MASTER_SCHEMA:
-        require(previous is None or previous["schema"] != MASTER_SCHEMA,
+    if current["schema"] not in MASTER_SCHEMAS:
+        require(previous is None or previous["schema"] not in MASTER_SCHEMAS,
             "DAILY_MASTER_POLICY_REMOVED")
         return
     from decision_kernel.application.daily_master_refresh import verify_completed_master
@@ -272,7 +276,7 @@ def _transition(previous, current):
         and current["revision"] == previous["revision"] + 1,
         "DAILY_MARKET_TERMINAL_OR_REVISION")
     immutable = set(previous) - {"revision", "updated_at", "predecessor", "calendars", "price_end",
-        "market_reference", "status", "reason_code"} - ({"masters"} if previous["schema"] == MASTER_SCHEMA else set())
+        "market_reference", "status", "reason_code"} - ({"masters"} if previous["schema"] in MASTER_SCHEMAS else set())
     require(all(previous[key] == current[key] for key in immutable)
         and _stamp(current["updated_at"]) >= _stamp(previous["updated_at"]), "DAILY_MARKET_INTENT_CHANGED")
     if "write_reconciliation" in previous:
@@ -282,7 +286,7 @@ def _transition(previous, current):
             and current["price_end"] == previous["price_end"]
             and (current["status"] == "complete" or current["market_reference"] == previous["market_reference"]),
             "DAILY_WRITE_RECONCILIATION_PHASE")
-    if previous["schema"] == MASTER_SCHEMA:
+    if previous["schema"] in MASTER_SCHEMAS:
         changed_masters = [v for v in VENUES if previous["masters"][v] != current["masters"][v]]
         require(len(changed_masters) <= 1, "DAILY_MASTER_TRANSITION")
         if changed_masters:
@@ -305,7 +309,7 @@ def _transition(previous, current):
             and current["price_end"] == previous["price_end"]
             and current["market_reference"] == previous["market_reference"], "DAILY_MARKET_CALENDAR_TRANSITION")
     else:
-        if previous["schema"] == MASTER_SCHEMA:
+        if previous["schema"] in MASTER_SCHEMAS:
             require(current["status"] in {
                 "calendar-pending": {"master-pending", "no-new-session", "blocked"},
                 "master-pending": {"market-pending", "blocked"},
@@ -415,7 +419,7 @@ def retain_cycle(state, store, *, registry, fresh_reader, previous, protected_sy
                 # The authority for one new calendar request and its durable
                 # reservation must use the same snapshot and original CAS.
                 check_cycle_frontier(state, registry, reader, protected_symbols=protected_symbols)
-            if state["schema"] == MASTER_SCHEMA and any(
+            if state["schema"] in MASTER_SCHEMAS and any(
                     before["cycle"]["masters"][v]["status"] == "pending"
                     and state["masters"][v]["status"] == "in-flight" for v in VENUES):
                 check_cycle_frontier(state, registry, reader, protected_symbols=protected_symbols)
@@ -496,7 +500,7 @@ def _initial_cycle(approved, store, registry, *, at, stamp, master_refresh=None)
     previous = latest_cycle(store, registry=registry, protected_symbols=approved["symbols"])
     if previous is not None:
         require(previous["cycle"]["policy_sha256"] == policy_digest(approved), "DAILY_MARKET_POLICY_CHANGED")
-        if previous["cycle"]["schema"] == MASTER_SCHEMA:
+        if previous["cycle"]["schema"] in MASTER_SCHEMAS:
             require(master_refresh == previous["cycle"]["master_refresh"], "DAILY_MASTER_POLICY_CHANGED")
         require(previous["cycle"]["date"] <= stamp.strftime("%Y%m%d"), "DAILY_MARKET_CLOCK_ROLLBACK")
         if previous["cycle"]["date"] == stamp.strftime("%Y%m%d") or previous["cycle"]["status"] not in SUCCESS:

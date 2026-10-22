@@ -8,6 +8,8 @@
 
 后续新周期的完整 current-L 主表刷新与正常 FT 后继采用，见[主表刷新合同](daily-master-refresh.md)。新 v4 周期在两所日历确认新增已完成交易日后、价格预留前执行主表阶段；旧 v1/v2/v3 周期仍按原意图恢复，不追加主表请求。当前仓库的公开部署与资料发布按[公开运行合同](../engineering/public-runtime.md)的既有可撤销授权判定，本文件历史 private 描述不另设公开授权障碍。
 
+v4 的已授权日历传输失败恢复使用 v5，保留同一完整主表阶段和冻结范围，只增加指定交易所的一次日历请求；当前精确目标及停止条件见日历恢复合同。v5 不是新业务日，也不替代旧 v2/v3 的历史语义。
+
 可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。原完整主表的 5226 只分母留在旧版本；新完整主表采用时由实际 scope 重建分母，隔离项和未覆盖证券继续计数。六只日常更新不能代签全市场完成。
 
 [daily-market.yml](../../.github/workflows/daily-market.yml) 的初始 GitHub 原生 `schedule` 是 UTC `35 10 * * 1-5`（北京时间工作日18:35），这是保留在业务policy与原生历史中的原定时槽，并非外部时钟的请求值。正式切换时同一 PR 将 [daily-market-clock.json](../../config/daily-market-clock.json) 选择为 `external-cron`，并从 workflow 中移除 `on.schedule`，仅保留 `workflow_dispatch`；已有历史 `schedule` 记录和运行解析继续可读。外部固定入口、零业务 probe、服务商禁用状态读回、单主时钟交接及自然运行的独立验收按[外部日更时钟合同](../engineering/external-daily-clock.md)执行；代码配置不代表服务商任务已经启用或日更准时完成。换钟不改变本文件的 source policy、周期或预算。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。

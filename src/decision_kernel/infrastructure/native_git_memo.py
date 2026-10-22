@@ -3,6 +3,7 @@
 Watch and market readers retain their own admission, live authority and path
 contracts. Call sites choose fixed diagnostics; query policy and limits are shared.
 """
+from collections import OrderedDict
 from contextlib import contextmanager
 from subprocess import CompletedProcess
 
@@ -13,6 +14,7 @@ from decision_kernel.infrastructure.github_store import MAX_TREE_ENTRIES
 
 
 _MEMO_BYTES = 8 * 1024 * 1024
+_MEMO_ENTRY_BYTES = 64 * 1024
 
 
 def _sha(value):
@@ -69,7 +71,7 @@ class _NativeMemo:
         self._closed_error, self._read_only_error = closed_error, read_only_error
         if type(native) is GitSnapshot:
             self.binding, self._snapshot = native.binding, native._snapshot
-        self._memo, self._memo_bytes, self._active = {}, 0, True
+        self._memo, self._memo_bytes, self._active = OrderedDict(), 0, True
 
     def _check_active(self):
         require(self._active, self._closed_error)
@@ -83,17 +85,24 @@ class _NativeMemo:
         reusable = data is None and index is None and _immutable_query(args)
         key = (args, tuple(allowed)) if reusable else None
         if key in self._memo:
-            command, stdout, stderr = self._memo[key]
+            command, stdout, stderr, _ = self._memo[key]
+            self._memo.move_to_end(key)
             return CompletedProcess(command, 0, stdout, stderr)
         result = self._native._run(*args, data=data, index=index, allowed=allowed)
         if (reusable and result.returncode == 0 and isinstance(result.stdout, bytes)
-                and isinstance(result.stderr, bytes) and len(self._memo) < MAX_TREE_ENTRIES
+                and isinstance(result.stderr, bytes)
                 and (result.stdout or args[0] not in ("ls-tree", "log"))):
             command = tuple(result.args)
             size = len(result.stdout) + len(result.stderr) + sum(len(arg.encode("utf-8")) for arg in command)
             size += sum(len(arg.encode("utf-8")) for arg in args) + len(allowed) * 8 + 128
-            if self._memo_bytes + size <= _MEMO_BYTES:
-                self._memo[key] = (command, result.stdout, result.stderr)
+            # An unretainable result must not evict useful immutable entries.
+            # Keep large scans from displacing frequently reused small results.
+            if size <= min(_MEMO_BYTES, _MEMO_ENTRY_BYTES) and MAX_TREE_ENTRIES > 0:
+                while self._memo and (self._memo_bytes + size > _MEMO_BYTES
+                                      or len(self._memo) >= MAX_TREE_ENTRIES):
+                    _, evicted = self._memo.popitem(last=False)
+                    self._memo_bytes -= evicted[3]
+                self._memo[key] = (command, result.stdout, result.stderr, size)
                 self._memo_bytes += size
                 return CompletedProcess(command, 0, result.stdout, result.stderr)
         return result

@@ -385,6 +385,74 @@ def test_memo_capacity_exhaustion_keeps_original_queries_and_results(native, mon
     assert model.git.head() == head
 
 
+@pytest.mark.parametrize("cap", ["bytes", "entries"])
+def test_memo_capacity_turnover_keeps_recent_queries_and_rereads_evicted_bytes(native, monkeypatch, cap):
+    model, _ = native
+    originals = [bytes([index]) * 4096 for index in range(4)]
+    objects = [model.git._run("hash-object", "-w", "--stdin", data=raw).stdout.decode().strip()
+               for raw in originals]
+    if cap == "bytes":
+        monkeypatch.setattr(native_git_memo, "_MEMO_BYTES", 10000)
+    else:
+        monkeypatch.setattr(native_git_memo, "MAX_TREE_ENTRIES", 2)
+    calls = observe_native(monkeypatch)
+    with watch_read_scope(model.git) as reader:
+        def read(index):
+            result = reader._run("cat-file", "blob", objects[index])
+            assert result.stdout == originals[index]
+            assert reader._memo_bytes <= native_git_memo._MEMO_BYTES
+            assert len(reader._memo) <= native_git_memo.MAX_TREE_ENTRIES
+
+        read(0); read(1)
+        # Refresh the hot entry before each new object; a FIFO or permanently
+        # full cache would lose it or keep rereading the new working set.
+        for index in (2, 3):
+            count = len(calls)
+            read(0)
+            assert len(calls) == count
+            read(index)
+            assert len(calls) == count + 1
+            read(index); read(0)
+            assert len(calls) == count + 1
+        count = len(calls)
+        read(1)  # The old cold entry is fetched afresh, with identical bytes.
+        assert len(calls) == count + 1
+        read(1)
+        assert len(calls) == count + 1
+    assert not reader._memo and reader._memo_bytes == 0
+
+
+@pytest.mark.parametrize("cap", ["total", "entry", "entry_overhead"])
+def test_oversized_native_result_does_not_evict_the_current_working_set(native, monkeypatch, cap):
+    model, _ = native
+    small, large = b"small immutable original", b"large original" * 1024
+    if cap == "total":
+        monkeypatch.setattr(native_git_memo, "_MEMO_BYTES", 4096)
+    elif cap == "entry":
+        large *= 8
+        assert native_git_memo._MEMO_ENTRY_BYTES < len(large) < native_git_memo._MEMO_BYTES
+    else:
+        # A body just below 64 KiB still exceeds the complete charged entry size
+        # once its immutable query, command and result overhead are included.
+        large = b"x" * (64 * 1024 - 1)
+        assert len(large) < native_git_memo._MEMO_ENTRY_BYTES < native_git_memo._MEMO_BYTES
+    objects = [model.git._run("hash-object", "-w", "--stdin", data=raw).stdout.decode().strip()
+               for raw in (small, large)]
+    calls = observe_native(monkeypatch)
+    with watch_read_scope(model.git) as reader:
+        assert reader._run("cat-file", "blob", objects[0]).stdout == small
+        retained_bytes, retained_entries = reader._memo_bytes, len(reader._memo)
+        count = len(calls)
+        for index in range(2):
+            assert reader._run("cat-file", "blob", objects[1]).stdout == large
+            assert len(calls) == count + index + 1
+            assert reader._run("cat-file", "blob", objects[0]).stdout == small
+            assert len(calls) == count + index + 1
+            assert reader._memo_bytes == retained_bytes
+            assert len(reader._memo) == retained_entries
+    assert not reader._memo and reader._memo_bytes == 0
+
+
 def test_memo_keeps_snapshot_path_filter_and_complete_history_count_distinct(native):
     model, _ = native
     path, other = "submissions/memo-history.json", "submissions/memo-other.json"

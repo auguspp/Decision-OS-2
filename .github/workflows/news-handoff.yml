@@ -1,0 +1,88 @@
+name: decision-os-news-handoff
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Deliver one completed native capture, or reconcile its original source_run without writes'
+        type: choice
+        options: [deliver, reconcile]
+        required: true
+        default: reconcile
+      code_sha:
+        description: 'Exact inspected main SHA with successful actual-main CI'
+        type: string
+        required: true
+      plan:
+        description: 'deliver: fixed source_run/artifact_id/artifact_sha256/as_of/predecessor JSON; reconcile: source_run only'
+        type: string
+        required: true
+      expected_head:
+        description: 'deliver: original inspected records SHA; reconcile: empty'
+        type: string
+        required: false
+        default: ''
+permissions: {}
+concurrency:
+  group: decision-os-news-handoff
+  cancel-in-progress: false
+jobs:
+  deliver:
+    if: >-
+      github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 && inputs.operation == 'deliver'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: dev
+      - name: Freeze and deliver through the existing conditional source writer
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_NEWS_HANDOFF_MODE: write
+        run: python -m decision_kernel.interfaces.news_handoff_cli --out "$RUNNER_TEMP/news-handoff"
+      - name: Preserve original stages including unknown write outcomes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-news-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/news-handoff/
+          if-no-files-found: warn
+          retention-days: 30
+  reconcile:
+    if: >-
+      github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 && inputs.operation == 'reconcile'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/ci-python
+        with:
+          profile: dev
+      - name: Reconcile exact original intent and independently rebuild its news page
+        env:
+          DECISION_OS_STORE_TOKEN: ${{ github.token }}
+          DOS2_NEWS_HANDOFF_MODE: read
+        run: python -m decision_kernel.interfaces.news_handoff_cli --out "$RUNNER_TEMP/news-handoff"
+      - name: Preserve read-only reconciliation result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dos2-news-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/news-handoff/
+          if-no-files-found: warn
+          retention-days: 30

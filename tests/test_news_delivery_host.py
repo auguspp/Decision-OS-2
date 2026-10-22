@@ -92,11 +92,11 @@ from dataclasses import asdict
 from pathlib import Path
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.infrastructure.git_store import GitStore
-from decision_kernel.domain.records import SourceInput,encoded
+from decision_kernel.domain.records import SourceInput,digest,encoded
 from decision_kernel.domain.research_artifacts import ArtifactInput
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.observations.news_windows import newsnow_window,combine
-from decision_kernel.application.news_rolling_index import rolling_index
+from decision_kernel.application.news_rolling_index import rolling_index,index_source,open_index,read_index
 from decision_kernel.application.news_delivery import build_edition,open_edition,page_model,entry_id
 from decision_kernel.interfaces.news_page import render_page
 store=VersionedStore(GitStore(Path(sys.argv[1])))
@@ -131,11 +131,65 @@ assert navigation['display']['clocks']['window_age']['status']=='older-than-24h'
 assert navigation['history']['total_candidates']==2 and navigation['records_write']=='not-requested'
 Path('installed-news-entry.html').write_text(render_page(entry),encoding='utf-8')
 Path('installed-news-summary.md').write_text(navigation_summary(entry),encoding='utf-8')
-print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['entries'])}))
+from io import BytesIO
+from zipfile import ZipFile,ZIP_DEFLATED
+from decision_kernel.application.news_handoff import keys,make_intent,intent_source,retained_source
+from decision_kernel.interfaces.news_custody import source_from_archive,REPOSITORY_ID
+# Reuse the retained synthetic capture; exercise native archive custody from
+# the installed wheel without importing checkout fixtures or calling a source.
+stream=BytesIO()
+with ZipFile(stream,'w',ZIP_DEFLATED) as bundle:
+    bundle.writestr('news-window.json',store.read_source(batch)['data'])
+archive=stream.getvalue()
+selected={'source_run':'8123','artifact_id':'8456','artifact_sha256':digest(archive)}
+capture_run={'id':8123,'repository':{'id':REPOSITORY_ID},'head_repository':{'id':REPOSITORY_ID},
+    'path':'.github/workflows/news-intake.yml','head_branch':'main','event':'workflow_dispatch',
+    'run_attempt':1,'status':'completed','conclusion':'success','head_sha':'a'*40}
+capture_artifact={'id':8456,'name':'dos2-news-8123-1','digest':'sha256:'+digest(archive),
+    'expired':False,'size_in_bytes':len(archive),'workflow_run':{'id':8123,'head_sha':'a'*40,
+    'repository_id':REPOSITORY_ID,'head_repository_id':REPOSITORY_ID}}
+native_source=source_from_archive(archive,capture_run,capture_artifact,selected)
+handoff_keys=keys(selected['source_run'])
+assert handoff_keys=={'intent':'news-handoff-8123-intent','batch':'news-window-8123',
+                     'window':'news-handoff-8123-window'}
+assert set(handoff_keys.values()).isdisjoint(keys('8124').values())
+handoff_plan={**selected,'as_of':'2026-10-16T12:00:00Z','predecessor':None}
+before=store.backend.head()
+intent=make_intent(handoff_plan,native_source,'a'*40,before,
+                   handoff_code_sha='b'*40,handoff_run_id='8789')
+control=intent_source(intent)
+assert 'Synthetic observation' not in control.text
+assert intent['batch_source_sha256']==digest(encoded(asdict(native_source)))
+assert (intent['source_code_sha'],intent['handoff_code_sha'],intent['handoff_run_id'])==('a'*40,'b'*40,'8789')
+intent_ref=store.put_source(handoff_keys['intent'],control,expected_head=before)
+batch_ref=store.put_source(handoff_keys['batch'],native_source,expected_head=intent_ref.manifest.commit)
+handoff_window=rolling_index(store.read_source,[batch_ref],as_of=handoff_plan['as_of'])
+window_source=index_source(handoff_window,handoff_keys['window'])
+window_ref=store.put_source(handoff_keys['window'],window_source,expected_head=batch_ref.manifest.commit)
+reopened=VersionedStore(GitStore(Path(sys.argv[1])))
+retained_head=reopened.backend.head()
+def recovery_must_only_read(*args,**kwargs):
+    raise AssertionError('fixed-submission recovery must neither write nor scan')
+reopened.backend.commit=recovery_must_only_read
+reopened.backend.paths=recovery_must_only_read
+for stage,source,ref in (('intent',control,intent_ref),('batch',native_source,batch_ref),
+                         ('window',window_source,window_ref)):
+    found=retained_source(reopened,handoff_keys[stage],source.source_id)
+    assert found['source']==source and encoded(found['reference'])==encoded(asdict(ref))
+    assert found['data']['data']==source.text
+retained_intent=retained_source(reopened,handoff_keys['intent'],handoff_keys['intent'])
+assert retained_intent['reference']['manifest']['commit']==intent_ref.manifest.commit!=retained_head
+assert intent_source(json.loads(retained_intent['data']['data']))==control
+assert retained_source(reopened,keys('8124')['intent'],keys('8124')['intent']) is None
+restored_window=open_index(reopened.read_source,window_ref)
+assert restored_window==handoff_window and read_index(reopened.read_source,restored_window)['selected_count']==1
+assert reopened.backend.head()==retained_head
+print(json.dumps({'status':'installed-news-consumer-passed','entries':len(rows['entries']),'handoff_stages':3}))
 '''
     result = subprocess.run([str(python), '-I', '-c', script, str(store)], cwd=outside,
                             env=env, check=True, capture_output=True, text=True)
-    assert json.loads(result.stdout) == {'status': 'installed-news-consumer-passed', 'entries': 1}
+    assert json.loads(result.stdout) == {'status': 'installed-news-consumer-passed', 'entries': 1,
+                                        'handoff_stages': 3}
 
     from test_brief_delivery_host import exercise_installed_research_brief
     exercise_installed_research_brief(outside, python, env, store)

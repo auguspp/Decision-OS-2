@@ -9,12 +9,14 @@ from pathlib import Path
 import sys
 
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, SourceInput, encoded, identifier, require
+from decision_kernel.domain.records import RecordError, encoded, identifier, require
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
 from decision_kernel.interfaces.research_payload import json_object, pack_payload
 from decision_kernel.interfaces.research_runtime import run_command
 from decision_kernel.application.news_rolling import MAX_BYTES, _read_verified, read_rolling, reference
-from decision_kernel.application.news_rolling_index import SCHEMA as INDEX_SCHEMA, open_index, read_index, rolling_index
+from decision_kernel.application.news_rolling_index import (
+    SCHEMA as INDEX_SCHEMA, index_source, open_index, read_index, rolling_index,
+)
 
 REPOSITORY = "auguspp/Decision-OS-2"
 WORKFLOW = REPOSITORY + "/.github/workflows/news-rolling.yml@refs/heads/main"
@@ -143,14 +145,7 @@ def build_on_host(output):
     (output / "view.json").write_bytes(encoded(value))
     (output / "reading.json").write_bytes(encoded(reading))
     if saving:
-        source = SourceInput(source_id="news-roll-" + inputs["submission_id"], kind="content",
-                             title="24小时新闻观察 / " + value["as_of"],
-                             origin="https://github.com/" + REPOSITORY + "/issues/48",
-                             text=encoded(value).decode("utf-8"), custody="provided",
-                             limitations=("DERIVED_NEWS_METADATA_NOT_ORIGINAL_ARTICLES",
-                                          "OBSERVATION_TIME_NOT_PUBLICATION_TIME",
-                                          "BOUNDED_SELECTION_NOT_COMPLETE_NEWS_COVERAGE",
-                                          "DERIVED_NEWS_INDEX_REQUIRES_RETAINED_SOURCE_VERSIONS"))
+        source = index_source(value, inputs["submission_id"])
         command = {"operation": "put-source", "code_sha": inputs["code_sha"],
                    "submission_id": inputs["submission_id"], "expected_head": inputs.get("expected_head", ""),
                    "payload": pack_payload(encoded(asdict(source)))}

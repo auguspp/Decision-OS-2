@@ -8,7 +8,7 @@ import pytest
 
 from decision_kernel.application import daily_market as daily
 from decision_kernel.application.daily_clock import (
-    CLOCK_SCHEMA, CURRENT_MAIN, EXTERNAL_CLOCK, EXTERNAL_CRON, run_title,
+    CLOCK_SCHEMA, CURRENT_MAIN, EXTERNAL_CLOCK, EXTERNAL_CRON, GITHUB_SCHEDULE, run_title,
 )
 from decision_kernel.application.ftshare_collection import restore_ftshare_collection
 from decision_kernel.application.ftshare_single import restore_single
@@ -102,12 +102,16 @@ def native_runtime(tmp_path, monkeypatch, approved, *, invocation, admitted_at, 
         env["GITHUB_EVENT_NAME"] = "schedule"
     else:
         event["inputs"]["operation"] = invocation
-    if invocation == EXTERNAL_CLOCK:
+    if invocation in {"schedule", EXTERNAL_CLOCK}:
+        # Retain the historical native schedule fixture after the reviewed
+        # checkout selects external-cron; never inherit the live policy here.
         from decision_kernel.interfaces import daily_visibility_cli as visibility
-        event["inputs"]["code_sha"] = CURRENT_MAIN
         clock_file = tmp_path / "clock.json"
-        clock_file.write_bytes(encoded({"schema": CLOCK_SCHEMA, "primary": EXTERNAL_CRON}))
+        clock_file.write_bytes(encoded({"schema": CLOCK_SCHEMA,
+            "primary": GITHUB_SCHEDULE if invocation == "schedule" else EXTERNAL_CRON}))
         monkeypatch.setattr(visibility, "CLOCK_POLICY_FILE", clock_file)
+    if invocation == EXTERNAL_CLOCK:
+        event["inputs"]["code_sha"] = CURRENT_MAIN
     env.update(RUNNER_TEMP=str(tmp_path), DECISION_OS_STORE_TOKEN="synthetic-daily-slot-only")
     config = tmp_path / "policy.json"
     config.write_bytes(encoded(approved))

@@ -124,3 +124,7 @@ GitHub 原生工作流产物可能公开。因此原 `desk` 的非空新选择�
 公开资格只复用 `runtime_publication.publication_basis`：固定当前部署授权的 sources/brief/reading 用于新闻入口，research/watch 等仍各管研究和反馈出口；撤销后回到原显式资格。来源标题允许公开不代签私人反馈或受限研究。读取结束后同 backend 复核原绑定、main 和公开授权，才释放正文、HTML及Summary；失败只留有限原因报告，不保留来源正文或半成页面。
 
 本组工程验证包括原临时 Git、原 GitHubAPI/Store/native news host、一次真实 HTTP 错误形状、权限撤销、512耗尽、固定历史和原文恢复；安装消费者仅扩现役唯一 wheel helper。此前一般新闻页的浏览器证据不自动覆盖本次新增导航。当前需要另核：获准真实原件上的正常 `latest-desk` 消费、真正新期间的捕获→保管→读回、最终桌面／移动页面操作、自然周期的连续运行。未新增在线托管、调度、通知、来源执行或 Research/Odds Book；代码和CI不代签这些产品结果。
+
+## 7. 已完成采集的单次交接
+
+[有限新闻交接与只读对账](../sources/news-handoff.md)从一个已完成且带回执的 NewsNow 原生批次，沿原 Store 与滚动窗口生成固定 cutoff 的 News Desk。该手动入口不承接 baseline／Attention，不保存 edition；原高级入口和最新保管发现继续保留，生产交付与独立恢复仍须实际验收。

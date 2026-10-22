@@ -9,7 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 import re
 
-from decision_kernel.domain.records import digest, encoded, require
+from decision_kernel.domain.records import SourceInput, digest, encoded, identifier, require
 from decision_kernel.application import news_rolling as roll
 
 SCHEMA = "dos2-news-rolling-index-v1"
@@ -88,3 +88,17 @@ def read_index(reader, value, *, source=None, query="", limit=40, cursor=None):
 
 def open_index(reader, ref):
     return verify_index(roll._load(reader, roll.reference(ref)))
+
+
+def index_source(value, submission_id):
+    """The original compact-window SourceInput, shared by both native hosts."""
+    verify_index(value)
+    identifier(submission_id)
+    return SourceInput(source_id="news-roll-" + submission_id, kind="content",
+        title="24小时新闻观察 / " + value["as_of"],
+        origin="https://github.com/auguspp/Decision-OS-2/issues/48",
+        text=encoded(value).decode("utf-8"), custody="provided",
+        limitations=("DERIVED_NEWS_METADATA_NOT_ORIGINAL_ARTICLES",
+                     "OBSERVATION_TIME_NOT_PUBLICATION_TIME",
+                     "BOUNDED_SELECTION_NOT_COMPLETE_NEWS_COVERAGE",
+                     "DERIVED_NEWS_INDEX_REQUIRES_RETAINED_SOURCE_VERSIONS"))

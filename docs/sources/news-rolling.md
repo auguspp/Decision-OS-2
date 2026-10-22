@@ -83,3 +83,7 @@ python -m decision_kernel.interfaces.news_rolling_cli read --window legacy-view.
 成功操作的`read-usage.json`仅保存核准来源读取次数、复用次数、缓存引用数/序列化字节数、实测`storage_api_requests`和绑定重检标记，不含缓存正文、凭据或新闻内容。没有原生请求计数的合成宿主用null，不冒充实测。保存未知仍沿原输入/原submission只读对账；计数或有view文件不能替代published/replayed回执。
 
 `tests/test_news_read_budget.py`用原GitHubAPI的真实512限制、原GitHubStore和真实Git支持的合成HTTP响应覆盖预算耗尽与修复、完整引用、独立副本、缓存限额、权限/绑定变化、冷读损坏和丢回执对账。此宿主优化及专属测试随新闻入口维护/退出，共享Store与独立读取保护不删除。生产同输入保存/独立恢复仍以原生运行分别验收。
+
+## 已完成采集的单次交接
+
+[有限新闻交接与只读对账](news-handoff.md)提供手动 `deliver/reconcile`，将一个已完成且带回执的 NewsNow 原生批次沿原保管、共享窗口工厂与独立读取交给 News Desk。它固定原 cutoff 和完整前驱，不改变本入口，也不新增采集或定时；真实生产验收另列于该合同。

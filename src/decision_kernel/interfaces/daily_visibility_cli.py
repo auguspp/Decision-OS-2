@@ -97,7 +97,7 @@ def preflight(event, env, api, *, use_authorization=False, clock=None):
         and run.get("head_sha") == selected["code_sha"] and run.get("head_branch") == "main"
         and run.get("event") == selected["event"] and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
-        and run.get("name") == WORKFLOW_NAME and run.get("status") == "in_progress"
+        and run.get("name") == run_title(selected["invocation"]) and run.get("status") == "in_progress"
         and (selected["invocation"] not in {EXTERNAL_CLOCK, CLOCK_PROBE}
              or run.get("display_title") == run_title(selected["invocation"]))
         and all(isinstance(run.get(key), dict) and type(run[key].get("id")) is int

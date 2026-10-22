@@ -29,7 +29,7 @@ class NativeAPI:
             "private": private, "archived": False, "default_branch": "main"}
         self.run = {"id": 8001, "head_sha": SHA, "head_branch": "main", "run_attempt": 1,
             "event": "schedule" if scheduled else "workflow_dispatch", "path": cli.WORKFLOW,
-            "name": cli.WORKFLOW_NAME, "status": "in_progress",
+            "name": cli.WORKFLOW_NAME, "display_title": cli.WORKFLOW_NAME, "status": "in_progress",
             "repository": {"id": cli.REPOSITORY_ID}, "head_repository": {"id": cli.REPOSITORY_ID},
             "created_at": "2026-10-19T12:10:00+00:00"}
         self.main = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": SHA}}

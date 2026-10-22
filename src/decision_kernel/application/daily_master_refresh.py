@@ -43,7 +43,8 @@ def policy(value):
 
 
 def _cycle(cycle):
-    require(isinstance(cycle, dict) and cycle.get("schema") == "daily-market-cycle-v4"
+    from decision_kernel.application.daily_market import MASTER_SCHEMAS
+    require(isinstance(cycle, dict) and cycle.get("schema") in MASTER_SCHEMAS
         and isinstance(cycle.get("date"), str) and re.fullmatch(r"[0-9]{8}", cycle["date"]),
         "DAILY_MASTER_CYCLE")
     policy(cycle.get("master_refresh"))

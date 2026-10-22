@@ -354,3 +354,17 @@ def test_workflow_probe_is_a_separate_read_only_job_with_exact_native_markers():
     artifact = next(step["with"]["name"] for step in probe["steps"]
         if step.get("uses", "").startswith("actions/upload-artifact@"))
     assert artifact == "dos2-daily-clock-${{ github.run_id }}-${{ github.run_attempt }}"
+
+
+def test_checked_in_clock_cutover_requires_external_dispatch_and_rejects_old_schedule():
+    root = Path(__file__).resolve().parents[1]
+    selected = clock.clock_policy(json.loads((root / clock.CLOCK_PATH).read_text()))
+    assert selected == {"schema": clock.CLOCK_SCHEMA, "primary": clock.EXTERNAL_CRON}
+    workflow = yaml.load((root / cli.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
+    assert set(workflow["on"]) == {"workflow_dispatch"}
+    options = workflow["on"]["workflow_dispatch"]["inputs"]["operation"]["options"]
+    assert options.count(clock.EXTERNAL_CLOCK) == options.count(clock.CLOCK_PROBE) == 1
+    with pytest.raises(RecordError, match="DAILY_CLOCK_NOT_PRIMARY"):
+        clock.admit_clock("schedule", selected)
+    assert clock.admit_clock(clock.EXTERNAL_CLOCK, selected) == clock.EXTERNAL_CRON
+    assert clock.admit_clock(clock.CLOCK_PROBE, selected) == clock.EXTERNAL_CRON

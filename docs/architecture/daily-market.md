@@ -10,7 +10,7 @@
 
 可信 [daily-market.json](../../config/daily-market.json) 声明六只已有真实历史样本：`000001.SZ`、`002384.SZ`、`002714.SZ`、`300750.SZ`、`600000.SH`、`688981.SH`。原完整主表的 5226 只分母留在旧版本；新完整主表采用时由实际 scope 重建分母，隔离项和未覆盖证券继续计数。六只日常更新不能代签全市场完成。
 
-[daily-market.yml](../../.github/workflows/daily-market.yml) 默认使用 GitHub 原生 `schedule`：`35 10 * * 1-5`，即北京时间工作日 18:35 一次。独立 [daily-market-clock.json](../../config/daily-market-clock.json) 选择唯一主时钟；外部固定入口、零业务 probe 及实际切换按[外部日更时钟合同](../engineering/external-daily-clock.md)执行，未核服务商配置前继续原 GitHub 时钟。换钟不改变本文件的 source policy、周期或预算。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
+[daily-market.yml](../../.github/workflows/daily-market.yml) 的初始 GitHub 原生 `schedule` 是 UTC `35 10 * * 1-5`（北京时间工作日18:35），这是保留在业务policy与原生历史中的原定时槽，并非外部时钟的请求值。正式切换时同一 PR 将 [daily-market-clock.json](../../config/daily-market-clock.json) 选择为 `external-cron`，并从 workflow 中移除 `on.schedule`，仅保留 `workflow_dispatch`；已有历史 `schedule` 记录和运行解析继续可读。外部固定入口、零业务 probe、服务商禁用状态读回、单主时钟交接及自然运行的独立验收按[外部日更时钟合同](../engineering/external-daily-clock.md)执行；代码配置不代表服务商任务已经启用或日更准时完成。换钟不改变本文件的 source policy、周期或预算。普通手动 `update` 保留原生运行创建当日本地 18:35 门槛；提前调用只生成 `not-due / DAILY_MARKET_BEFORE_CLOSE` 读取回执，不取日历、不取价格、不写入日更意图或消耗当日来源额度。当前日的合格价格还须满足原采集与读取时钟合同，不能让提前取得的正文在收盘后自动获得新资格。
 
 每个业务日期至多建立一个正常日更周期，一次调用最多推进一个既存或新周期。日历与价格原预算仍为 **2 个实际交易日历请求 + 12 个 FTShare 单股整段请求**；新 v4 周期另有两所完整主表查询，各最多20页、每页500行及原4次尝试/180秒等待，最多40页/160次实际主表HTTP，不能把两次完整查询写成只有两次HTTP。两所 `trade_cal` 返回全部开闭市日，按实际完整日历决定最后已完成交易日，不凭星期推定开市。休市且没有新增交易日时只保留实际日历与原市场引用，不重抓主表或价格。新开市日使用最长119自然日整段窗口；是否足够5/20/60交易日比较由实际会话及价格点判定，119天不是保证，缺点继续显示partial。
 

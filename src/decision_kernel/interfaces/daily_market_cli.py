@@ -177,7 +177,7 @@ def native_ready(api, selected, *, metadata_only=False):
         and run.get("head_sha") == selected["code_sha"] and run.get("head_branch") == "main"
         and run.get("event") == selected["event"] and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
-        and run.get("name") == TITLE and run.get("status") == "in_progress"
+        and run.get("name") == run_title(selected.get("invocation")) and run.get("status") == "in_progress"
         and (selected.get("invocation") not in {EXTERNAL_CLOCK, CLOCK_PROBE}
              or run.get("display_title") == run_title(selected["invocation"]))
         and run.get("repository", {}).get("id") == 1420041744

@@ -20,7 +20,7 @@ ORDINARY_PAGE = '/actions/workflows/daily-market.yml/runs?branch=main&per_page=2
 def external(ident=951, *, at='2026-10-21T10:36:00Z', conclusion='success',
              status='completed', attempt=1, probe=False):
     value = run(4, 'daily-market.yml', ident, conclusion, stamp=at, status=status, attempt=attempt)
-    value['display_title'] = PROBE_RUN_TITLE if probe else EXTERNAL_RUN_TITLE
+    value['name'] = value['display_title'] = PROBE_RUN_TITLE if probe else EXTERNAL_RUN_TITLE
     return value
 
 

@@ -8,7 +8,7 @@ import pytest
 
 from decision_kernel.application import daily_market as daily
 from decision_kernel.application.daily_clock import (
-    CLOCK_SCHEMA, CURRENT_MAIN, EXTERNAL_CLOCK, EXTERNAL_CRON, EXTERNAL_RUN_TITLE,
+    CLOCK_SCHEMA, CURRENT_MAIN, EXTERNAL_CLOCK, EXTERNAL_CRON, run_title,
 )
 from decision_kernel.application.ftshare_collection import restore_ftshare_collection
 from decision_kernel.application.ftshare_single import restore_single
@@ -121,9 +121,8 @@ def native_runtime(tmp_path, monkeypatch, approved, *, invocation, admitted_at, 
 
     monkeypatch.setattr(cli, "datetime", ActualClock)
     api = NativeAPI()
-    api.run.update(path=cli.WORKFLOW, name=cli.TITLE, event=env["GITHUB_EVENT_NAME"], created_at=admitted_at)
-    if invocation == EXTERNAL_CLOCK:
-        api.run["display_title"] = EXTERNAL_RUN_TITLE
+    api.run.update(path=cli.WORKFLOW, name=run_title(invocation), display_title=run_title(invocation),
+        event=env["GITHUB_EVENT_NAME"], created_at=admitted_at)
     api.ci.update(total_count=1)
     api.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
         repository={"id": 1420041744}, head_repository={"id": 1420041744})

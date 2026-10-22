@@ -24,6 +24,8 @@
 
 `workflow_dispatch` 和固定 run-name 只标识选择了哪个入口。持有相应 GitHub 权限的人也能手动调用它，因此 `external-clock` **不是 cron-job.org 来源认证**。自然外部触发必须另核同一服务商 job 的计划/执行时间、请求结果与确切 GitHub run；无法唯一对应时保留未知。
 
+原生 run 的 `name` 与 `display_title` 均使用该入口的 run-name；例如 probe 的两项均为 `decision-os-daily-market / clock-probe`。visibility 与实际宿主按现有 `run_title(invocation)` 映射核验 `name`，两种新入口另核 `display_title`；不能把另一操作标题或工作流静态名称当作本次入口身份。[首次 probe 39698075722/1](https://github.com/auguspp/Decision-OS-2/actions/runs/39698075722) 因错误要求静态名称而在 visibility 拒绝，原失败保留；修正字段核验不改变当前 main、CI、权限或零业务约束。
+
 ## cron-job.org 可填写配置
 
 复用旧 Kernel 已采用的服务，但创建/核对本仓独立任务，不能覆盖或停用旧 Sector/Inbox 任务。先按标题和完整 URL 查重，恢复原 job ID 及未确认请求；任务保持 **Inactive**。

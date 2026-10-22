@@ -32,7 +32,7 @@ def probe_native(tmp_path, monkeypatch):
     event, env, api = native_runtime(tmp_path, monkeypatch, approved,
         invocation=clock.CLOCK_PROBE, admitted_at=NOW, actual_at=NOW)
     event["inputs"]["code_sha"] = clock.CURRENT_MAIN
-    api.run["display_title"] = clock.PROBE_RUN_TITLE
+    api.run.update(name=clock.PROBE_RUN_TITLE, display_title=clock.PROBE_RUN_TITLE)
     api.main.update(ref="refs/heads/main")
     api.main["object"]["type"] = "commit"
     return event, env, api
@@ -66,7 +66,7 @@ def test_queued_clock_cannot_publish_admission_after_main_or_ci_changes(
     if invocation == clock.EXTERNAL_CLOCK:
         event["inputs"]["code_sha"] = clock.CURRENT_MAIN
     api = VisibilityAPI(private=True, scheduled=invocation == "schedule")
-    api.run["display_title"] = clock.run_title(invocation)
+    api.run.update(name=clock.run_title(invocation), display_title=clock.run_title(invocation))
     if fault == "old-checkout":
         api.main["object"]["sha"] = "b" * 40
     else:
@@ -106,7 +106,7 @@ def test_probe_preflight_never_admits_a_business_job(tmp_path, monkeypatch, prim
     event, env = context(clock.CLOCK_PROBE)
     event["inputs"]["code_sha"] = clock.CURRENT_MAIN
     api = VisibilityAPI(private=private)
-    api.run["display_title"] = clock.PROBE_RUN_TITLE
+    api.run.update(name=clock.PROBE_RUN_TITLE, display_title=clock.PROBE_RUN_TITLE)
     monkeypatch.setattr(visibility, "native_publication_basis",
         lambda *a, **k: pytest.fail("Metadata has no business-publication prerequisite."))
     report, code = visibility.preflight(event, env, api, use_authorization=True, clock=approved)
@@ -115,6 +115,21 @@ def test_probe_preflight_never_admits_a_business_job(tmp_path, monkeypatch, prim
     assert report["source_requests"] == 0 and report["records_read"] is report["records_written"] is False
     assert report["clock_primary"] == primary and report["external_origin_verified"] is False
     assert len(api.calls) == 3
+
+
+@pytest.mark.parametrize("invocation", [clock.CLOCK_PROBE, clock.EXTERNAL_CLOCK])
+@pytest.mark.parametrize("field", ["name", "display_title"])
+def test_clock_preflight_rejects_a_title_from_the_other_operation(tmp_path, monkeypatch, invocation, field):
+    approved = configured(tmp_path, monkeypatch, clock.EXTERNAL_CRON)
+    event, env = context(invocation)
+    event["inputs"]["code_sha"] = clock.CURRENT_MAIN
+    api = VisibilityAPI()
+    api.run.update(name=clock.run_title(invocation), display_title=clock.run_title(invocation))
+    other = clock.EXTERNAL_CLOCK if invocation == clock.CLOCK_PROBE else clock.CLOCK_PROBE
+    api.run[field] = clock.run_title(other)
+    with pytest.raises(RecordError, match="DAILY_VISIBILITY_NATIVE_RUN"):
+        visibility.preflight(event, env, api, use_authorization=True, clock=approved)
+    assert len(api.calls) == 2
 
 
 @pytest.mark.parametrize("primary", [clock.GITHUB_SCHEDULE, clock.EXTERNAL_CRON])
@@ -146,7 +161,7 @@ def test_probe_uses_only_native_metadata_even_without_business_grant(tmp_path, m
 
 
 @pytest.mark.parametrize("fault", ["main-moved", "wrong-ref", "wrong-object-type", "ci-failed",
-                                    "title-mismatch", "changes-before-output"])
+                                    "name-mismatch", "legacy-name", "title-mismatch", "changes-before-output"])
 def test_probe_cannot_release_stale_native_identity(tmp_path, monkeypatch, fault):
     configured(tmp_path, monkeypatch)
     event, env, api = probe_native(tmp_path, monkeypatch)
@@ -158,6 +173,10 @@ def test_probe_cannot_release_stale_native_identity(tmp_path, monkeypatch, fault
         api.main["object"]["type"] = "tag"
     elif fault == "ci-failed":
         api.ci["workflow_runs"][0]["conclusion"] = "failure"
+    elif fault == "name-mismatch":
+        api.run["name"] = clock.EXTERNAL_RUN_TITLE
+    elif fault == "legacy-name":
+        api.run["name"] = clock.RUN_TITLE
     elif fault == "title-mismatch":
         api.run["display_title"] = clock.EXTERNAL_RUN_TITLE
     else:
@@ -168,7 +187,8 @@ def test_probe_cannot_release_stale_native_identity(tmp_path, monkeypatch, fault
             return original(method, path, payload)
         monkeypatch.setattr(api, "request", moved)
     out = tmp_path / "invalid"
-    with pytest.raises(RecordError):
+    with pytest.raises(RecordError, match="DAILY_MARKET_NATIVE_RUN"
+            if fault in {"name-mismatch", "legacy-name", "title-mismatch"} else None):
         cli.run_clock_probe(event, env, out, api=api)
     assert not out.exists()
 
@@ -297,7 +317,7 @@ def test_external_public_route_and_release_use_existing_revocable_authority(tmp_
     event, env = context(clock.EXTERNAL_CLOCK)
     event["inputs"]["code_sha"] = clock.CURRENT_MAIN
     api = VisibilityAPI()
-    api.run["display_title"] = clock.EXTERNAL_RUN_TITLE
+    api.run.update(name=clock.EXTERNAL_RUN_TITLE, display_title=clock.EXTERNAL_RUN_TITLE)
     report, code = visibility.preflight(event, env, api, use_authorization=True, clock=approved_clock)
     assert code == 0 and report["operation"] == "update" and report["invocation"] == clock.EXTERNAL_CLOCK
     assert report["runtime_authorized"] is report["admitted"] is True

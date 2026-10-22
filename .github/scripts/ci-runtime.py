@@ -237,15 +237,24 @@ def reuse(out):
 
 
 def pytest_run(out, label, args, *, collect=False):
-    argv = [sys.executable, "-m", "pytest", "-c", "pyproject.toml", "-q", *args]
+    argv = [sys.executable, "-m", "pytest", "-c", "pyproject.toml", "-q" if collect else "-vv", *args]
     # Keep fatal fault handlers without the asynchronous timed traceback dump.
     argv += ["--collect-only"] if collect else [f"--junitxml={out / (label + '.xml')}", "-o", "faulthandler_timeout=0"]
     env = dict(os.environ)
     env.pop("GH_TOKEN", None)
     env.pop("GITHUB_TOKEN", None)
-    with (out / (label + ".log")).open("wb") as log:
-        result = subprocess.run(argv, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=300)
-    text = (out / (label + ".log")).read_text()
+    log_path = out / (label + ".log")
+    try:
+        with log_path.open("wb") as log:
+            result = subprocess.run(argv, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=300)
+    except subprocess.TimeoutExpired:
+        # Partial diagnostics must not replace the original timeout failure.
+        try:
+            print(log_path.read_text(errors="replace"), end="", flush=True)
+        except Exception:
+            pass
+        raise
+    text = log_path.read_text()
     print(text, end="")
     require(result.returncode in (0, 5), "PYTEST_FAILED")
     return result.returncode, text
@@ -332,7 +341,7 @@ def execute(out, group):
     selected = E["nodes"](text)
     require(code == (0 if selected else 5), "COLLECTION_EXIT")
     (out / "collection.txt").write_text("\n".join(selected) + ("\n" if selected else ""))
-    test_args = args + (["-n", "auto", "--maxprocesses=4", "--dist=loadfile", "--no-loadscope-reorder", "--max-worker-restart=0", "-v"] if group != "contracts" and selected else [])
+    test_args = args + (["-n", "auto", "--maxprocesses=4", "--dist=loadfile", "--no-loadscope-reorder", "--max-worker-restart=0"] if group != "contracts" and selected else [])
     code, _ = pytest_run(out, "junit", test_args)
     count = E["passed_tests"](selected, (out / "junit.xml").read_bytes())
     require(code == (0 if selected else 5), "TEST_EXIT")

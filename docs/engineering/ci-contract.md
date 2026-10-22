@@ -40,6 +40,8 @@ Merge Commit本身不保证同tree；base移动或环境不同就按真实条件
 
 CI不持有业务源/私人研究凭据；读取Git元数据/产物的token不传给业务测试或来源文本，不执行下载包中的任意代码。正式失败保留原日志和原产物；若真实基础设施故障需重执行，明确原因与新attempt，不能仅为绿灯循环rerun。
 
+测试collection保持quiet输出供确切node解析；正式执行使用pytest原生详细输出记录测试node与结果，xdist完成行同时标明worker，不承诺未完成node的完整worker时序。子进程超时后保留已经写入的原日志并尽力回显，仍抛出原`TimeoutExpired`，诊断读取或输出失败不能替换该失败。进度日志不替代collection、JUnit和result的完整验收；300秒子进程限时、worker、分片、环境和门禁条件不因诊断输出改变。
+
 <a id="inheritance"></a>
 ## 4. 移植检查只围绕真实依赖
 

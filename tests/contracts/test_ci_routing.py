@@ -319,6 +319,83 @@ def test_pytest_child_has_no_read_token(runtime, monkeypatch, tmp_path):
 
 
 @pytest.fixture
+def pytest_child(runtime, monkeypatch, tmp_path):
+    """Run only synthetic tests with pytest's built-in plugins, including in the small CI environment."""
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (tmp_path / "tests").mkdir()
+    test_file = tmp_path / "tests/test_progress.py"
+    test_file.write_text("def test_first():\n    pass\n\ndef test_second():\n    pass\n")
+    out = tmp_path / "output"
+    out.mkdir()
+    monkeypatch.setattr(runtime, "ROOT", tmp_path)
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "")
+    return out, test_file
+
+
+def test_pytest_child_keeps_exact_collection_and_reports_node_results(runtime, pytest_child, capsys):
+    out, _ = pytest_child
+    selected = ["tests/test_progress.py::test_first", "tests/test_progress.py::test_second"]
+    code, collection = runtime.pytest_run(out, "collection", ["--color=no"], collect=True)
+    assert code == 0 and runtime.E["nodes"](collection) == selected
+    assert capsys.readouterr().out == collection
+
+    code, text = runtime.pytest_run(out, "progress", ["--color=no"])
+    assert code == 0
+    for node in selected:
+        assert node + " PASSED" in text
+    assert capsys.readouterr().out == text == (out / "progress.log").read_text()
+    assert runtime.E["passed_tests"](selected, (out / "progress.xml").read_bytes()) == 2
+
+
+def test_pytest_timeout_echoes_partial_log_and_preserves_original_exception(
+        runtime, pytest_child, monkeypatch, capsys):
+    out, test_file = pytest_child
+    test_file.write_text(
+        "import os\nimport time\n\ndef test_first():\n    pass\n\n"
+        "def test_second():\n    os.write(1, b'partial output: \\xff\\n')\n    time.sleep(30)\n")
+    original_run = subprocess.run
+    timeouts = []
+
+    def bounded_child(argv, **kw):
+        assert kw["timeout"] == 300
+        # Bound this synthetic sleeper; the production subprocess limit stays unchanged.
+        kw["timeout"] = 5
+        try:
+            return original_run(argv, **kw)
+        except subprocess.TimeoutExpired as exc:
+            timeouts.append(exc)
+            raise
+
+    monkeypatch.setattr(runtime.subprocess, "run", bounded_child)
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        runtime.pytest_run(out, "timeout", ["-s", "--color=no"])
+    assert raised.value is timeouts[0]
+    raw = (out / "timeout.log").read_bytes()
+    assert capsys.readouterr().out == raw.decode(errors="replace")
+    assert b"tests/test_progress.py::test_first PASSED" in raw
+    assert b"tests/test_progress.py::test_second" in raw and b"partial output: \xff" in raw
+
+
+def test_pytest_timeout_is_not_replaced_by_log_echo_failure(runtime, monkeypatch, tmp_path):
+    timeout = subprocess.TimeoutExpired([sys.executable, "-m", "pytest"], 300)
+
+    def fail(argv, **kw):
+        kw["stdout"].write(b"synthetic progress\n")
+        raise timeout
+
+    def broken_stdout(*args, **kw):
+        raise BrokenPipeError("synthetic output failure")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fail)
+    monkeypatch.setattr(runtime, "print", broken_stdout, raising=False)
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        runtime.pytest_run(tmp_path, "timeout", [])
+    assert raised.value is timeout
+    assert (tmp_path / "timeout.log").read_bytes() == b"synthetic progress\n"
+
+
+@pytest.fixture
 def gate_case(runtime, evidence, bundle, monkeypatch):
     """Exercise the real gate/ZIP verifier, replacing only native I/O."""
     plan = bundle["plan"]

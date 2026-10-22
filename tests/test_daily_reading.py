@@ -210,10 +210,11 @@ def test_native_workflow_wires_reading_with_only_job_token_before_gated_release(
     workflow = yaml.load((Path(__file__).resolve().parents[1] / ".github/workflows/daily-market.yml").read_text(),
                          Loader=yaml.BaseLoader)
     daily_gate = workflow["jobs"]["daily"]["if"]
-    assert workflow["on"].get("schedule")
+    assert set(workflow["on"]) == {"workflow_dispatch"}
     assert re.search(r"github\.event_name\s*==\s*(['\"])schedule\1", daily_gate)
-    # Schedule events do not supply the dispatch payload's repository metadata;
-    # native_ready checks current private visibility inside the actual host.
+    # Retain the historical schedule branch in the original job admission gate
+    # without scheduling new native ticks; callers do not supply authoritative
+    # repository visibility, which the native host still checks.
     assert "github.event.repository.private" not in daily_gate
     for name in ("status", "daily"):
         job = workflow["jobs"][name]

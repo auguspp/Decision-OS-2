@@ -80,7 +80,7 @@ def _load(path: Path) -> dict:
     return value
 
 
-def execute(args: argparse.Namespace) -> int:
+def execute(args: argparse.Namespace, *, ancestry=None) -> int:
     try:
         if args.store_command == "init-synthetic":
             if args.binding is not None:
@@ -95,14 +95,14 @@ def execute(args: argparse.Namespace) -> int:
                 binding = GitHubBinding.from_dict(_load(args.binding))
                 if args.store_command in ("put-source", "submit-revision", "checkpoint-research", *delivery_commands.WRITE_COMMANDS, *odds_commands.WRITE_COMMANDS, *decision_preparation_commands.WRITES) and not binding.write_enabled:
                     raise RecordError("REMOTE_READ_ONLY")
-                backend = GitHubStore(binding, GitHubAPI.from_environment())
+                backend = GitHubStore(binding, GitHubAPI.from_environment(), ancestry=ancestry)
             store = VersionedStore(backend)
             if args.store_command in delivery_commands.COMMANDS + odds_commands.COMMANDS + decision_preparation_commands.COMMANDS:
                 def fresh_reader():
                     if args.binding is not None and args.store_command in decision_preparation_commands.COMMANDS:
                         return decision_preparation_commands.private_reader(binding, backend.api)
                     return VersionedStore(GitStore(args.path) if args.binding is None else
-                        GitHubStore(replace(binding, write_enabled=False), backend.api))
+                        GitHubStore(replace(binding, write_enabled=False), backend.api, ancestry=ancestry))
                 handler = (decision_preparation_commands if args.store_command in decision_preparation_commands.COMMANDS else
                            odds_commands if args.store_command in odds_commands.COMMANDS else delivery_commands)
                 if handler is decision_preparation_commands and args.binding is not None:

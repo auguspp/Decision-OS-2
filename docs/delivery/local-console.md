@@ -49,9 +49,13 @@
             "anchor": "06588c36…", "store_id": "decision-os-runtime", "visibility": "public"},
   "identity": {"token": "read-only-required", "write": "not-requested",
                "authority": "local-read-only-console"},
+  "ancestry": {"schema": "local-git-ancestry-v1", "mirror": "local-git-graph",
+               "answered": 1, "declined": 0},
   "started_at": "…", "finished_at": "…", "duration_ms": 820, "exit_code": 0
 }
 ```
+
+`ancestry` 只记计数，不记提交 id：`answered` 是本地对象图答上的次数，`declined` 是它拒绝、改由 `compare` 回答的次数，`mirror` 为 `absent` 表示没开本地图。**`declined > 0` 就是「镜像落后了，去 fetch」的信号**，不是错误。
 
 回执说明的是**这次读的身份**，不是「已验证」。它不能替代 Ready/Gate 原件，也不能替任何研究提交或 Human Decision 签字。
 
@@ -60,19 +64,24 @@
 ```bash
 export DECISION_OS_READ_TOKEN=<fine-grained PAT, Contents: Read-only>
 
-python -m decision_kernel.interfaces.local_read \
-  --binding config/store-binding.json research-catalogue --limit 4
+# Mirror first, or the read pays for a remote comparison anyway (see below).
+git fetch origin records:refs/remotes/origin/records
 
 python -m decision_kernel.interfaces.local_read \
-  --binding config/store-binding.json research-room \
+  --binding config/store-binding.json --git-mirror . research-catalogue --limit 4
+
+python -m decision_kernel.interfaces.local_read \
+  --binding config/store-binding.json --git-mirror . research-room \
   --plan '{"components":["overview","research-book","odds-book"]}' --out room
 ```
 
+`--git-mirror` 也可由 `DECISION_OS_GIT_MIRROR` 提供。**不给就完全按旧行为**：每一次祖先证明都走 `compare`。
+
 令牌要求：**只读**。公开仓理论上可匿名读，但匿名会撞跑 API 限额且无法区分调用者，所以仍要求一个只读令牌，而不是复用运行时令牌。`DECISION_OS_STORE_TOKEN` 是运行时唯一 writer 用的名字，本地一律拒绝。
 
-## 实测：闸都过了，卡在证据链的第一跳
+## 证据链第一跳：把「数提交」换成「验哈希链」
 
-2026-10-23 在作者工作站（中国网络、无代理直连 api.github.com）实跑 `research-catalogue --limit 1`，三次请求的实测结果：
+2026-10-23 在作者工作站（中国网络、无代理直连 api.github.com）实跑 `research-catalogue --limit 1`，最初卡在这里：
 
 | 请求 | 耗时 | 结果 |
 |---|---:|---|
@@ -80,15 +89,31 @@ python -m decision_kernel.interfaces.local_read \
 | `GET /repos/auguspp/Decision-OS-2/git/ref/heads/records` | 0.7 s | OK，362 B |
 | `GET /repos/auguspp/Decision-OS-2/compare/06588c36…87e9c38d?per_page=1` | 47.5 s | **REMOTE_RESPONSE_UNAVAILABLE** |
 
-六道闸全部通过、回执正常写出（`duration_ms=70986`、`exit_code=2`），失败点是 `GitHubStore.head()` 里的**祖先证明**：binding 的 `anchor` 是建仓提交 `06588c36`，与当前 `records` head 相隔数千个提交，`compare` 要计算整段差异；在本机链路上超过 `urlopen(timeout=30)` 后连接被丢弃。runner 在 us-east 到 GitHub 往返只有几十毫秒，所以同一个调用从来没在 CI/生产里暴露过。
+失败点是 `GitHubStore.head()` 的**祖先证明**：binding 的 `anchor` 是 `06588c36`，与当前 `records` head 相隔 **1127 个提交**，`compare` 要计算整段差异；在本机链路上超过 `urlopen(timeout=30)` 后连接被丢弃。runner 在 us-east 到 GitHub 往返只有几十毫秒，所以同一个调用从来没在 CI/生产里暴露过。
 
-这不是代码缺陷，也不能靠「放宽 30 秒」解决——`compare` 的成本随 anchor 到 head 的距离线性增长，而把 anchor 前移会削弱「这条记录仍属于同一 store」的证明。三条可选出路，都还没做：
+**根因是问法，不是超时。** `compare` 枚举 anchor 与 head 之间的每一个提交，成本随距离线性增长；而「anchor 是不是 head 的祖先」这个问题的答案**已经写在 head 自己身上**——提交 id 是对内容（含父指针）的哈希。所以只要手上有一个包含该 id 的对象图，就不必请 GitHub 去数那 1127 个提交。
 
-1. **本地克隆 records 并用 `git merge-base --is-ancestor` 证明祖先**（离线、毫秒级），代价是读取对象改成「本地副本 + 显式 head 对账」，必须先解决陈旧读。
-2. 保持 API 读，但把 anchor 的祖先证明缓存成本地一次性的 `--ancestry-receipt`，之后按 head 前进增量重证。
-3. 承认本地读只在链路够快时可用，其余场景继续走 runner。
+`--git-mirror` 就是这张图。实测对照：
 
-在 1 或 2 落地前，本控制台的定位是**契约先行**：白名单、六道闸、回执这三件事与网络无关，任何宿主现在就可以按它对接；能不能在本机真的读出数据，取决于上面这一跳。
+| 路径 | 耗时 | 说明 |
+|---|---:|---|
+| `GET /compare/…?per_page=1`（同一链路上两次） | 7 s / 17 s | 曾达 47.5 s；`ahead_by=1127`，`per_page=1` 限不住服务端计算 |
+| `git merge-base --is-ancestor`（本地） | **0.67–1.14 s** | 稳定，与历史长度无关的常数级外挂成本 |
+
+它不是新的信任根，只有三条边界（`src/decision_kernel/infrastructure/git_ancestry.py` 头部写全）：
+
+1. **只回答远端已经返回的提交 id。** 调用方仍然先取 live ref，所以 head 一动问题就换。
+2. **答不上来就拒绝，永不猜。** 对象缺失 → `AncestryUnavailable(LOCAL_ANCESTRY_OBJECT_MISSING)`，随即**回落到 `compare`**。把「镜像过期」误判成「不是祖先」会凭空指控 store 被改写，这是唯一不能犯的错。
+3. **不校验自己的对象库。** 改写 `.git/objects` 里某个对象的父指针而保持 id 不变，与改写本模块源码一样，都假设执行机器可信。
+
+判决与错误码与远端**完全一致**（`COMMIT_OUTSIDE_BINDING`），调用方无法从行为上分辨哪条路回答；只有回执记这件事。
+
+### 镜像必须与 head 同代，否则等于没开
+
+2026-10-23 22:51 的实跑回执：`answered=1, declined=2, exit_code=0`。当天的 `records` head 正被日更写入推着走（`87e9c38d` → `cf889c0a`），本地镜像停在旧 head，于是两次祖先证明本地答不上来、回落 `compare`，整次读花 **163 s** 才拿到结果——拿到了，但慢在回落。
+
+所以正确用法是**先 `git fetch` 再读**（本仓 `records` 全量 13216 个对象、8.6 MB，实测 5 s）。不回落的读是亚秒级；回落的读仍然能出结果，只是把 47.5 秒的风险又请回来了。
+
 
 ## 稳定边界：为什么工作台可以直接调它
 

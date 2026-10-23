@@ -16,6 +16,7 @@ import sys
 import time
 
 from decision_kernel.domain.records import MAX_BYTES, RecordError, require
+from decision_kernel.infrastructure.git_ancestry import SCHEMA as ANCESTRY_SCHEMA, LocalGitAncestry
 from decision_kernel.infrastructure.github_store import GitHubBinding
 from decision_kernel.interfaces import (
     auction_commands, auction_next_session_commands, close_structure_commands, delivery_commands,
@@ -24,6 +25,7 @@ from decision_kernel.interfaces import (
 
 READ_TOKEN = "DECISION_OS_READ_TOKEN"
 STORE_TOKEN = "DECISION_OS_STORE_TOKEN"
+MIRROR = "DECISION_OS_GIT_MIRROR"
 SCHEMA = "local-read-receipt-v1"
 
 # Commands a workbench may run on a laptop. Writes and reconciliations are absent on
@@ -63,14 +65,53 @@ def check(operation: str, binding_path: Path | None, environ) -> GitHubBinding:
     return binding
 
 
+def _split_mirror(argv: list) -> tuple[list, str | None]:
+    """Remove the mirror flag before the reused store parser claims the rest.
+
+    The store parser owns the command surface, so a flag it does not know would
+    be rejected. Pulling one flag out here keeps that surface unchanged.
+    """
+    rest, mirror, index = [], None, 0
+    while index < len(argv):
+        item = argv[index]
+        if item == "--git-mirror":
+            require(index + 1 < len(argv), "LOCAL_READ_GIT_MIRROR_REQUIRES_A_PATH")
+            mirror, index = argv[index + 1], index + 2
+            continue
+        if item.startswith("--git-mirror="):
+            mirror, index = item.split("=", 1)[1], index + 1
+            continue
+        rest.append(item)
+        index += 1
+    return rest, mirror
+
+
+def mirror(flag: str | None, environ) -> LocalGitAncestry | None:
+    """An optional local object graph, used only to answer ancestry questions.
+
+    Absent is the normal state and changes nothing. Present is an accelerator: the
+    graph never decides reachability on its own, and a question it cannot answer
+    falls back to the remote comparison inside the store.
+    """
+    path = flag or environ.get(MIRROR) or None
+    if not path:
+        return None
+    ancestry = LocalGitAncestry(path)
+    require(ancestry.available(), "LOCAL_READ_GIT_MIRROR_NOT_A_REPOSITORY")
+    return ancestry
+
+
 def receipt(operation: str, binding: GitHubBinding, *, started: str, finished: str,
-            duration_ms: int, code: int) -> dict:
+            duration_ms: int, code: int, ancestry=None) -> dict:
     return {"schema": SCHEMA, "operation": operation, "runner": "local",
             "store": {"repository": binding.repository, "branch": binding.branch,
                       "anchor": binding.anchor, "store_id": binding.store_id,
                       "visibility": binding.visibility},
             "identity": {"token": "read-only-required", "write": "not-requested",
                          "authority": "local-read-only-console"},
+            "ancestry": {**(ancestry.stats() if ancestry is not None else
+                           {"schema": ANCESTRY_SCHEMA, "answered": 0, "declined": 0}),
+                         "mirror": "local-git-graph" if ancestry is not None else "absent"},
             "started_at": started, "finished_at": finished,
             "duration_ms": duration_ms, "exit_code": code}
 
@@ -86,14 +127,21 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list | None = None) -> int:
     parser = _parser()
+    try:
+        rest, flag = _split_mirror(list(sys.argv[1:] if argv is None else argv))
+    except RecordError:
+        print('{"error":"LOCAL_READ_GIT_MIRROR_REQUIRES_A_PATH"}', file=sys.stderr)
+        return 2
     # The single "store" level is reused verbatim so every read keeps its own
     # arguments; the caller passes them without naming that level.
-    args = parser.parse_args(["store", *(sys.argv[1:] if argv is None else argv)])
+    args = parser.parse_args(["store", *rest])
     started_at = datetime.now(timezone.utc).isoformat()
     clock = time.monotonic()
     code = 2
+    ancestry = None
     try:
         binding = check(args.store_command, args.binding, os.environ)
+        ancestry = mirror(flag, os.environ)
     except RecordError as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 2
@@ -104,12 +152,13 @@ def main(argv: list | None = None) -> int:
     # credential in the process for the duration of the command.
     os.environ[STORE_TOKEN] = os.environ[READ_TOKEN]
     try:
-        code = store_cli.execute(args)
+        code = store_cli.execute(args, ancestry=ancestry)
     finally:
         os.environ.pop(STORE_TOKEN, None)
         finished_at = datetime.now(timezone.utc).isoformat()
         record = receipt(args.store_command, binding, started=started_at, finished=finished_at,
-                         duration_ms=int((time.monotonic() - clock) * 1000), code=code)
+                         duration_ms=int((time.monotonic() - clock) * 1000), code=code,
+                         ancestry=ancestry)
         print(json.dumps({"local_read_receipt": record}, sort_keys=True), file=sys.stderr)
         target = os.environ.get("DECISION_OS_READ_RECEIPT")
         if target:

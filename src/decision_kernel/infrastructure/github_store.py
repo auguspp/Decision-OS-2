@@ -18,6 +18,7 @@ from decision_kernel.domain.records import (
     BlobRef, Conflict, IntegrityError, MAX_BYTES, MissingObject, RecordError, SHA,
     StoreUnavailable, UnknownWrite, digest, encoded, identifier, require,
 )
+from decision_kernel.infrastructure.git_ancestry import AncestryUnavailable
 
 API_ROOT = "https://api.github.com"
 MAX_RESPONSE = 8 * 1024 * 1024
@@ -341,8 +342,10 @@ class GitHubAPI:
 
 class GitHubStore:
     """A narrow authenticated adapter. Library checks are not server role isolation."""
-    def __init__(self, binding: GitHubBinding, api: GitHubAPI):
+    def __init__(self, binding: GitHubBinding, api: GitHubAPI, *, ancestry=None):
         require(isinstance(binding, GitHubBinding), "INVALID_GITHUB_BINDING")
+        require(ancestry is None or callable(getattr(ancestry, "is_ancestor", None)),
+                "INVALID_LOCAL_ANCESTRY")
         self.binding, self.api = binding, api
         self.repository = binding.repository
         self._prefix = "/repos/" + self.repository
@@ -352,10 +355,17 @@ class GitHubStore:
         self._blobs: dict[str, bytes] = {}
         self._blob_bytes = 0
         self._ancestor_proofs: set[tuple[str, str]] = set()
+        self._ancestry = ancestry  # Off unless the caller supplies a local graph.
+        self._ancestry_sources = {"remote_compare": 0, "local_graph": 0, "fallbacks": 0}
         self._branch_node: str | None = None
         self._observed_private_upgrade = False
         self._verified_visibility: str | None = None
         self.head()  # Read/validate an existing binding; never initialize a remote target.
+
+    def ancestry_receipt(self) -> dict:
+        """Where this session's ancestry answers came from. Counts only, no ids."""
+        return {"schema": "github-store-ancestry-receipt-v1", "local_enabled": self._ancestry is not None,
+                **self._ancestry_sources}
 
     def _get(self, path: str):
         return self.api.request("GET", self._prefix + "/" + path)
@@ -393,12 +403,31 @@ class GitHubStore:
         proof = (base, head)
         if proof in self._ancestor_proofs:
             return
+        if self._ancestry is not None:
+            try:
+                reachable = self._ancestry.is_ancestor(base, head)
+            except AncestryUnavailable:
+                # A mirror that stopped early, lost an object or failed mid-command
+                # must not decide anything: fall through to the authoritative call.
+                self._ancestry_sources["fallbacks"] += 1
+            else:
+                # Count before refusing: on a denial the receipt is the only place
+                # that records which source spoke, and the refusal leaves with it.
+                self._ancestry_sources["local_graph"] += 1
+                # Same verdict and same failure code as the remote comparison, so a
+                # caller cannot tell the two apart by behaviour -- only the receipt
+                # records which one answered.
+                require(reachable, "COMMIT_OUTSIDE_BINDING")
+                if len(self._ancestor_proofs) < MAX_ANCESTOR_PROOFS:
+                    self._ancestor_proofs.add(proof)
+                return
         value = self._get(f"compare/{base}...{head}?per_page=1")
         require(isinstance(value, dict) and value.get("status") == "ahead"
                 and value.get("behind_by") == 0
                 and isinstance(value.get("merge_base_commit"), dict)
                 and value.get("merge_base_commit", {}).get("sha") == base,
                 "COMMIT_OUTSIDE_BINDING")
+        self._ancestry_sources["remote_compare"] += 1
         # A successful relation between exact Git commits is immutable. Callers
         # still fetch the live repository/ref before checking branch reachability;
         # a changed head requires a different proof. Errors are never cached.

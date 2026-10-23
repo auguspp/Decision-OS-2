@@ -237,6 +237,22 @@ def _reason(exc, env=None):
     return code
 
 
+def _master_interruption(venue, value):
+    """Say whether a venue's interrupted master unit can retry on its own.
+
+    A retained checkpoint means the last page request may have reached the source
+    without a recorded response; this run will not send it again and the durable
+    reservation stays for explicit reconciliation. No checkpoint means the unit
+    simply starts over on the next run. Both cases used to look identical in the
+    receipt, so an operator could not tell whether to act.
+    """
+    retained = value.get("checkpoint_reference") is not None
+    return {"schema": "daily-master-interruption-v1", "venue": venue,
+        "reason_code": value.get("reason_code"), "checkpoint_retained": retained,
+        "automatic_retry": not retained,
+        "next_action": "explicit-reconciliation" if retained else "retry-next-run"}
+
+
 def _reconciliation_summary(cycle):
     original = cycle.get("write_reconciliation")
     if original is None:
@@ -376,6 +392,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 require(value["status"] in {"partial", "persistence-unconfirmed"}, "DAILY_MASTER_UNIT_STATUS")
                 if value["status"] == "persistence-unconfirmed" or count == 0:
                     report.update(status=value["status"], reason_code=value.get("reason_code"))
+                    report["master_interruption"] = _master_interruption(venue, value)
                     return
             else:
                 report.update(status="partial", reason_code="DAILY_MASTER_WORK_UNIT_BOUND")

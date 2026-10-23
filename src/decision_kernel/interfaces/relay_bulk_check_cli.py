@@ -59,8 +59,10 @@ def check_private(api, selected):
     require(meta.get('id') == 1420041744 and meta.get('full_name') == REPO
             and meta.get('private') is True and meta.get('archived') is False
             and meta.get('default_branch') == 'main', 'BULK_PRIVATE_REPOSITORY_REQUIRED')
-    head = api.request('GET', PREFIX + '/git/ref/heads/main')
-    require(head.get('object', {}).get('sha') == selected['code_sha'], 'BULK_MAIN_MOVED')
+    from decision_kernel.infrastructure.runtime_publication import require_code_on_main
+    # A merge behind this run does not change the code it is executing; only a
+    # rewrite that removed its commit from main invalidates the run.
+    require_code_on_main(api, selected['code_sha'], 'BULK_MAIN_MOVED')
 
 
 def native_ready(api, selected):

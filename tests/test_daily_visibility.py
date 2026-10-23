@@ -33,6 +33,9 @@ class NativeAPI:
             "repository": {"id": cli.REPOSITORY_ID}, "head_repository": {"id": cli.REPOSITORY_ID},
             "created_at": "2026-10-19T12:10:00+00:00"}
         self.main = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": SHA}}
+        # Default: a main that no longer reaches this run's code. A test that
+        # means a plain merge sets this to an ahead verdict instead.
+        self.ancestry = {"status": "diverged", "merge_base_commit": {"sha": "b" * 40}}
         self.ci = {"total_count": 1, "workflow_runs": [{
             "id": 6001, "head_sha": SHA, "head_branch": "main", "event": "push", "run_attempt": 1,
             "path": ".github/workflows/ci.yml", "name": "decision-os-ci",
@@ -47,6 +50,8 @@ class NativeAPI:
             return deepcopy(self.final_meta if len(self.calls) >= 3 and self.final_meta is not None else self.meta)
         if path == cli.PREFIX + "/git/ref/heads/main":
             return deepcopy(self.main)
+        if "/compare/" in path:
+            return deepcopy(self.ancestry)
         if path.startswith(cli.PREFIX + "/actions/workflows/ci.yml/runs?"):
             return deepcopy(self.ci)
         assert path == cli.PREFIX + "/actions/runs/8001", "No data, artifact, source or records endpoints."

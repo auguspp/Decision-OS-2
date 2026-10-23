@@ -166,10 +166,8 @@ def native_ready(api, selected, *, metadata_only=False):
         # business runtimes still use the publication check below.
         from decision_kernel.interfaces.daily_visibility_cli import _repository
         _repository(api)
-        main = api.request("GET", PREFIX + "/git/ref/heads/main")
-        require(isinstance(main, dict) and main.get("ref") == "refs/heads/main"
-            and isinstance(main.get("object"), dict) and main["object"].get("type") == "commit"
-            and main["object"].get("sha") == selected["code_sha"], "FTSHARE_MAIN_MOVED")
+        from decision_kernel.infrastructure.runtime_publication import require_code_on_main
+        require_code_on_main(api, selected["code_sha"], "FTSHARE_MAIN_MOVED")
     else:
         check_private(api, selected)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))

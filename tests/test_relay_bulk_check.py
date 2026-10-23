@@ -93,6 +93,9 @@ class API:
         self.duplicate = False
         self.ci_ok = True
         self.head = SHA
+        # A moved head that no longer reaches this run's code; tests that mean a
+        # plain merge point this at an ahead verdict instead.
+        self.ancestry = {'status': 'diverged', 'merge_base_commit': {'sha': 'b' * 40}}
     def request(self, method, path):
         assert method == 'GET'
         self.calls.append(path)
@@ -100,7 +103,9 @@ class API:
             return {'id': 1420041744, 'full_name': host.REPO, 'private': self.private,
                     'archived': False, 'default_branch': 'main'}
         if path.endswith('/git/ref/heads/main'):
-            return {'object': {'sha': self.head}}
+            return {'ref': 'refs/heads/main', 'object': {'type': 'commit', 'sha': self.head}}
+        if '/compare/' in path:
+            return self.ancestry
         current = {'id': 123, 'head_sha': SHA, 'head_branch': 'main', 'run_attempt': 1,
                    'event': 'workflow_dispatch', 'path': host.WORKFLOW, 'status': 'in_progress',
                    'display_title': host.TITLE, 'repository': {'id': 1420041744}}

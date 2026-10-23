@@ -49,7 +49,10 @@ class NativeAPI(GitHubAPI):
         self.calls = []
         self.meta = {"id": 1420041744, "full_name": cli.REPO, "private": True,
             "archived": False, "default_branch": "main"}
-        self.main = {"object": {"sha": SHA}}
+        self.main = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": SHA}}
+        # Default: a main that no longer reaches this run's code. A test that
+        # means a plain merge sets this to an ahead verdict instead.
+        self.ancestry = {"status": "diverged", "merge_base_commit": {"sha": "b" * 40}}
         common = {"head_branch": "main", "event": "workflow_dispatch", "run_attempt": 1,
             "path": cli.WORKFLOW, "name": "decision-os-ashare-data",
             "repository": {"id": 1420041744}, "head_repository": {"id": 1420041744}}
@@ -72,6 +75,8 @@ class NativeAPI(GitHubAPI):
             return deepcopy(self.meta)
         if path.endswith("/git/ref/heads/main"):
             return deepcopy(self.main)
+        if "/compare/" in path:
+            return deepcopy(self.ancestry)
         if path.endswith("/actions/runs/8001"):
             return deepcopy(self.run)
         if path.endswith("/actions/runs/7001"):

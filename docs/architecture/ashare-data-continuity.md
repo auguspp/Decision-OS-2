@@ -184,6 +184,22 @@ gh api --paginate "repos/auguspp/Decision-OS-2/commits?sha=records&per_page=100&
 
 由此可算：周期每天约 **12–14 个版本、12–14 次提交、60 KiB 上下**；维持不变则一年约 4,500 个版本（相当于当前余量 7,065 的 64%）与约 22 MiB。10-23 只有 1 个 id，是 `FTSHARE_MAIN_MOVED` 在写完日历意图切片后拦停所致，不是周期缩水。
 
+#### 这些切片被谁引用过（2026-10-23 实测）
+
+对 `records` 现有研究资产做一次引用扫描（取正文里的 `source-views/<id>/`，不读断言、不重算）：
+
+| 扫描对象 | 数量 | 引用到周期快照 `daily-market-cycle-*` |
+|---|---:|---:|
+| `research/cases/*/record.json` | 18 | **0** |
+| `research/watch-activities/*` | 5 | **0** |
+| `research/artifacts/*/manifest.json` | 80（抽 4 份，348–428 B） | 0（是制品描述，不含 SourceRef 清单） |
+
+18 份 case 记录合计引用 39 个不同视图，其中只有 2 个是市场切片，且都是**按需单次采集**的 `ftshare-single-daily-{forward,none}-*-wire`；没有任何 `daily-market-cycle-*` 或 `ftshare-collection-*` 被研究记录直接引用。
+
+**这不等于可以停。** 抽查 `daily-market-cycle-20261022-r013` 与 `-20261019-r010` 的正文：周期快照本身就是「周期日 → 采集切片」的证据链，正文引用 `ftshare-collection-*-rNNN` 与 `market-checkpoint-*`，并带 `EXACT_EXISTING_RECORDS_SOURCE_REFS_NO_SECOND_PRICE_STORE` 的限制说明。所以「研究没有直接引用」证明的是**它们不是被引证据**，不是**链上没有价值**；停用判断必须按证据链完整性与恢复能力来做，不能只数引用次数。
+
+**未覆盖范围**：`submissions/`（1127 个 blob）未逐一扫描，80 份制品清单只抽 4 份。上面的「0 引用」只对已扫描对象成立。
+
 **引用边界：** 这些数字只证明「每日常驻固定池」在版本维度上有可测成本，**不足以**据此取消 Radar 扫描范围证据、PIT/复权约束或被引用内容的长期恢复；停用哪些日更固定写入仍须按 #221 C 的条件逐项裁定，且必须保留历史 reader 与最新失败。
 
 已保存的成功页不会因运行结束而丢失；未知响应的原始网络结果仍可能无法重建，必须保留该事实。恢复到更早源码版本不会删除新数据；暂不理解新 schema 的旧 reader 也不能被称为恢复成功。退出本能力时一起处理专属 collection/runtime/工作流/测试及本文入口，保留原共享来源、版本保管、raw/qfq、研究与 CI 保护。

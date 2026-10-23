@@ -1,6 +1,6 @@
 """A Full Watch check reaches the author Brief and an independent retained reader."""
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -9,6 +9,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.application.watch_activity import WatchActivity
 from decision_kernel.application.watch_evidence import export_required
 from decision_kernel.domain.records import BlobRef, Conflict, RecordError, RevisionInput, digest, encoded
+from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.infrastructure.git_store import GitStore
 from test_conditional_odds import authorized, price_payload
 from test_full_watch import full_watch, question_link, saved_odds, structured_full
@@ -25,6 +26,22 @@ def document(research, check_ref, result, *, question="open", kind="check"):
         "body": "Author Brief. " + change, "adoptions": [], "sources": [], "watch_adoptions": [{
             "reference": research, "question_id": question, "kind": kind, "check_ref": check_ref,
             "result_sha256": digest(encoded(result)), "used_change": change}]}
+
+
+def legacy_baseline(api, doc, reference, submission, *, version="hosted-ai-handoff-v1",
+                    execution_date="2026-01-04", cutoff="2026-01-04T05:00:00Z"):
+    """Materialise a pre-v3 Brief as an explicit replay.
+
+    A v1/v2 Brief can no longer be written by a normal save, but read-path tests
+    still need a baseline that really exists in that version instead of a
+    dictionary that only looks like one.
+    """
+    value = {**doc, "schema": version, "execution_date": execution_date, "cutoff": cutoff,
+             "baseline": reference}
+    for field in ("watch_adoptions", "sources"):
+        value.pop(field, None)
+    legacy = VersionedStore(GitHubStore(replace(api.binding, write_enabled=True), api))
+    return handoff.save(legacy, value, submission, replay=True)["reference"]
 
 
 @pytest.fixture

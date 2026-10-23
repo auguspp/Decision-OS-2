@@ -165,9 +165,11 @@ original=artifacts.read(s.backend.reference(head,paths[0]))
 artifacts.put('installed-discovery-edition',ArtifactInput.from_bytes('news-edition-installed-discovery',
  'news-edition.json','application/json',base64.b64decode(original['data_base64'])))
 research=s.current('mixed-research')
-ai_doc={'schema':'hosted-ai-handoff-v1','kind':'brief','execution_date':'2026-10-16',
+sources=s.read_revision(research)['record']['input']['sources']
+ai_doc={'schema':'hosted-ai-handoff-v3','kind':'brief','execution_date':'2026-10-16',
  'cutoff':'2026-10-16T12:00:00Z','scope':'Synthetic installed author Brief, no investment task',
  'gaps':['No actual business acceptance'],'baseline':None,'body':'# Synthetic AI Brief\r\nOriginal saved author text.\n',
+ 'watch_adoptions':[],'sources':sources,
  'adoptions':[{'reference':asdict(research),'body_sha256':digest(s.read_revision(research)['body'].encode()),
               'used_change':'Preserve the original synthetic research challenge'}]}
 ai_saved=hosted_handoff.save(s,ai_doc,'installed-room-ai-brief')

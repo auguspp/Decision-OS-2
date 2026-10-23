@@ -6,6 +6,23 @@
 
 当前集合覆盖 SSE/SZSE 的 `stock_basic(list_status=L)` 已识别证券。它是当前上市状态快照，不是历史时点证券全集；BSE、退市/暂停上市状态、逐日历史成分不能被称为已覆盖。名称、身份冲突、上市日期、交易所日历、行情、因子和停复牌各自通过原资格检查。主表缺失时完整分母未知，不能将其当成零。
 
+### 两个分母：目录口径与取证口径
+
+覆盖必须分别表述，不得互相替换（[#220](https://github.com/auguspp/Decision-OS-2/issues/220)）。
+
+| 字段 | 含义 | 用途 |
+|---|---|---|
+| `scope_count` / `known_scope_count` | 当前 `stock_basic(list_status=L)` 目录快照的完整分母 | 目录可达性，**不是**行情覆盖 |
+| `observed_count` / `missing_count` / `incomplete_count` | 上述目录分母下的实际观测 | 同上 |
+| `required_scope_count` | **本计划实际请求的证券集合**，由其自身 `plan.requests` 推导 | 本计划承担取证责任的范围 |
+| `required_observed_count` / `required_missing_count` | 在 `required_scope` 内实际成立/缺失的数量 | 该计划是否尽责 |
+
+`required_scope_basis` 固定为 `requested-by-this-plan-not-catalog-coverage`；`coverage_denominators` 同时说明两个口径。`REQUIRED_SCOPE_IS_THE_REQUESTED_SET_NOT_CATALOG_COVERAGE` 写入 `qualification_limits`。
+
+**约束**：`required_scope` 覆盖率只回答「本计划是否覆盖了自己承诺的范围」，**永远不能**替代或提升目录覆盖，也不得据此声称 500+ 或全市场已覆盖。目录分母仍须保留完整值；主表缺失时仍为 `null`，不是 0。两个口径互不推算，`required_scope` 不得因目录变大而放大。
+
+**兼容**：早于本字段的已存 view 不含 `required_*`；读取方按「未记录」处理，不补算、不反填。
+
 每个开市日保存原 `daily`、`adj_factor`、`suspend_d` 查询。数据按 `trade_date` 对全市场请求，读取时才选择证券和展示页；不会为每只证券另发同一批历史来源请求。两所原日历分别确定实际截止交易日，周末和节假日不会按最后收到的价格回退。日终入口最多取上海时间的前一个自然日，不宣称盘中实时行情。
 
 顶层 `raw` / `qfq` 沿现有完整逐日窗口算法计算 5/20/60 个交易日结果；原字段、资格和计数含义保留。前复权沿原截止日因子比值，不能当总回报或公司行动完整认证。因子错误只限制相关 qfq，原价与其他证券仍按实际资格展示；停复牌证据只解释缺口，不补价格、不自动证明全天停牌。新上市、停牌、资料缺失可能导致窗口不可用，即使全部声明查询已经完整保存。

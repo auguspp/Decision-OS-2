@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from decision_kernel.application import reference_fixing
 from decision_kernel.application.numerical_audit import START as NUMBERS_START, NumericalAudit
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_evidence import ResearchEvidence, guidance as evidence_guidance
@@ -108,8 +109,9 @@ class ResearchWorkflow:
         # reads back. This layer neither implements a second save nor grants writes.
         saved = self.store.submit_revision(submission_id, revision)
         result = {"reference": asdict(saved), "declared_stop": progress.stop,
-                "research_assessment": "not-performed", "human_acceptance": "not-confirmed",
-                "execution_authority": "not-granted-by-save"}
+                  "reference_fixing": reference_fixing.listing(progress.sources),
+                  "research_assessment": "not-performed", "human_acceptance": "not-confirmed",
+                  "execution_authority": "not-granted-by-save"}
         if request.kind == "full":
             result["source_use_acceptance"] = acceptance_pending(asdict(saved))
         if NUMBERS_START in progress.body:

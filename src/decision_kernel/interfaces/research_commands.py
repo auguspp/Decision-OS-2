@@ -10,7 +10,8 @@ from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.domain.records import BlobRef
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
 
-COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers", "audit-source-use") + agenda_commands.LOCAL_COMMANDS + (reading_commands.COMMAND,)
+COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers",
+            "audit-source-use", "verify-reference-fixing") + agenda_commands.LOCAL_COMMANDS + (reading_commands.COMMAND,)
 
 
 def configure(actions) -> None:
@@ -39,6 +40,9 @@ def configure(actions) -> None:
     catalogue = actions.add_parser("research-catalogue", help="browse saved research and remaining work; read only")
     catalogue.add_argument("--cursor", type=Path, help="exact catalogue next_cursor JSON, not a source cursor")
     catalogue.add_argument("--limit", type=int, default=4, help="case cards per page, 1 to 8")
+    fixing = actions.add_parser("verify-reference-fixing",
+                                help="read back the exact slices a saved revision cites; no writes, no fetch")
+    fixing.add_argument("--ref", type=Path, required=True, help="exact saved research BlobRef JSON")
 
 
 def execute(args, store, load) -> dict:
@@ -53,6 +57,9 @@ def execute(args, store, load) -> dict:
         return audit.saved(BlobRef(**load(args.ref))) if args.ref else audit.audit(load(args.input))
     if args.store_command == "research-catalogue":
         return ResearchCatalogue(store).page(cursor=load(args.cursor) if args.cursor else None, limit=args.limit)
+    if args.store_command == "verify-reference-fixing":
+        from decision_kernel.application.reference_fixing import from_revision
+        return from_revision(store, BlobRef(**load(args.ref)))
     workflow = ResearchWorkflow(store)
     if args.store_command == "prepare-research":
         return workflow.prepare(

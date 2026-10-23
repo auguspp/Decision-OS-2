@@ -30,6 +30,14 @@
 
 工作记录作为**同一research.md的规范JSON附录**保存，`research-workpaper-v1`仅是方法底稿表达，不是第二存储schema/状态库。原`mandate`、kind、SourceRef、前驱、method字段仍直接存入既有记录；读回校验附录与记录一致。原普通研究正文继续能由`resume-research`读取；没有底稿的问题列表不会被凭空反推，首次采用此入口应提供明确请求。解析不执行文本，坏附录不降级成“已恢复”。
 
+## 引用即固定回执与审计
+
+`checkpoint-research` 的回执新增 `reference_fixing`（`reference-fixing-report-v1`，`tier=listing`）：逐条列出本次成果引用的 SourceRef（`manifest.repository/commit/path/sha256` 与 selection）。这一档**不读源**——SourceRef 本身内容寻址，已钉死被引用的字节；写入路径再读一次会让每次判断的源请求翻倍。所以它回答"固定了哪些切片"，**不**回答"切片是否覆盖了某个价格日期"。
+
+事后审计用只读命令 `verify-reference-fixing --ref <已存 BlobRef>`：逐条 `read_source`，给出实际字节数/摘要，以及按固定键名抽出的 `observed_dates`/`observed_securities`/`observed_markers`，触碰 `MAX_NODES`/`MAX_VALUES`/`MAX_DEPTH` 即置 `harvest_truncated: true`。它不取源、不写、不切换 `current` 指针。
+
+两档都固定携带 `coverage_assertion: "not-declared-in-existing-fields"`：现有研究字段没有可机读的"本次判断用了哪个标的、哪一天的价格"声明，因此"日期落在覆盖内"目前**不可判定**；需要声明字段与版本升级后才谈得上校验。详见 `docs/architecture/reference-fixing-triggers.md` 6.2。
+
 ## 合成工程调用
 
 先按README安装。下例只使用本地合成目录，**不是授权创建任何真实研究任务**。`request.json`最小示例：

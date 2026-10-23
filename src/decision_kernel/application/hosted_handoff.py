@@ -153,7 +153,9 @@ def resolve(store, doc):
 
 
 def save(store, doc, submission_id):
-    validate(doc); resolve(store, doc)
+    validate(doc)
+    resolve(store, doc)
+    references = [doc["research"]] if doc["kind"] == "quick" else [i["reference"] for i in doc["adoptions"]]
     artifact = ArtifactInput.from_bytes(artifact_id(doc), "handoff.json", "application/json", encoded(doc))
     def one_per_day(head):
         prefix = "research/artifacts/" + artifact.artifact_id + "/"
@@ -165,7 +167,10 @@ def save(store, doc, submission_id):
     ref = ResearchArtifacts(store).put(submission_id, artifact, before_new_write=one_per_day)
     # Canonical original text is read back, never rewritten after saving.
     opened = open_handoff(store, ref)
-    return {"reference": asdict(ref), "status": opened["status"], "kind": doc["kind"]}
+    from decision_kernel.application.reference_fixing import receipt
+    return {"reference": asdict(ref), "status": opened["status"], "kind": doc["kind"],
+            "reference_fixing": receipt(store, references, scope="hosted-handoff"),
+            "economic_assessment": "not-performed"}
 
 
 def open_handoff(store, ref):

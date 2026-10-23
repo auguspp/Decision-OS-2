@@ -79,10 +79,10 @@ def settings(event, env):
 
 def native_ready(api, selected):
     """Validate this run and the latest exact main CI; no last-green fallback."""
-    main = api.request("GET", PREFIX + "/git/ref/heads/main")
-    require(isinstance(main, dict) and main.get("ref") == "refs/heads/main"
-            and main.get("object", {}).get("type") == "commit"
-            and main["object"].get("sha") == selected["code_sha"], "NEWS_HANDOFF_MAIN_MOVED")
+    from decision_kernel.infrastructure.runtime_publication import require_code_on_main
+    # A merge behind this run does not change the code it is executing; only a
+    # rewrite that removed its commit from main invalidates the run.
+    require_code_on_main(api, selected["code_sha"], "NEWS_HANDOFF_MAIN_MOVED")
     run = api.request("GET", PREFIX + "/actions/runs/" + selected["run_id"])
     require(isinstance(run, dict) and type(run.get("id")) is int
             and run["id"] == int(selected["run_id"])

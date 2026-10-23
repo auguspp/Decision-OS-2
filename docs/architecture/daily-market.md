@@ -65,6 +65,8 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；原手动 `operation=update|status|recover-late|repair-calendar|reconcile-write` 继续要求确切 `code_sha`。两个恢复入口各自加载固定获审配置。宿主重新核原生仓库 ID / 可见性与部署授权、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。业务回执分别记录真实 `invocation=schedule|external-clock|update|status|recover-late|repair-calendar|reconcile-write` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
 
+**当前 main 的核法是"包含"，不是"相等"。** 运行执行的是 Actions 为它自己 `head_sha` 检出的那棵树，之后 main 前进并不改变这棵树，因此不能因为一次合并就把已在途中、请求已经花掉的运行判废。判定改为：`GITHUB_REF=refs/heads/main` 与 `code_sha == GITHUB_SHA` 保证该代码是派发时刻的 main；`code_sha` 仍可从当前 main 到达（`compare` 的 `ahead`/`identical` 且 `merge_base == code_sha`）才算身份成立。真正要拒绝的是被重写抹掉的历史（`diverged`/`behind`），以及任何答不上来的情况——一律拒绝、不猜。相等仍是快路径，所以只有 main 确实前进时才付一次全历史 `compare`，其结果按当时 main 记在发起该问题的 API 客户端上。
+
 只有 `external-clock` / `clock-probe` 接受固定 `code_sha=current-main`，并立即绑定该次原生 `GITHUB_SHA`；旧手动入口不接受这个标记。真实宿主明确加载固定 clock 配置，缺失或损坏即停止。被选中的自动生产在 visibility 阶段、注入来源密钥前先核当前 main 和 CI，实际宿主与消费者再次检查。`clock-probe` 只进入独立只读 job，输出 `probe.json` / `probe.md`，0 来源请求、0 records 读写、0 dispatch/通知；不得把它转入普通 status 后读取业务。配置、实际启用、自然来源和消费者采用仍按外部时钟合同分别验收。
 
 周期准入固定使用原生运行创建时刻，不能因队列或同次安全 quota 等待跨过午夜、甚至下一次 18:35，就领取另一天的预算。进入宿主时，真实当前时间必须不早于该原生创建时刻，且相差严格小于 24 小时；这个队列年龄上限与原生创建时刻距业务槽的不足 24 小时上限分别成立。新建周期的实际创建时间不早于其原生准入时间；采集和正常读取仍使用当时真实时钟，不回填成槽的时刻。

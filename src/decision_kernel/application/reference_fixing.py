@@ -160,17 +160,3 @@ def from_revision(store, reference: BlobRef, *, scope: str = "saved-research") -
     report["case_id"] = payload["case_id"]
     report["revision_kind"] = payload["kind"]
     return report
-
-
-def receipt(store, references, *, scope: str) -> dict:
-    """Handoff receipt: citation inventory of the adopted revisions, zero extra source reads."""
-    fixed, gaps = [], []
-    for value in references:
-        reference = value if isinstance(value, BlobRef) else BlobRef(**value)
-        try:
-            payload = store.read_revision(reference)["record"]["input"]
-        except RecordError as error:
-            gaps.append({"problem": str(error), "reference": asdict(reference)})
-            continue
-        fixed.extend(payload["sources"])
-    return listing(tuple(SourceRef.from_dict(item) for item in fixed), scope=scope) | {"gaps": gaps}

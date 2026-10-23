@@ -129,14 +129,30 @@ def test_handoff_receipt_carries_the_adopted_citation_inventory(store):
     assert json.loads(json.dumps(result)) == result
 
 
-def test_handoff_receipt_reports_a_payload_it_cannot_restore(store):
+class _NoSourceRead:
+    """Delegates every store call, but reading source bytes would be a regression."""
+    def __init__(self, store):
+        self._store = store
+
+    def read_source(self, *args, **kwargs):
+        raise AssertionError("a handoff receipt must not read source bytes")
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+
+def test_handoff_receipt_reads_no_source_bytes(store):
+    # The union comes from the revision already being read, so the receipt adds
+    # no source request; a slice is fixed by its content address, not by re-reading it.
     ref = store.put_source("put-one", market_slice())
     saved = store.submit_revision("submit-one", revision_input(ref))
     doc = {"schema": handoff.SCHEMA, "kind": "quick", "execution_date": "2026-10-23", "cutoff": AT,
            "research": asdict(saved), "scope": "Synthetic handoff", "gaps": []}
     before = store.read_revision(saved)
-    result = handoff.save(store, doc, "handoff-one")
+    result = handoff.save(_NoSourceRead(store), doc, "handoff-one")
     assert result["status"] == "readable"
+    assert result["reference_fixing"]["gaps"] == []
+    # Saving a handoff never rewrites the revision it adopts.
     assert store.read_revision(saved) == before
 
 

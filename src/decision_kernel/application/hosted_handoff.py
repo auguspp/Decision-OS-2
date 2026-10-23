@@ -11,26 +11,34 @@ from datetime import date, timedelta
 import json
 import re
 
+from decision_kernel.application.reference_fixing import listing
 from decision_kernel.application.research_artifacts import ResearchArtifacts
-from decision_kernel.domain.records import BlobRef, Conflict, RecordError, SHA, checked_text, digest, encoded, require
+from decision_kernel.domain.records import (BlobRef, Conflict, RecordError, SHA, SourceRef,
+                                            checked_text, digest, encoded, require)
 from decision_kernel.domain.research_artifacts import ArtifactInput, ARTIFACT_PATH, artifact_reference
 from decision_kernel.observations.announcement_discovery import observed_clock
 
 SCHEMA = "hosted-ai-handoff-v1"
 WATCH_SCHEMA = "hosted-ai-handoff-v2"
+BOUND_SCHEMA = "hosted-ai-handoff-v3"
+VERSIONS = (SCHEMA, WATCH_SCHEMA, BOUND_SCHEMA)
+WATCH_VERSIONS = (WATCH_SCHEMA, BOUND_SCHEMA)
+MAX_DECLARED_SOURCES = 64
 PREFIXES = {"quick": "hosted-quick-", "brief": "ai-brief-"}
 OPERATIONS = {"save-hosted-handoff", "reconcile-hosted-handoff", "read-hosted-handoff", "latest-hosted-handoff"}
 
 
 def validate(doc):
-    require(isinstance(doc, dict) and doc.get("schema") in (SCHEMA, WATCH_SCHEMA)
+    require(isinstance(doc, dict) and doc.get("schema") in VERSIONS
             and doc.get("kind") in PREFIXES
-            and (doc["schema"] != WATCH_SCHEMA or doc["kind"] == "brief"),
+            and (doc["schema"] not in WATCH_VERSIONS or doc["kind"] == "brief"),
             "HOSTED_HANDOFF_SCHEMA")
     common = {"schema", "kind", "execution_date", "cutoff", "scope", "gaps"}
     expected = common | ({"research"} if doc["kind"] == "quick" else {"body", "adoptions", "baseline"})
-    if doc["schema"] == WATCH_SCHEMA:
+    if doc["schema"] in WATCH_VERSIONS:
         expected.add("watch_adoptions")
+    if doc["schema"] == BOUND_SCHEMA:
+        expected.add("sources")
     require(set(doc) == expected and len(encoded(doc)) <= 48 * 1024, "HOSTED_HANDOFF_FIELDS_OR_SIZE")
     day = date.fromisoformat(doc["execution_date"])
     require(day.isoformat() == doc["execution_date"], "HOSTED_HANDOFF_DATE")
@@ -54,7 +62,7 @@ def validate(doc):
             seen.add(ref); checked_text(item["used_change"], limit=2048)
         if doc["baseline"] is not None:
             artifact_reference(doc["baseline"])
-        if doc["schema"] == WATCH_SCHEMA:
+        if doc["schema"] in WATCH_VERSIONS:
             from decision_kernel.application.watch_evidence import selections
             rows = doc["watch_adoptions"]
             require(isinstance(rows, list) and len(rows) <= 8, "HOSTED_WATCH_ADOPTIONS_BOUND")
@@ -70,7 +78,18 @@ def validate(doc):
                 require(item["used_change"] in doc["body"], "HOSTED_WATCH_CHANGE_NOT_IN_BODY")
                 selected.append({key: item[key] for key in ("reference", "question_id", "kind", "check_ref")})
             selections(selected)
+        if doc["schema"] == BOUND_SCHEMA:
+            declared = _declared(doc["sources"])
+            require(len(set(declared)) == len(declared), "HOSTED_SOURCE_BINDING_DUPLICATE")
     return doc
+
+
+def _declared(values) -> tuple[SourceRef, ...]:
+    """The document's own citation list, in the same shape a revision stores."""
+    require(isinstance(values, list) and len(values) <= MAX_DECLARED_SOURCES,
+            "HOSTED_SOURCE_BINDING_BOUND")
+    return tuple(SourceRef.from_dict(item) for item in values)
+
 
 
 def artifact_id(doc):
@@ -99,7 +118,7 @@ def publication_required(store, value):
     if "items" in value and value.get("kind") in PREFIXES and isinstance(value["items"], list):
         return any(publication_required(store, item) for item in value["items"])
     doc = value.get("document", value)
-    if not isinstance(doc, dict) or doc.get("schema") not in (SCHEMA, WATCH_SCHEMA):
+    if not isinstance(doc, dict) or doc.get("schema") not in VERSIONS:
         return False
     validate(doc)
     current = bool(doc.get("watch_adoptions"))
@@ -109,10 +128,14 @@ def publication_required(store, value):
     return current
 
 
-def resolve(store, doc):
-    validate(doc)
+def _restore(store, doc):
+    """Read each adopted revision exactly once, plus the sources those revisions cite.
+
+    Binding costs no extra request: the source list is a field of the revision
+    being read anyway, so the union is a by-product of the adoption read.
+    """
     references = [doc["research"]] if doc["kind"] == "quick" else [i["reference"] for i in doc["adoptions"]]
-    research = []
+    research, union = [], []
     for value in references:
         restored = store.read_revision(BlobRef(**value))
         require(restored["record"]["input"]["kind"] in ("quick", "full"), "HOSTED_RESEARCH_KIND")
@@ -121,14 +144,41 @@ def resolve(store, doc):
         else:
             item = next(i for i in doc["adoptions"] if i["reference"] == value)
             require(digest(restored["body"].encode()) == item["body_sha256"], "HOSTED_ADOPTED_BODY_MISMATCH")
+        for payload in restored["record"]["input"]["sources"]:
+            cited = SourceRef.from_dict(payload)
+            if cited not in union:
+                union.append(cited)
         research.append(restored)
+    return research, tuple(union)
+
+
+def _binding(doc, union):
+    """Declared citations versus what the adopted revisions actually cite.
+
+    Both directions matter: a missing entry hides a source the Brief leaned on,
+    an extra entry claims a slice no adopted revision ever read.
+    """
+    if doc["schema"] != BOUND_SCHEMA:
+        return {"status": "not-declared", "version": doc["schema"], "adopted_union": len(union),
+                "meaning": "this version predates declared citations; the adoptions still fix the bytes"}
+    declared = _declared(doc["sources"])
+    fixed, adopted = set(declared), set(union)
+    require(not [ref for ref in union if ref not in fixed], "HOSTED_SOURCE_BINDING_INCOMPLETE")
+    require(not [ref for ref in declared if ref not in adopted], "HOSTED_SOURCE_BINDING_UNSUPPORTED")
+    return {"status": "bound", "version": doc["schema"], "declared": len(declared),
+            "adopted_union": len(union),
+            "meaning": "declared citations are exactly the sources of the revisions this Brief adopted"}
+
+
+def _resolved(store, doc, research, union):
     if doc["kind"] == "brief" and doc["baseline"] is not None:
         prior = _document(store, doc["baseline"])
         require(prior["kind"] == "brief" and observed_clock(prior["cutoff"]) <= observed_clock(doc["cutoff"]),
                 "HOSTED_BASELINE_FROM_FUTURE_OR_WRONG_KIND")
     result = {"document": doc, "research": research, "status": "readable",
+              "source_binding": _binding(doc, union),
               "human_acceptance": "not-confirmed", "economic_quality": "not-certified-by-reader"}
-    if doc["schema"] == WATCH_SCHEMA:
+    if doc["schema"] in WATCH_VERSIONS:
         from decision_kernel.application.watch_evidence import read_rows
         selected = [{key: item[key] for key in ("reference", "question_id", "kind", "check_ref")}
                     for item in doc["watch_adoptions"]]
@@ -152,10 +202,23 @@ def resolve(store, doc):
     return result
 
 
-def save(store, doc, submission_id):
+def resolve(store, doc):
     validate(doc)
-    resolve(store, doc)
-    references = [doc["research"]] if doc["kind"] == "quick" else [i["reference"] for i in doc["adoptions"]]
+    research, union = _restore(store, doc)
+    return _resolved(store, doc, research, union)
+
+
+def save(store, doc, submission_id, *, replay=False):
+    require(type(replay) is bool, "HOSTED_REPLAY_FLAG")
+    validate(doc)
+    # A new Brief must declare which stored slices it stands on. Replaying an
+    # already-saved original intent keeps that intent's own version readable
+    # instead of forcing a rewrite of history.
+    require(doc["kind"] != "brief" or doc["schema"] == BOUND_SCHEMA or replay,
+            "HOSTED_SOURCE_BINDING_REQUIRED")
+    research, union = _restore(store, doc)
+    # Gate before the write, so a refusal leaves no artifact and head unchanged.
+    _resolved(store, doc, research, union)
     artifact = ArtifactInput.from_bytes(artifact_id(doc), "handoff.json", "application/json", encoded(doc))
     def one_per_day(head):
         prefix = "research/artifacts/" + artifact.artifact_id + "/"
@@ -167,10 +230,10 @@ def save(store, doc, submission_id):
     ref = ResearchArtifacts(store).put(submission_id, artifact, before_new_write=one_per_day)
     # Canonical original text is read back, never rewritten after saving.
     opened = open_handoff(store, ref)
-    from decision_kernel.application.reference_fixing import receipt
     return {"reference": asdict(ref), "status": opened["status"], "kind": doc["kind"],
-            "reference_fixing": receipt(store, references, scope="hosted-handoff"),
-            "economic_assessment": "not-performed"}
+            "source_binding": opened["source_binding"],
+            "reference_fixing": listing(union, scope="hosted-handoff"),
+            "replay": replay, "economic_assessment": "not-performed"}
 
 
 def open_handoff(store, ref):
@@ -226,7 +289,10 @@ def perform(store, operation, payload, submission_id):
     if operation in ("save-hosted-handoff", "reconcile-hosted-handoff"):
         require(set(payload) == {"document", "rights_confirmed"} and payload["rights_confirmed"] is True,
                 "HOSTED_RIGHTS_REQUIRED")
-        return save(store, payload["document"], submission_id)
+        # reconcile replays an intent that was already written, so it may carry
+        # that intent's original version; save never may.
+        return save(store, payload["document"], submission_id,
+                    replay=operation == "reconcile-hosted-handoff")
     if operation == "read-hosted-handoff":
         require(set(payload) == {"reference"}, "HOSTED_EXACT_REFERENCE_REQUIRED")
         return open_handoff(store, payload["reference"])

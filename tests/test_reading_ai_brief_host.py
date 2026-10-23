@@ -16,6 +16,7 @@ from decision_kernel.infrastructure.github_reading import _ReadingScope
 from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.interfaces import research_runtime as runtime, reading_page, daily_reading_cli, reading_commands
 from test_hosted_watch_runtime import public_host, full_brief
+from test_hosted_watch_handoff import legacy_baseline
 from test_hosted_native_runtime import payload as hosted_payload
 from test_news_read_budget import transport
 from test_research_runtime import CODE, host, inputs, invoke
@@ -90,10 +91,10 @@ def test_partial_discovery_preserves_opened_candidate_watch_scope(public_host, s
     api, grant, path = public_host
     doc, ref = saved_brief
     if baseline_only:
+        legacy_baseline(api, doc, ref, "next")
         doc = {**doc, "schema": "hosted-ai-handoff-v1", "execution_date": "2026-01-04",
                "cutoff": "2026-01-04T05:00:00Z", "baseline": ref}
-        doc.pop("watch_adoptions")
-        invoke(api, tmp_path / "next", "save-hosted-handoff", hosted_payload(doc), "next")
+        doc.pop("watch_adoptions"); doc.pop("sources")
     bad = {**doc, "execution_date": "2026-01-05", "cutoff": "2026-01-05T05:00:00Z", "body": 123}
     # A deliberately corrupt retained fixture tests incomplete discovery; it
     # is not a replacement author document or a business submission.
@@ -113,10 +114,11 @@ def test_actual_and_baseline_watch_need_original_scopes(public_host, saved_brief
     api, grant, path = public_host
     doc, ref = saved_brief
     if baseline_only:
+        prior = ref
+        ref = legacy_baseline(api, doc, prior, "next")
         doc = {**doc, "schema": "hosted-ai-handoff-v1", "execution_date": "2026-01-04",
-               "cutoff": "2026-01-04T05:00:00Z", "baseline": ref}
-        doc.pop("watch_adoptions")
-        ref = invoke(api, tmp_path / "next", "save-hosted-handoff", hosted_payload(doc), "next")["result"]["reference"]
+               "cutoff": "2026-01-04T05:00:00Z", "baseline": prior}
+        doc.pop("watch_adoptions"); doc.pop("sources")
     grant["scopes"].remove(scope)
     path.write_bytes(encoded(grant))
     out = tmp_path / "denied-read"
@@ -247,10 +249,11 @@ def test_daily_final_gate_follows_render_and_preserves_hidden_baseline_dependenc
     from test_daily_reading import native_run, receipt, AT
     api, grant, path = public_host
     doc, ref = saved_brief
+    prior = ref
+    next_ref = legacy_baseline(api, doc, prior, "next")
     next_doc = {**doc, "schema": "hosted-ai-handoff-v1", "execution_date": "2026-01-04",
-                "cutoff": "2026-01-04T05:00:00Z", "baseline": ref}
-    next_doc.pop("watch_adoptions")
-    next_ref = invoke(api, tmp_path / "next", "save-hosted-handoff", hosted_payload(next_doc), "next")["result"]["reference"]
+                "cutoff": "2026-01-04T05:00:00Z", "baseline": prior}
+    next_doc.pop("watch_adoptions"); next_doc.pop("sources")
     native_store = VersionedStore(GitHubStore(api.binding, transport(api)))
     from decision_kernel.interfaces.reading_commands import perform
     model = perform(native_store, {"plan": {"as_of": next_doc["cutoff"], "ai_brief": next_ref}})

@@ -17,7 +17,7 @@ from decision_kernel.interfaces import research_runtime as runtime
 from test_conditional_odds import authorized
 from test_full_watch import full_watch, question_link
 from test_hosted_native_runtime import payload
-from test_hosted_watch_handoff import document
+from test_hosted_watch_handoff import document, legacy_baseline
 from test_odds_watch import request as check_request
 from test_odds_watch_runtime import native_watch_fetch
 from test_research_runtime import host, invoke, source, work
@@ -117,6 +117,8 @@ def test_exact_baseline_watch_is_checked_before_input_export(public_host, full_b
     next_doc = deepcopy(doc)
     next_doc.update(schema=schema, execution_date="2026-01-04", cutoff="2026-01-04T05:00:00Z",
                     watch_adoptions=[], baseline=ref)
+    # A pre-v3 field set carries no declared citations, so drop the v3 field.
+    next_doc.pop("sources")
     if schema == "hosted-ai-handoff-v1":
         next_doc.pop("watch_adoptions")
     grant["scopes"].remove("watch")
@@ -136,11 +138,13 @@ def test_actual_read_and_latest_never_release_watch_with_only_handoff_scope(publ
     doc, _ = full_brief
     ref = invoke(api, tmp_path / "saved", "save-hosted-handoff", payload(doc), "first")["result"]["reference"]
     if baseline_only:
-        doc = deepcopy(doc)
-        doc.update(schema="hosted-ai-handoff-v1", execution_date="2026-01-04", cutoff="2026-01-04T05:00:00Z",
-                   baseline=ref)
-        doc.pop("watch_adoptions")
-        ref = invoke(api, tmp_path / "next", "save-hosted-handoff", payload(doc), "next")["result"]["reference"]
+        prior = ref
+        ref = legacy_baseline(api, doc, prior, "next-legacy")
+        # Keep the local value in step with what was stored, so the reads below
+        # ask about the legacy baseline rather than the v3 one.
+        doc = {**doc, "schema": "hosted-ai-handoff-v1", "execution_date": "2026-01-04",
+               "cutoff": "2026-01-04T05:00:00Z", "baseline": prior}
+        doc.pop("watch_adoptions"); doc.pop("sources")
     grant["scopes"] = ["handoff"]
     path.write_text(json.dumps(grant))
     args = {"reference": ref} if operation == "read-hosted-handoff" else {

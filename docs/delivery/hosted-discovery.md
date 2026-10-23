@@ -48,6 +48,10 @@ AI Brief交接D：`schema/kind=brief/execution_date/cutoff/scope/gaps` 加 `body
 
 新 Brief 使用 `schema=hosted-ai-handoff-v2`，在上述字段之外增加 `watch_adoptions`；只有 `kind=brief` 支持 v2，Quick 交接仍为 v1。原 v1 Brief 的读取与原意图恢复保持。普通 `adoptions` 继续允许 Quick，这不使 Quick 成为默认 Watch 对象。
 
+**新的 Brief 一律使用 `schema=hosted-ai-handoff-v3`**，在 v2 之外再要求 `sources`：这期 Brief 声明的引用清单，逐项就是已存 [SourceRef](research-workpaper.md) 的 `{manifest, selection}` 形状。`sources` 必须**恰好等于**被采用 revision 的 `sources` 并集——少一项抛 `HOSTED_SOURCE_BINDING_INCOMPLETE`，多一项抛 `HOSTED_SOURCE_BINDING_UNSUPPORTED`，重复项抛 `HOSTED_SOURCE_BINDING_DUPLICATE`，均在写入之前拒绝。采用的研究本身没有来源时，`sources` 就是 `[]`，这与「未采用研究」是两件事，不要用空列表掩盖 `adoptions` 的实际内容。
+
+兼容期：`save-hosted-handoff` 只接受 v3 的新 Brief；v1/v2 仍可读，且只能通过 `reconcile-hosted-handoff`（重放已写下的原意图）写入。Quick 交接保持 v1——它只有一个 `research` 引用，其 sources 已由该 revision 固定。绑定判定与 `reference_fixing` 回执共用同一次 revision 读取，不额外花源请求。
+
 `watch_adoptions` 最多8项，可以为空。每项只含以下字段，采用[原 Watch 证据 reader](research-agenda.md#关联已存-watch-条件证据)读取实际结果，不接受模型自行摘写的检查替代物：
 
 | 字段 | 实际绑定 |

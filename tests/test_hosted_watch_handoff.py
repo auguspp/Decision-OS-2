@@ -1,6 +1,6 @@
 """A Full Watch check reaches the author Brief and an independent retained reader."""
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -9,6 +9,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.application.watch_activity import WatchActivity
 from decision_kernel.application.watch_evidence import export_required
 from decision_kernel.domain.records import BlobRef, Conflict, RecordError, RevisionInput, digest, encoded
+from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.infrastructure.git_store import GitStore
 from test_conditional_odds import authorized, price_payload
 from test_full_watch import full_watch, question_link, saved_odds, structured_full
@@ -19,12 +20,28 @@ from test_watch_conditions import evidence_condition, evidence_entry, numeric, v
 
 def document(research, check_ref, result, *, question="open", kind="check"):
     change = "The unresolved cash bridge still cannot establish the shareholder cash assumption."
-    return {"schema": handoff.WATCH_SCHEMA, "kind": "brief", "execution_date": "2026-01-03",
+    return {"schema": handoff.BOUND_SCHEMA, "kind": "brief", "execution_date": "2026-01-03",
         "cutoff": "2026-01-03T05:00:00Z", "scope": "Synthetic Full Watch adoption",
         "gaps": ["Synthetic engineering evidence, not investment research"], "baseline": None,
-        "body": "Author Brief. " + change, "adoptions": [], "watch_adoptions": [{
+        "body": "Author Brief. " + change, "adoptions": [], "sources": [], "watch_adoptions": [{
             "reference": research, "question_id": question, "kind": kind, "check_ref": check_ref,
             "result_sha256": digest(encoded(result)), "used_change": change}]}
+
+
+def legacy_baseline(api, doc, reference, submission, *, version="hosted-ai-handoff-v1",
+                    execution_date="2026-01-04", cutoff="2026-01-04T05:00:00Z"):
+    """Materialise a pre-v3 Brief as an explicit replay.
+
+    A v1/v2 Brief can no longer be written by a normal save, but read-path tests
+    still need a baseline that really exists in that version instead of a
+    dictionary that only looks like one.
+    """
+    value = {**doc, "schema": version, "execution_date": execution_date, "cutoff": cutoff,
+             "baseline": reference}
+    for field in ("watch_adoptions", "sources"):
+        value.pop(field, None)
+    legacy = VersionedStore(GitHubStore(replace(api.binding, write_enabled=True), api))
+    return handoff.save(legacy, value, submission, replay=True)["reference"]
 
 
 @pytest.fixture
@@ -135,10 +152,13 @@ def test_same_day_schema_change_does_not_create_another_brief(retained, schema):
     handoff.save(store, doc, "first")
     doc["body"] += " Updated wording."
     doc["schema"] = schema
+    doc.pop("sources")
     if schema == handoff.SCHEMA: doc.pop("watch_adoptions")
     head = store.backend.head()
+    # A pre-v3 Brief is only writable as an explicit replay, so the day guard
+    # is asked to hold for the replay path too.
     with pytest.raises(Conflict, match="HOSTED_DAY_ALREADY_SAVED"):
-        handoff.save(store, doc, "second")
+        handoff.save(store, doc, "second", replay=True)
     assert store.backend.head() == head
 
 
@@ -154,7 +174,7 @@ def test_publication_identifies_only_known_shapes_and_the_exact_baseline(retaine
     assert not export_required(next_doc)
     assert handoff.publication_required(store, next_doc)
     next_doc["schema"] = handoff.SCHEMA
-    next_doc.pop("watch_adoptions")
+    next_doc.pop("watch_adoptions"); next_doc.pop("sources")
     assert handoff.publication_required(store, next_doc)
     assert handoff.publication_required(store, {"kind": "brief", "items": [{"document": next_doc}]})
     assert not handoff.publication_required(store, {"source": {"document": doc}})

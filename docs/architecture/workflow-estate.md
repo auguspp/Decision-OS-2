@@ -32,7 +32,7 @@
 | `news-rolling.yml` | 仅 dispatch | `news_rolling_cli` | **保留（生产）**：已保管切片的现行消费者 |
 | `news-custody.yml` | 仅 dispatch | `news_custody` | **保留（生产）**：来源恢复属保管职责 |
 | `news-handoff.yml` | 仅 dispatch | `news_handoff_cli` | **保留（生产）**；退役须先有具名替代消费者 |
-| `ashare-data.yml` | 仅 dispatch | `market_collection_cli` + 5 个 `ftshare_*_cli` | **保留（生产）**：`sync`/`repair` 是写；`status` 是只读；`ftshare-check`/`-kernel`/`calendar` 是带日期的历史研究 |
+| `ashare-data.yml` | 仅 dispatch | `market_collection_cli` | **保留（生产）**：`sync`/`repair` 是写，`status` 是只读；5 个带日期的一次性操作已于 2026-10-23 退出菜单 |
 | `market-source-check.yml` | 仅 dispatch | `market_source_check_cli` | **本地优先**：全部分支都是有界只读诊断，不导出供应商行 |
 | `relay-capabilities.yml` | 仅 dispatch | `relay_capabilities_cli` | **本地优先**：只探服务元数据；本地无供应商密钥时仍留 runner |
 | `rss-intake.yml` | 仅 dispatch | `rss_cli` | **退役候选**：需先证明 NewsNow/relay 覆盖同一 RSS 范围 |
@@ -43,10 +43,12 @@
 
 **GitHub 没有删除工作流的 REST 端点**（`DELETE /repos/{owner}/{repo}/actions/workflows/{id}` 返回 404）。注册项只有在它**所有运行历史被删除之后**才会消失，而删运行历史等于删审计线索。所以本仓选择：**保留历史、把注册项置为 `disabled_manually`**。这 5 个现在是这个状态，`active` 计数从 20 降到 15，与文件数一致。要回滚只需 `PUT .../actions/workflows/{id}/enable`。
 
-## 这次一个文件都没删，理由三条
+## 本轮删了什么、没删什么
+
+删的：`ashare-data.yml` 里 5 个一次性 job 与它们的 5 个菜单选项（唯一的结构性删除，见下第 2 条）。没删的：任何 workflow 文件、任何 CLI、任何测试、任何历史 records。理由三条：
 
 1. **「零业务 7 天」不是退役依据**。`rss-intake`（最后 10/16）、`relay-capabilities`（10/15）、`market-source-check`（10/17）都过了一周，但它们各有测试与文档消费者，其中两个还是**证据生产者**——删掉不是省维护，是把「凭什么这么说」的凭据删掉。这与 #221 C 的「0 引用 ≠ 可以停用」是同一条判据。
-2. **只活在历史里的操作，是收窄触发而不是删入口**。`ashare-data.yml` 的 `run-name` 把 `ftshare-check` 写死在 `20261018`、`check-kernel` 写死在 `20261019`——这些是一次性研究，不是常设职责。它们的处置是「停止新采集、保留历史读取」，入口本身仍承载 `sync`/`repair`。
+2. **只活在历史里的操作，是收窄触发而不是删入口**。`ashare-data.yml` 的 `run-name` 把 `ftshare-check` 写死在 `20261018`、`check-kernel` 写死在 `20261019`——这些是一次性研究，不是常设职责。**2026-10-23 已执行**：菜单从 10 个选项收窄到 `status`/`sync`/`repair`/`ftshare-sync`/`ftshare-status`，5 个一次性 job 一并删除（文件从 422 行降到 219 行）；对应 CLI 与测试**保留**，历史回执仍可读。依据是 `docs/sources/ftshare-daily.md` 自己写的「原核验已经结束」「不因这项授权重开」。
 3. **5 个僵尸的文件早就删了**，剩下的只是注册项，而注册项删不掉（见上）。
 
 ## 退役四步（缺一步就不算退役）
@@ -56,7 +58,9 @@
 3. 在**专属 PR** 里一起退出 CLI、workflow、config、测试和文档——不要留下半截引用。
 4. **历史 SourceRef 不失读**：已写入 records 的引用必须仍能按原版本读回。
 
-当前只有 `rss-intake` 走到第 2 步的入口（裁定中）。其余条目都停在「保留」，没有一项满足四步，因此本轮不改任何采集实现。
+第一项已按四步走完：`ashare-data.yml` 的 5 个一次性操作。①切断新生产依赖 = 从菜单移除，任何新派发都选不到；②回退 = 菜单在 git 里，需要时一条 revert 即可恢复，且被保管的回执与 CLI 原样保留；③专属 PR 里同时改了 workflow、结构测试、`docs/sources/ftshare-daily.md` 和本清单，没有留下半截引用；④历史读取 = 只删 job，不删 CLI、不删测试、不删 records，已成功的运行回执仍可从 Actions 历史与 artifacts 取。
+
+`rss-intake` 仍停在裁定阶段（需先证明另一种 intake 覆盖同一 RSS 范围）。其余条目都停在「保留」，本轮不动。
 
 ## 与只读工作台的分界
 

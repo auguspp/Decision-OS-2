@@ -150,6 +150,42 @@ GitHub writer 在发送任何提交前还检查新文件加入后的完整树：
 
 集合链发现也有独立的 8192 节点 / 512 MiB 累计唯一清单正文字节边界，在新根写入前预留本单元两个最大根（各 1 MiB 集合及 64 KiB 固定元数据余量）。这个字节数衡量逻辑清单，不是内存常驻量或允许下载的原生 Git 大小。同范围重复父引用仅在完整 exact SourceRef 已验证时复用，仍核选择、原提交可达性、字节和 owner。容量回执是当前有限余量，不是无限历史、备份成功或长期在线率。逼近边界时停止新取源，保留现有 exact 版本可读；扩容、受控归档或迁移按现有单一 writer/精确引用合同处理，不隐式删除老数据，不创建第二写入真源。
 
+### 实测库存（2026-10-23，records `87e9c38d`）
+
+用上一段的同一口径实测，不新造第二套分母：
+
+| 项 | 实测 | 上限 | 占比 |
+|---|---:|---:|---:|
+| `tree_entries`（blob 3946 + 目录 1801） | 5747 | 32768 | 17.5% |
+| `version_count` | 1127 | 8192 | 13.8% |
+| blob 原始字节合计 | 42,944,972（40.96 MiB） | 不适用 | — |
+
+`version_count` 沿 `github_tree_inventory` 的判据求和（`source-views/*/manifest.json` + `research/cases/*/record.json` + `research/artifacts/*/manifest.json`），与 writer 写前检查用的是同一规则，不是另一种计数。按顶层目录，`source-views` 38,673,550 B（90.1%）、`research` 3,965,266 B（9.2%，其中 `artifacts` 3,500,478 B）、`submissions` 305,961 B（0.7%）。GitHub 后端不计算 `native_bytes`（该字段只对本地 `GitStore` 计），因此上表字节数是直接对 tree 行求和所得的独立测量，**不是**生产容量字段。
+
+复现方式（响应 `truncated=false`，5747 项远小于递归边界，故无截断）：
+
+```bash
+gh api "repos/auguspp/Decision-OS-2/git/trees/records?recursive=1" > tree.json
+# tree_entries = blob 数 + 目录数；version_count 按 github_tree_inventory 的同一判据求和
+gh api --paginate "repos/auguspp/Decision-OS-2/commits?sha=records&per_page=100&since=2026-10-16T00:00:00Z"
+```
+
+#### 单次自然日周期实际占多少
+
+| 日期 | records 提交数 | 周期视图 id | 周期字节 |
+|---|---:|---:|---:|
+| 10-19 | 60 | 11 | 46,085 |
+| 10-20 | 93 | 14 | 66,998 |
+| 10-21 | 235 | 12 | 59,263 |
+| 10-22 | 50 | 14 | 73,030 |
+| 10-23 | 95 | 1 | 3,793 |
+
+每次 `GitHubStore.commit` 是一条带 `expectedHeadOid` 的 GraphQL 提交，因此「提交数」就是写次数。一个完整周期 `daily-market-cycle-<date>-rNNN` 每步写 3 个文件（selection、manifest、identity），各记 1 个版本。10-20 与 10-21 的 `r000`–`r011` 内容哈希逐日不同，是真实状态推进而非重复写入，**不能**靠内容去重省掉。
+
+由此可算：周期每天约 **12–14 个版本、12–14 次提交、60 KiB 上下**；维持不变则一年约 4,500 个版本（相当于当前余量 7,065 的 64%）与约 22 MiB。10-23 只有 1 个 id，是 `FTSHARE_MAIN_MOVED` 在写完日历意图切片后拦停所致，不是周期缩水。
+
+**引用边界：** 这些数字只证明「每日常驻固定池」在版本维度上有可测成本，**不足以**据此取消 Radar 扫描范围证据、PIT/复权约束或被引用内容的长期恢复；停用哪些日更固定写入仍须按 #221 C 的条件逐项裁定，且必须保留历史 reader 与最新失败。
+
 已保存的成功页不会因运行结束而丢失；未知响应的原始网络结果仍可能无法重建，必须保留该事实。恢复到更早源码版本不会删除新数据；暂不理解新 schema 的旧 reader 也不能被称为恢复成功。退出本能力时一起处理专属 collection/runtime/工作流/测试及本文入口，保留原共享来源、版本保管、raw/qfq、研究与 CI 保护。
 
 ## 验证责任

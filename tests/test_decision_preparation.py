@@ -145,7 +145,7 @@ def test_preparation_requires_substantive_comparison_and_unresolved_human_items(
 
 
 def existing_conditional(store, ref, *, price=None):
-    odds = ConditionalOdds(store, clock=lambda: NOW)
+    odds = ConditionalOdds(store, allow_declared_only=True, clock=lambda: NOW)
     frozen = odds.freeze(odds_authorized("spec", spec_payload(asdict(ref))), submission_id="existing-spec")
     saved = odds.save(odds_authorized("calculation", {"spec_ref": frozen["reference"],
                      "price": price or price_payload()}), submission_id="existing-odds")

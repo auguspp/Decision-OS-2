@@ -150,7 +150,7 @@ def test_no_cash_in_present_value_and_no_negative_capital_disguised_as_dividend(
 
 def test_frozen_spec_and_two_results_do_not_change_research(context, spec):
     store, ref = context
-    service = ConditionalOdds(store)
+    service = ConditionalOdds(store, allow_declared_only=True)
     original_body = store.read_revision(ref)["body"]
     frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
     original_hash = frozen["spec_sha256"]
@@ -170,7 +170,7 @@ def test_frozen_spec_and_two_results_do_not_change_research(context, spec):
 
 
 def test_historical_calculation_readable_but_not_mislabelled_current(context, spec):
-    store, ref = context; service = ConditionalOdds(store)
+    store, ref = context; service = ConditionalOdds(store, allow_declared_only=True)
     frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
     saved = service.save(authorized("calculation", {"spec_ref": frozen["reference"], "price": price_payload()}), submission_id="result")
     old = service.read(saved["reference"])
@@ -182,7 +182,7 @@ def test_historical_calculation_readable_but_not_mislabelled_current(context, sp
 
 
 def test_price_source_value_security_and_date_are_checked(context, spec):
-    store, _ = context; service = ConditionalOdds(store)
+    store, _ = context; service = ConditionalOdds(store, allow_declared_only=True)
     price_ref = store.put_source("quote", SourceInput("quote", "dataset", "Synthetic Relay quote", ROOT+"/daily",
         "ts_code,trade_date,close\nTEST.SZ,20260102,100\n", custody="excerpt", limitations=("Synthetic only",)))
     price = price_payload(kind="relay-observation", evidence={"source": asdict(price_ref),
@@ -199,7 +199,7 @@ def test_price_source_value_security_and_date_are_checked(context, spec):
 
 
 def test_cited_source_outside_exact_research_and_unconfirmed_publication_refused(context, spec):
-    store, _ = context; service = ConditionalOdds(store)
+    store, _ = context; service = ConditionalOdds(store, allow_declared_only=True)
     initial = store.backend.head()
     spec["worlds"][0]["source_indices"] = [1]
     with pytest.raises(RecordError, match="SOURCE_OUTSIDE_FROZEN"):
@@ -212,7 +212,7 @@ def test_cited_source_outside_exact_research_and_unconfirmed_publication_refused
 
 
 def test_arbitrary_source_instructions_do_not_execute(context, spec, tmp_path):
-    store, _ = context; service = ConditionalOdds(store)
+    store, _ = context; service = ConditionalOdds(store, allow_declared_only=True)
     spec["worlds"][0]["basis_note"] = "__import__('os').system('touch SHOULD_NOT_EXIST')"
     frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
     assert service.read_spec(frozen["reference"])["spec"]["worlds"][0]["basis_note"].startswith("__import__")
@@ -220,7 +220,7 @@ def test_arbitrary_source_instructions_do_not_execute(context, spec, tmp_path):
 
 
 def test_bad_reference_and_fresh_failure_preserve_known_receipt(context, spec):
-    store, _ = context; service = ConditionalOdds(store)
+    store, _ = context; service = ConditionalOdds(store, allow_declared_only=True)
     frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
     bad = dict(frozen["reference"], sha256="0"*64)
     with pytest.raises(RecordError):
@@ -229,3 +229,27 @@ def test_bad_reference_and_fresh_failure_preserve_known_receipt(context, spec):
         raise RecordError("UNAVAILABLE")
     receipt = verify_fresh(frozen, "freeze-valuation", failed)
     assert receipt["reference"] == frozen["reference"] and receipt["readback"]["status"] == "failed"
+
+
+def test_declared_only_price_is_refused_for_new_records(context, spec):
+    store, _ = context
+    service = ConditionalOdds(store)
+    frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
+    initial = store.backend.head()
+    with pytest.raises(RecordError, match="PRICE_EVIDENCE_REQUIRED"):
+        service.save(authorized("calculation", {"spec_ref": frozen["reference"], "price": price_payload()}),
+                     submission_id="no-evidence")
+    # The refusal happens before the write, so no partial record exists.
+    assert store.backend.head() == initial
+
+
+def test_acknowledged_declared_only_price_is_saved_labelled_and_still_recalculates(context, spec):
+    store, _ = context
+    service = ConditionalOdds(store, allow_declared_only=True)
+    frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
+    saved = service.save(authorized("calculation", {"spec_ref": frozen["reference"], "price": price_payload()}),
+                         submission_id="declared")
+    assert saved["price_evidence"] == "declared-only-acknowledged"
+    # Narrowing the write must not narrow history: a plain reader still rebuilds it.
+    plain = ConditionalOdds(VersionedStore(GitStore(store.backend.root)))
+    assert plain.read(saved["reference"])["recalculation"] == "matches"

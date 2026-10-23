@@ -31,7 +31,7 @@ def collect(store, plan=None):
 
 def saved_pair(context):
     store, research = context
-    service = ConditionalOdds(store)
+    service = ConditionalOdds(store, allow_declared_only=True)
     spec = service.freeze(authorized("spec", spec_payload(asdict(research))), submission_id="book-spec")["reference"]
     first = service.save(authorized("calculation", {"spec_ref": spec, "price": price_payload()}),
                          submission_id="book-first")["reference"]
@@ -163,7 +163,7 @@ def test_orphan_companions_remain_missing_candidates_not_an_empty_success(tmp_pa
 
 def test_valid_eighty_digit_saved_output_is_preserved_without_input_precision_gate(context):
     store, research = context
-    service = ConditionalOdds(store)
+    service = ConditionalOdds(store, allow_declared_only=True)
     spec = service.freeze(authorized("spec", spec_payload(asdict(research))), submission_id="spec")["reference"]
     saved = service.save(authorized("calculation", {"spec_ref": spec, "price": price_payload(price="7")}),
                          submission_id="long-result")["reference"]

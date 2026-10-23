@@ -85,7 +85,23 @@ anchor_status: "not-established-by-provider-response"
 | **L0** | 本文件；`checkpoint` / `save-hosted-handoff` 回执中加性输出 `reference_fixing` | 否（回执不入库） | 最低 | **已实现** |
 | **L1** | Research：让「引用即固定」可审计（`verify-reference-fixing`） | 否 | 低 | **已实现，范围见 6.2** |
 | **L2** | Brief：`save-hosted-handoff` 增加来源绑定 | 是（需版本升级 + 兼容期） | 中 | 未开始 |
-| **L3** | 收窄 `save-odds` 的仅声明路径 | 是（影响现有调用方） | 中高，需单独 PR 与兼容期 | 未开始 |
+| **L3** | 收窄 `save-odds` 的仅声明路径 | 否（`compute()` 与记录格式均未动，见 6.3） | 中，见 6.3 | **已实现** |
+
+### 6.1 Odds 结果的加性字段不成立
+
+原计划在 `save-odds` 回执里加自检字段，按「加性可选」处理。读代码后确认**不成立**：
+
+```python
+def read(self, reference):
+    result = self._open(reference, RESULT_RECORD)
+    ...
+    rebuilt = self.compute(...)
+    require(encoded(rebuilt) == encoded(result), "ODDS_RECALCULATION_MISMATCH")
+```
+
+`read()` 要求重算结果与已存结果**逐字节相等**。若在 `compute()` 内新增字段，所有历史 `conditional-odds-record-v1` 都会因缺少该字段而读不出来。因此 Odds 的任何字段改动都不是「加性」，而是版本升级：须新增 schema 版本并保留对 `RETAINED_VERSION` 的读取分支，旧结果不得重算成新形态。
+
+同理适用于任何按「重算即校验」保存的消费者。判定方法：写入后是否存在 `encoded(rebuilt) == encoded(stored)` 类比对，有则不得按加性处理。
 
 ### 6.2 L0/L1 实际交付了什么，以及它证明不了什么
 
@@ -107,21 +123,16 @@ anchor_status: "not-established-by-provider-response"
 
 报告固定携带 `coverage_assertion: "not-declared-in-existing-fields"`，这是个显式拒绝，不是占位符。
 
-### 6.1 Odds 结果的加性字段不成立
+### 6.3 L3 只收窄写入，不动结果形态
 
-原计划在 `save-odds` 回执里加自检字段，按「加性可选」处理。读代码后确认**不成立**：
+最初把 L3 估为「改 schema」是过度估计。实际做法不需要动记录：
 
-```python
-def read(self, reference):
-    result = self._open(reference, RESULT_RECORD)
-    ...
-    rebuilt = self.compute(...)
-    require(encoded(rebuilt) == encoded(result), "ODDS_RECALCULATION_MISMATCH")
-```
+- 阻断点放在 `ConditionalOdds.save()`，在 `compute()` 之后、`_put()` 之前。`compute()` 不变，因此 `read()` 的 `encoded(rebuilt) == encoded(stored)` 仍对历史结果成立——**历史仅声明结果照旧可读，只有新的写入被收窄**。
+- 显式承认通道是构造参数 `allow_declared_only`，CLI 上是 `save-odds --allow-declared-only`；承认后回执记 `price_evidence=declared-only-acknowledged`，未承认而通过则记 `fixed-slice-verified`。回执不入库，因此不影响重算比对。
+- 宿主运行时通道（`research-runtime` 的 `save-odds`）**不提供**该开关：自动化不得自行承认一个没有固定切片的估值。确需此类记录时由本地显式命令完成。
+- 未承认即抛 `ODDS_PRICE_EVIDENCE_REQUIRED`，且发生在写入之前——拒绝之后存储 head 不变，没有半份记录。
 
-`read()` 要求重算结果与已存结果**逐字节相等**。若在 `compute()` 内新增字段，所有历史 `conditional-odds-record-v1` 都会因缺少该字段而读不出来。因此 Odds 的任何字段改动都不是「加性」，而是版本升级：须新增 schema 版本并保留对 `RETAINED_VERSION` 的读取分支，旧结果不得重算成新形态。
-
-同理适用于任何按「重算即校验」保存的消费者。判定方法：写入后是否存在 `encoded(rebuilt) == encoded(stored)` 类比对，有则不得按加性处理。
+如果哪天要把「仅声明」也写进结果本身（例如加一条 limitation），那就回到 6.1 的结论：属版本升级，不是加性。
 
 ## 7. 不做什么
 

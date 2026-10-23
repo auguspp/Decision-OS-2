@@ -24,7 +24,7 @@ from test_watch_execution import Clock, plan_payload, query as execution_query
 
 
 def saved_odds(store, spec, key="full-odds"):
-    return ConditionalOdds(store).save(authorized("calculation", {
+    return ConditionalOdds(store, allow_declared_only=True).save(authorized("calculation", {
         "spec_ref": spec, "price": price_payload()}), submission_id=key)["reference"]
 
 

@@ -63,11 +63,13 @@ def validate_calculation(payload):
 
 
 class ConditionalOdds:
-    def __init__(self, store, registry=None, *, clock=None):
+    def __init__(self, store, registry=None, *, clock=None, allow_declared_only=False):
+        require(type(allow_declared_only) is bool, "ODDS_DECLARED_ONLY_FLAG_INVALID")
         self.store = store
         self.artifacts = ResearchArtifacts(store)
         self.registry = registry
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.allow_declared_only = allow_declared_only
 
     def _frozen(self, payload):
         spec = validate_spec(payload)
@@ -184,9 +186,16 @@ class ConditionalOdds:
     def save(self, payload, *, submission_id):
         calculation = publication(payload, "calculation")
         result = self.compute(calculation)
+        # A price with no fixed slice cannot be re-derived later: the stored
+        # bytes that justified it were never bound. New records must not take
+        # that path silently. Historical ones stay readable because compute()
+        # still reconstructs them; only this write is narrowed.
+        declared_only = result["price_check"]["status"] == "declared-reference-only"
+        require(not declared_only or self.allow_declared_only, "ODDS_PRICE_EVIDENCE_REQUIRED")
         ref = self._put(submission_id, RESULT_RECORD, result, payload["rights_basis"])
         return {"reference": asdict(ref), "calculation_sha256": digest(encoded(result)),
-                "spec_ref": result["spec_ref"], "research_ref": result["research_ref"]}
+                "spec_ref": result["spec_ref"], "research_ref": result["research_ref"],
+                "price_evidence": "declared-only-acknowledged" if declared_only else "fixed-slice-verified"}
 
     def read(self, reference):
         result = self._open(reference, RESULT_RECORD)

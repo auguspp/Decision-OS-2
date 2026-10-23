@@ -36,7 +36,7 @@ UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code"
     "calendar_additional_source_budget", "calendar_reserved_requests", "calendar_repair",
     "write_reconciliation", "write_reconciliation_native_proof", "write_last_failure",
     "master_source_requests", "master_refresh", "master_reserved_queries", "master_query_budget",
-    "master_page_budget", "master_source_budget", "master_execution",
+    "master_page_budget", "master_source_budget", "master_execution", "master_interruption",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
     "no-new-session": "没有新增交易日", "paused": "更新已暂停", "not-due": "尚未到约定更新时间",
@@ -119,6 +119,16 @@ def _summary_lines(model):
         category = failure.get("classification")
         if isinstance(category, str) and category in TRANSPORT_CLASSES | {"unclassified"}:
             lines.append("日历传输分类：" + category + "；本次没有自动重试。")
+    interruption = receipt.get("master_interruption")
+    if isinstance(interruption, dict) and interruption.get("schema") == "daily-master-interruption-v1":
+        venue = interruption.get("venue")
+        named = {"SSE": "上交所", "SZSE": "深交所"}.get(venue) if isinstance(venue, str) else None
+        if named is not None:
+            if interruption.get("automatic_retry") is True:
+                lines.append(named + "证券主表：上一次中断没有留下已确认的页码，下一次更新会从头续抓。")
+            elif interruption.get("automatic_retry") is False:
+                lines.append(named + "证券主表：上一页请求可能已经发出但没有收到回执，"
+                    "本轮不会自动重试，需要一次显式对账之后才能继续。")
     if receipt.get("calendar_additional_source_budget") == 1:
         lines.append("日历恢复：原2次预算之外显式追加1次；原失败与已用请求仍保留。")
     reconciliation = receipt.get("write_reconciliation")

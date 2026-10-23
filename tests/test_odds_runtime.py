@@ -9,6 +9,7 @@ import pytest
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import Conflict, MissingObject, RecordError, RevisionInput, SourceInput, UnknownWrite
 from decision_kernel.infrastructure.github_store import GitHubStore
+from decision_kernel.infrastructure.relay_http import ROOT
 from decision_kernel.interfaces import research_runtime as runtime
 from test_conditional_odds import spec_payload, price_payload, authorized
 from test_research_runtime import host, invoke
@@ -21,11 +22,26 @@ def prepare(host):
     return spec_payload(asdict(ref))
 
 
+def evidence_price(host):
+    """A declared price backed by an actually retained quote slice.
+
+    The host channel deliberately has no declared-only switch, so anything
+    saved through it must cite bytes that already exist.
+    """
+    store = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
+    quote = store.put_source("quote", SourceInput("quote", "dataset", "Synthetic Relay quote", ROOT + "/daily",
+        "ts_code,trade_date,close\nTEST.SZ,20260102,100\n", custody="excerpt", limitations=("Synthetic only",)))
+    return price_payload(kind="relay-observation", evidence={"source": asdict(quote),
+        "value_locator": {"row": 1, "column": "close"},
+        "security_locator": {"row": 1, "column": "ts_code"},
+        "date_locator": {"row": 1, "column": "trade_date"}})
+
+
 def test_runtime_freeze_calculate_save_and_read_are_separate(host, tmp_path):
     spec = prepare(host)
     frozen = invoke(host, tmp_path / "freeze", "freeze-valuation", authorized("spec", spec), "freeze")
     assert frozen["write"] == "published" and frozen["result"]["readback"]["status"] == "verified"
-    payload = {"spec_ref": frozen["result"]["reference"], "price": price_payload()}
+    payload = {"spec_ref": frozen["result"]["reference"], "price": evidence_price(host)}
     writes = host.writes
     result = invoke(host, tmp_path / "compute", "calculate-odds", payload)
     assert host.writes == writes and result["write"] == "not-requested"
@@ -41,7 +57,7 @@ def test_unknown_write_same_original_intent_recovers_readonly(host, tmp_path, op
     spec = prepare(host)
     frozen = invoke(host, tmp_path / "freeze", "freeze-valuation", authorized("spec", spec), "freeze")
     payload = authorized("spec", {**spec, "spec_id": "lost"}) if operation == "freeze-valuation" else authorized(
-        "calculation", {"spec_ref": frozen["result"]["reference"], "price": price_payload()})
+        "calculation", {"spec_ref": frozen["result"]["reference"], "price": evidence_price(host)})
     expected = host.git.head()
     def lose(_):
         raise UnknownWrite("SIMULATED_RESPONSE_LOST")

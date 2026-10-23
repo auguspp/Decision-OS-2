@@ -6,6 +6,8 @@
 
 本责任组提供固定来源传输、严格日 K 资格检查、有限账户验证，以及同一 Store 上的生产集合与正常读取接线。`ftshare-check` / `ftshare-check-continue` / `ftshare-check-kernel` 不写 records，原核验已经结束。已验证的 Kernel v1 原文通过 `ftshare-adopt-kernel` 直接采用，新增行情 HTTP 为 0。正常 `ftshare-sync` 现在由可信配置的 `kernel_sync` 选择 v1 单股整段更新，直接继承已保管的资格和价格；旧批量配置 `qualification: null` 保留，不用单股证据填写批量资格。有限输入和有界更新不代表长期可用率或完整市场覆盖。
 
+**2026-10-23 菜单收窄（#221 D）**：上面五个一次性操作已在 `ashare-data.yml` 的派发菜单中移除，对应的 5 个 job 一并删除，`run-name` 不再按日期分支。依据是本页自己写下的两条事实——「原核验已经结束」与「历史 ftshare-check/continue/kernel、calendar one-shot、adopt 及原 repair 不因这项授权重开」。**保留**的是它们的 CLI、测试与全部已完成运行的回执：历史读取不受影响，需要重开任何一项都必须先改本页的授权条件，而不是从菜单里选一个。现役入口只剩 `status`（只读）、`sync`、`repair`、`ftshare-sync`（日更写入链）与 `ftshare-status`。
+
 ## 可核对的上游合同
 
 原批量实现依据是 FTShare 官方 [FTShare-skill 固定版本](https://github.com/FTShare-Lab/FTShare-skill/tree/d2233464fc26b6d3c885f60543e316565361bd83) 中的 [stock-candlesticks-batch](https://github.com/FTShare-Lab/FTShare-skill/blob/d2233464fc26b6d3c885f60543e316565361bd83/ftshare-market-data/sub-skills/stock-candlesticks-batch/SKILL.md) 及其 handler；以下保留它的独立协议。当前采用的 v1 合同与真实结果见「复用 Kernel v1 整段日线」，两种入口不能混用请求身份、成功 envelope 或账户资格。

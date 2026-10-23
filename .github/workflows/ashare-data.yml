@@ -1,14 +1,14 @@
 name: decision-os-ashare-data
-run-name: ${{ inputs.operation == 'ftshare-check' && 'FTShare daily check 20261018' || inputs.operation == 'ftshare-check-continue' && 'FTShare daily check continuation 20261018' || inputs.operation == 'ftshare-check-kernel' && 'FTShare Kernel v1 daily check 20261019' || inputs.operation == 'ftshare-adopt-kernel' && 'FTShare Kernel v1 adoption 20261019' || inputs.operation == 'ftshare-calendar' && 'FTShare calendar continuity 20261018' || 'decision-os-ashare-data' }}
+run-name: decision-os-ashare-data
 on:
   workflow_dispatch:
     inputs:
       operation:
         type: choice
-        options: [status, sync, repair, ftshare-check, ftshare-check-continue, ftshare-check-kernel, ftshare-adopt-kernel, ftshare-calendar, ftshare-sync, ftshare-status]
+        options: [status, sync, repair, ftshare-sync, ftshare-status]
         default: ftshare-status
         required: true
-        description: 'Read records, advance the trusted finite Kernel v1 whole-range plan, or use an explicit historical operation'
+        description: 'Read records, advance the trusted finite Kernel v1 whole-range plan, or repair the retained grant; the dated one-off checks are not offered here'
       code_sha:
         type: string
         required: true
@@ -17,7 +17,7 @@ on:
         type: string
         default: '{"collection_id":"ftshare-cn-eod","generation":"g20261016-v1"}'
         required: true
-        description: 'FTShare: trusted finite collection_id/generation, optional first-run calendar_references; check/continue/calendar: exact study; legacy operations require their explicit existing selection; <=6000 bytes'
+        description: 'FTShare: trusted finite collection_id/generation; <=6000 bytes'
       work_units:
         type: string
         default: '1'
@@ -70,8 +70,6 @@ jobs:
       github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' &&
       ((inputs.operation == 'sync' && inputs.access_and_custody_confirmed != true) ||
       (inputs.operation == 'repair' && (inputs.access_and_custody_confirmed != true || github.event.repository.private != true)) ||
-      ((inputs.operation == 'ftshare-check' || inputs.operation == 'ftshare-check-continue' || inputs.operation == 'ftshare-check-kernel' || inputs.operation == 'ftshare-adopt-kernel' || inputs.operation == 'ftshare-calendar') &&
-      (inputs.access_and_custody_confirmed != true || github.event.repository.private != true || inputs.public_rights_confirmed != false)) ||
       (inputs.operation == 'ftshare-sync' && inputs.access_and_custody_confirmed != true) ||
       ((inputs.operation == 'ftshare-sync' || inputs.operation == 'ftshare-status') && inputs.public_rights_confirmed != false))
     runs-on: ubuntu-latest
@@ -143,167 +141,6 @@ jobs:
           path: ${{ runner.temp }}/dos2-ashare-data/result.json
           if-no-files-found: warn
           retention-days: 7
-  ftshare-check:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-check' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: ./.github/actions/ci-python
-        with:
-          profile: contracts
-      - name: Verify private native execution and reuse the exact stored comparison universe
-        id: prepare
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_check_cli prepare --out "$RUNNER_TEMP/dos2-ftshare-check"
-      - name: Qualify the selected FTShare daily endpoint with at most six source requests
-        id: capture
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-          FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
-        run: python -m decision_kernel.interfaces.ftshare_check_cli capture --out "$RUNNER_TEMP/dos2-ftshare-check"
-      - name: Recheck native privacy before releasing original diagnostic bytes
-        if: always() && steps.prepare.outcome == 'success'
-        id: release
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_check_cli release --out "$RUNNER_TEMP/dos2-ftshare-check"
-      - name: Retain the original finite check and its actual failures in the same private repository
-        if: always() && steps.release.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: dos2-ftshare-check-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-ftshare-check/
-          if-no-files-found: error
-          retention-days: 30
-  ftshare-check-continue:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-check-continue' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: ./.github/actions/ci-python
-        with:
-          profile: contracts
-      - name: Verify the original rejected study and its remaining five-call allowance
-        id: prepare
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_check_continuation_cli prepare --out "$RUNNER_TEMP/dos2-ftshare-check-continuation"
-      - name: Qualify the corrected official client contract within the original six-call total
-        id: capture
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-          FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
-        run: python -m decision_kernel.interfaces.ftshare_check_continuation_cli capture --out "$RUNNER_TEMP/dos2-ftshare-check-continuation"
-      - name: Recheck native privacy before releasing original diagnostic bytes
-        if: always() && steps.prepare.outcome == 'success'
-        id: release
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_check_continuation_cli release --out "$RUNNER_TEMP/dos2-ftshare-check-continuation"
-      - name: Retain the original finite check and its actual failures in the same private repository
-        if: always() && steps.release.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: dos2-ftshare-check-continuation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-ftshare-check-continuation/
-          if-no-files-found: error
-          retention-days: 30
-  ftshare-check-kernel:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-check-kernel' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: ./.github/actions/ci-python
-        with:
-          profile: contracts
-      - name: Restore both original v2 refusals, close baseline and exchange calendars
-        id: prepare
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_kernel_check_cli prepare --out "$RUNNER_TEMP/dos2-ftshare-check-kernel"
-      - name: Check Kernel v1 whole-range raw, repeat and forward within four calls
-        id: capture
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-          FTSHARE_API_KEY: ${{ secrets.FTSHARE_API_KEY }}
-        run: python -m decision_kernel.interfaces.ftshare_kernel_check_cli capture --out "$RUNNER_TEMP/dos2-ftshare-check-kernel"
-      - name: Recheck native privacy before releasing original diagnostic bytes
-        if: always() && steps.prepare.outcome == 'success'
-        id: release
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_kernel_check_cli release --out "$RUNNER_TEMP/dos2-ftshare-check-kernel"
-      - name: Retain the original finite check and its actual failures in the same private repository
-        if: always() && steps.release.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: dos2-ftshare-check-kernel-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-ftshare-check-kernel/
-          if-no-files-found: error
-          retention-days: 30
-  ftshare-calendar:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-calendar' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: ./.github/actions/ci-python
-        with:
-          profile: contracts
-      - name: Retain the two actual exchange calendars with a fixed shared source budget
-        id: runtime
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-          TUSHARE_PROXY_API_KEY: ${{ secrets.TUSHARE_PROXY_API_KEY }}
-        run: python -m decision_kernel.interfaces.ftshare_calendar_cli runtime --out "$RUNNER_TEMP/dos2-ftshare-calendar"
-      - name: Recheck private custody before releasing exact reading references
-        if: always()
-        id: release
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PY'
-          import os
-          from decision_kernel.infrastructure.github_store import GitHubAPI
-          from decision_kernel.interfaces.ftshare_check_cli import check_private
-          check_private(GitHubAPI(os.environ["DECISION_OS_STORE_TOKEN"]), {"code_sha": os.environ["GITHUB_SHA"]})
-          PY
-      - name: Preserve the private result and exact reading control
-        if: always() && steps.release.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: dos2-ftshare-calendar-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-ftshare-calendar/
-          if-no-files-found: error
-          retention-days: 30
   ftshare-sync:
     if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-sync' && inputs.access_and_custody_confirmed == true && inputs.public_rights_confirmed == false
     runs-on: ubuntu-latest
@@ -336,46 +173,6 @@ jobs:
           DECISION_OS_STORE_TOKEN: ${{ github.token }}
         run: python -m decision_kernel.infrastructure.runtime_publication check market
       - name: Preserve the authorized result and exact reading control
-        if: always() && steps.release.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: dos2-ftshare-collection-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dos2-ftshare-collection/
-          if-no-files-found: error
-          retention-days: 30
-  ftshare-adopt-kernel:
-    if: github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && inputs.operation == 'ftshare-adopt-kernel' && inputs.access_and_custody_confirmed == true && github.event.repository.private == true && inputs.public_rights_confirmed == false
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: ./.github/actions/ci-python
-        with:
-          profile: contracts
-      - name: Adopt verified Kernel v1 originals with zero new market requests
-        id: runtime
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: python -m decision_kernel.interfaces.ftshare_collection_cli runtime --out "$RUNNER_TEMP/dos2-ftshare-collection"
-      - name: Recheck private custody before releasing exact reading references
-        if: always()
-        id: release
-        env:
-          DECISION_OS_STORE_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PY'
-          import os
-          from decision_kernel.infrastructure.github_store import GitHubAPI
-          from decision_kernel.interfaces.ftshare_check_cli import check_private
-          check_private(GitHubAPI(os.environ["DECISION_OS_STORE_TOKEN"]), {"code_sha": os.environ["GITHUB_SHA"]})
-          PY
-      - name: Preserve the private result and exact reading control
         if: always() && steps.release.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

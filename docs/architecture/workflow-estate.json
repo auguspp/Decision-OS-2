@@ -270,19 +270,12 @@
         "pull_request": false,
         "push": false
       },
-      "entries": [
-        "decision_kernel.interfaces.market_collection_cli",
-        "decision_kernel.interfaces.ftshare_check_cli",
-        "decision_kernel.interfaces.ftshare_check_continuation_cli",
-        "decision_kernel.interfaces.ftshare_kernel_check_cli",
-        "decision_kernel.interfaces.ftshare_calendar_cli",
-        "decision_kernel.interfaces.ftshare_collection_cli"
-      ],
+      "entries": ["decision_kernel.interfaces.market_collection_cli"],
       "disposition": "keep-ops",
-      "responsibility": "Finite A-share collection: status read, sync and repair writes, plus dated legacy FTShare checks",
-      "consumers": "docs/architecture/ashare-data-continuity.md; 2 test modules",
-      "exit": "the legacy dated operations (ftshare-check 20261018, check-kernel 20261019, calendar 20261018) are retire candidates; status is a read and can move local; sync and repair keep the writer",
-      "note": "the run-name pins 20261018 and 20261019, which is evidence those operations were one-off studies rather than a standing duty"
+      "responsibility": "Finite A-share collection: status read, sync and repair writes",
+      "consumers": "docs/architecture/ashare-data-continuity.md, docs/sources/ftshare-daily.md; 2 test modules",
+      "exit": "status is a read and can move local; sync and repair keep the writer. The dated one-off checks are already gone from the menu",
+      "note": "the five dated operations (ftshare-check 20261018, check-kernel 20261019, calendar 20261018, adopt-kernel, check-continue) left the dispatch menu on 2026-10-23 because docs/sources/ftshare-daily.md closes them ('verified, not to be reopened'); their CLIs stay so the historical receipts remain readable"
     },
     {
       "file": "rss-intake.yml",

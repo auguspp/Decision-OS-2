@@ -231,20 +231,3 @@ def test_quota_hold_prevents_next_source_even_after_valid_body(tmp_path):
     assert host.client.requests == 1 and host.read()["stop_reason"] == "FTSHARE_OBSERVED_QUOTA_EXHAUSTED"
 
 
-def test_kernel_workflow_confines_source_secret_to_capture_and_releases_original_bytes_after_privacy_check():
-    flow = yaml.load((Path(__file__).parents[1] / cli.WORKFLOW).read_text(), Loader=yaml.BaseLoader)
-    job = flow["jobs"]["ftshare-check-kernel"]
-    assert job["permissions"] == {"contents": "read", "actions": "read"}
-    assert "github.event.repository.private == true" in job["if"]
-    assert "inputs.public_rights_confirmed == false" in job["if"]
-    assert job["timeout-minutes"] == "30"
-    steps = {step["id"]: step for step in job["steps"] if "id" in step}
-    for stage in ("prepare", "capture", "release"):
-        assert f"decision_kernel.interfaces.ftshare_kernel_check_cli {stage}" in steps[stage]["run"]
-        assert ("FTSHARE_API_KEY" in steps[stage]["env"]) is (stage == "capture")
-    assert steps["release"]["if"] == "always() && steps.prepare.outcome == 'success'"
-    upload = job["steps"][-1]
-    assert upload["if"] == "always() && steps.release.outcome == 'success'"
-    assert upload["with"]["name"] == "dos2-ftshare-check-kernel-${{ github.run_id }}-${{ github.run_attempt }}"
-    assert upload["with"]["path"] == "${{ runner.temp }}/dos2-ftshare-check-kernel/"
-    assert all(not step.get("continue-on-error") for step in job["steps"])

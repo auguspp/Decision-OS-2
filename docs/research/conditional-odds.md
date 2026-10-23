@@ -33,7 +33,7 @@
 
 `odds-price-v1` 必填`price_id/kind/security/currency/share_count/price/as_of/note/evidence`。`kind`仅：
 
-- `declared-reference`：真实用户参考价或明确的分析假设，note如实记录谁提供、用于什么；模型给的价格不冒称用户给价。无来源时evidence=null，结果只标声明价格。
+- `declared-reference`：真实用户参考价或明确的分析假设，note如实记录谁提供、用于什么；模型给的价格不冒称用户给价。无来源时evidence=null，结果只标声明价格。**新的 `save-odds` 不再接受 evidence=null 直接落库**：必须先固定被引用的价格切片（`relay-observation` 或合格 `market` 路径）。确实要以纯声明价存档时，必须显式承认 `--allow-declared-only`，回执记 `price_evidence=declared-only-acknowledged`。已有的仅声明历史结果照旧可读、可重算，不受此收紧影响。
 - `relay-observation`：必须有确切来源与数值、证券、报价日期定位；核原origin为现有Relay。evidence为`{source, value_locator, security_locator, date_locator}`，locator沿现役数值工具使用CSV行/列或文本start/end。保管原值匹配、日期代码匹配**仍不是合格Market或发行人认证**；币种、股类和股本仍由作者声明，PIT/复权/交易资格没有建立。
 
 as_of须含时区；其日历日期对应所选报价日，调用者应采用来源本地时区，不自动推断时区/收盘时间。价格必须正数，证券/股类/币种/股数匹配冻结规格。可替换price-id/来源引用/日期/数值等价格上下文，但不得改变规格；新报价不滚动目标日。若分配日已过去或价格日不早于退出日，拒绝计算，要求显式调整规格，不能静默删除旧现金流。历史价配后续研究、当前估值配新日期价格均带限制，不能称历史PIT或新研究。

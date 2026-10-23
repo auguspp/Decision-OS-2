@@ -30,6 +30,9 @@ def configure(actions):
             action.add_argument("--registry", type=Path, required=name in REGISTRY_COMMANDS, help="matching retained Relay registry, not a feed")
         if name in WRITE_COMMANDS:
             action.add_argument("--submission-id", required=True)
+        if name in ("save-odds", "reconcile-odds"):
+            action.add_argument("--allow-declared-only", action="store_true",
+                                help="acknowledge a price with no fixed source slice; the receipt says so")
 
 
 def preflight(operation, payload):
@@ -49,7 +52,7 @@ def preflight(operation, payload):
         validate_calculation(publication(payload, "calculation"))
 
 
-def perform(store, operation, payload, submission_id="", registry=None):
+def perform(store, operation, payload, submission_id="", registry=None, allow_declared_only=False):
     preflight(operation, payload)
     if operation == BOOK_OPERATION:
         from decision_kernel.application.odds_book import read_book
@@ -78,7 +81,8 @@ def perform(store, operation, payload, submission_id="", registry=None):
             return service.compute(payload)
         shape(payload, {"reference"})
         return service.read_assessment(payload["reference"]) if operation == "read-odds-assessment" else service.read(payload["reference"])
-    service = ConditionalOdds(store, _registry(operation, registry))
+    service = ConditionalOdds(store, _registry(operation, registry),
+                              allow_declared_only=allow_declared_only)
     if operation in ("freeze-valuation", "reconcile-valuation"):
         return service.freeze(payload, submission_id=submission_id)
     if operation in ("save-odds", "reconcile-odds"):
@@ -92,7 +96,8 @@ def perform(store, operation, payload, submission_id="", registry=None):
 def execute(args, store, load, reader_factory):
     payload = {"reference": load(args.ref)} if args.store_command in REFERENCE_COMMANDS else load(args.input)
     registry = _registry(args.store_command, getattr(args, "registry", None))
-    result = perform(store, args.store_command, payload, getattr(args, "submission_id", ""), registry)
+    result = perform(store, args.store_command, payload, getattr(args, "submission_id", ""), registry,
+                     allow_declared_only=bool(getattr(args, "allow_declared_only", False)))
     if args.store_command in WRITE_COMMANDS:
         return verify_fresh(result, args.store_command, reader_factory, registry)
     return result

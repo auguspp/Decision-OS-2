@@ -124,7 +124,7 @@ def test_visible_prices_and_same_spec_results_keep_exact_strings_clocks_and_vers
     store, research, spec, alias, first, second = saved_pair(context)
     exact = "100.12345678901234567890123456789012"
     note = 'Synthetic hypothetical price <img src=x onerror="throw 1">; not a market observation.'
-    ConditionalOdds(store).save(authorized("calculation", {"spec_ref": spec,
+    ConditionalOdds(store, allow_declared_only=True).save(authorized("calculation", {"spec_ref": spec,
         "price": price_payload(price_id="precise-ui", price=exact, note=note)}), submission_id="precise-ui")
     add_versions(store, research)
     before = store.backend.head()

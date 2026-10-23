@@ -1,0 +1,392 @@
+{
+  "schema": "workflow-estate-v1",
+  "revision": "2026-10-23",
+  "owner": "#221 D",
+  "dispositions": [
+    "keep-core",
+    "keep-ops",
+    "local-first",
+    "retire-candidate",
+    "registry-only"
+  ],
+  "states": [
+    "present",
+    "registry-only"
+  ],
+  "invariants": [
+    "present means the workflow file exists on main right now",
+    "registry-only means GitHub still lists a registration whose file no longer exists",
+    "every file under .github/workflows must appear exactly once",
+    "a workflow with a schedule or a push/pull_request trigger is never left on the retire list"
+  ],
+  "workflows": [
+    {
+      "file": "ci.yml",
+      "state": "present",
+      "name": "decision-os-ci",
+      "triggers": {
+        "dispatch": false,
+        "schedule": null,
+        "pull_request": true,
+        "push": true
+      },
+      "entries": [],
+      "disposition": "keep-core",
+      "responsibility": "Ready/main gate: partitions, contracts and the merge-eligible receipt",
+      "consumers": "every pull request; docs/engineering/ci-contract.md",
+      "exit": "not retired: the pull_request event itself only exists on GitHub, so the receipt cannot be produced anywhere else"
+    },
+    {
+      "file": "research-runtime.yml",
+      "state": "present",
+      "name": "decision-os-research-runtime",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.research_runtime"
+      ],
+      "disposition": "keep-core",
+      "responsibility": "The only business writer for research, hosted handoff, odds and decision preparation",
+      "consumers": "the single remote writer; 54 test modules reference research_runtime",
+      "exit": "not retired: write operations need the single GitHub writer with CAS; its read operations are separately eligible for the local console",
+      "note": "39 of the last 51 dispatches were read-only jobs; those reads do not need a runner"
+    },
+    {
+      "file": "store-runtime.yml",
+      "state": "present",
+      "name": "decision-os-store-runtime",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.store_runtime"
+      ],
+      "disposition": "keep-core",
+      "responsibility": "Records backup, integrity and health operations that must run beside the store",
+      "consumers": "docs/architecture/versioned-store.md, docs/architecture/github-store.md",
+      "exit": "not retired: a backup that runs on the reader's laptop is not a backup"
+    },
+    {
+      "file": "daily-market.yml",
+      "state": "present",
+      "name": "decision-os-daily-market",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.daily_market_cli",
+        "decision_kernel.interfaces.daily_reading_cli",
+        "decision_kernel.interfaces.daily_visibility_cli",
+        "decision_kernel.interfaces.daily_discovery_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "#10 natural-day market cycle, dispatched by the single external clock at 18:35 Asia/Shanghai",
+      "consumers": "docs/architecture/daily-market.md, docs/engineering/external-daily-clock.md; 14 test modules",
+      "exit": "not retired: the external clock is the single production schedule and this workflow is its only target",
+      "note": "no schedule of its own; the trigger lives in the external clock, so a missing cron here is not evidence that the run cannot happen"
+    },
+    {
+      "file": "announcement-discovery.yml",
+      "state": "present",
+      "name": "decision-os-announcement-discovery",
+      "triggers": {
+        "dispatch": true,
+        "schedule": "20 10 * * *",
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.announcement_discovery_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Bounded public announcement-directory metadata capture into authorized records",
+      "consumers": "tests/test_announcement_discovery.py; hosted handoff announcements",
+      "exit": "not retired: it is one of only two self-starting workflows and holds the daily capture mandate"
+    },
+    {
+      "file": "market-custody.yml",
+      "state": "present",
+      "name": "decision-os-market-custody",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.market_custody_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Market custody verification and comparison receipts",
+      "consumers": "docs/architecture/market-custody.md; 16 test modules",
+      "exit": "not retired: custody checks need the same writer and token boundary as the store"
+    },
+    {
+      "file": "relay-source-runtime.yml",
+      "state": "present",
+      "name": "decision-os-relay-source-runtime",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.relay_source_runtime",
+        "decision_kernel.interfaces.relay_bulk_check_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Relay plan and authorized capture of source rows into records",
+      "consumers": "4 test modules; #12 source mandate",
+      "exit": "not retired: capture writes records and holds the supplier key"
+    },
+    {
+      "file": "news-intake.yml",
+      "state": "present",
+      "name": "decision-os-news-intake",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.news_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Pinned NewsNow container or Relay capture of one bounded news window",
+      "consumers": "docs/delivery/news-desk.md",
+      "exit": "not retired: it is the only executable intake for the news desk"
+    },
+    {
+      "file": "news-rolling.yml",
+      "state": "present",
+      "name": "decision-os-news-rolling",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.news_rolling_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Rolling news desk windows and the latest-desk discovery mode",
+      "consumers": "docs/delivery/news-desk.md; 9 test modules",
+      "exit": "not retired: it is the current consumer of retained news slices"
+    },
+    {
+      "file": "news-custody.yml",
+      "state": "present",
+      "name": "decision-os-news-custody",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.news_custody"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "News custody receipts and origin recovery",
+      "consumers": "5 test modules",
+      "exit": "not retired: origin recovery is a custody duty, not a UI duty"
+    },
+    {
+      "file": "news-handoff.yml",
+      "state": "present",
+      "name": "decision-os-news-handoff",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.news_handoff_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Deliver one completed native capture or reconcile its original source_run without writing",
+      "consumers": "docs/delivery/news-desk.md",
+      "exit": "retire only after the news desk no longer needs a capture-to-delivery bridge; that needs a named replacement consumer first"
+    },
+    {
+      "file": "market-source-check.yml",
+      "state": "present",
+      "name": "decision-os-market-source-check",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.market_source_check_cli"
+      ],
+      "disposition": "local-first",
+      "responsibility": "Read-only source diagnostics: availability, session coverage, history, factor audit, member recovery",
+      "consumers": "docs/architecture/market-source-check.md, ashare-availability, ashare-session-coverage, ashare-factor-reconciliation; 14 test modules",
+      "exit": "not retired: the diagnostics stay; only the place they run moves, and the GitHub entry stays as a fallback",
+      "note": "every selection is a bounded read that never exports supplier rows, so it is a candidate for the local read console"
+    },
+    {
+      "file": "relay-capabilities.yml",
+      "state": "present",
+      "name": "decision-os-relay-capabilities",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.relay_capabilities_cli"
+      ],
+      "disposition": "local-first",
+      "responsibility": "Service metadata probe that answers which Relay capabilities exist, not business data",
+      "consumers": "docs/sources/relay-capabilities.md, docs/sources/relay-registry.json; 2 test modules",
+      "exit": "not retired: it is the only producer of capability evidence; it moves local only where the supplier key is also available offline",
+      "note": "needs TUSHARE_PROXY_API_KEY; without the secret locally it stays a runner-only read"
+    },
+    {
+      "file": "ashare-data.yml",
+      "state": "present",
+      "name": "decision-os-ashare-data",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.market_collection_cli",
+        "decision_kernel.interfaces.ftshare_check_cli",
+        "decision_kernel.interfaces.ftshare_check_continuation_cli",
+        "decision_kernel.interfaces.ftshare_kernel_check_cli",
+        "decision_kernel.interfaces.ftshare_calendar_cli",
+        "decision_kernel.interfaces.ftshare_collection_cli"
+      ],
+      "disposition": "keep-ops",
+      "responsibility": "Finite A-share collection: status read, sync and repair writes, plus dated legacy FTShare checks",
+      "consumers": "docs/architecture/ashare-data-continuity.md; 2 test modules",
+      "exit": "the legacy dated operations (ftshare-check 20261018, check-kernel 20261019, calendar 20261018) are retire candidates; status is a read and can move local; sync and repair keep the writer",
+      "note": "the run-name pins 20261018 and 20261019, which is evidence those operations were one-off studies rather than a standing duty"
+    },
+    {
+      "file": "rss-intake.yml",
+      "state": "present",
+      "name": "decision-os-rss-intake",
+      "triggers": {
+        "dispatch": true,
+        "schedule": null,
+        "pull_request": false,
+        "push": false
+      },
+      "entries": [
+        "decision_kernel.interfaces.rss_cli"
+      ],
+      "disposition": "retire-candidate",
+      "responsibility": "Explicit fixed RSS capture or exact stored read",
+      "consumers": "docs/sources/rss-intake.md, docs/delivery/news-desk.md; 3 test modules",
+      "exit": "retire only after proving news-intake covers the same RSS range and the news desk reads no retained RSS slice; until then it stays and no file is removed",
+      "note": "last run 2026-10-16: no new duty since, but zero recent use is not the same as no consumer"
+    },
+    {
+      "file": "member-recovery-sources.yml",
+      "state": "registry-only",
+      "name": "member-recovery-development-source",
+      "triggers": {
+        "dispatch": null,
+        "schedule": null,
+        "pull_request": null,
+        "push": null
+      },
+      "entries": [],
+      "disposition": "registry-only",
+      "responsibility": "Retired development source entry; its member recovery selections now live in market-source-check",
+      "consumers": "none: the file is gone from main",
+      "exit": "already retired as a file; the registration entry cannot be deleted through the API and clears only when its run history is deleted, which this repository declines to do",
+      "registration": "disabled_manually"
+    },
+    {
+      "file": "odds-probability-sources.yml",
+      "state": "registry-only",
+      "name": "odds-probability-development-source",
+      "triggers": {
+        "dispatch": null,
+        "schedule": null,
+        "pull_request": null,
+        "push": null
+      },
+      "entries": [],
+      "disposition": "registry-only",
+      "responsibility": "Retired odds development source entry; evidence duties moved into relay-source-runtime and the odds commands",
+      "consumers": "none: the file is gone from main",
+      "exit": "already retired as a file; see member-recovery-sources for why the registration stays visible",
+      "registration": "disabled_manually"
+    },
+    {
+      "file": "odds-source-bundle.yml",
+      "state": "registry-only",
+      "name": "odds-development-source-bundle",
+      "triggers": {
+        "dispatch": null,
+        "schedule": null,
+        "pull_request": null,
+        "push": null
+      },
+      "entries": [],
+      "disposition": "registry-only",
+      "responsibility": "Retired odds source bundle entry",
+      "consumers": "none: the file is gone from main",
+      "exit": "already retired as a file; see member-recovery-sources for why the registration stays visible",
+      "registration": "disabled_manually"
+    },
+    {
+      "file": "odds-watch-sources.yml",
+      "state": "registry-only",
+      "name": "odds-watch-development-source",
+      "triggers": {
+        "dispatch": null,
+        "schedule": null,
+        "pull_request": null,
+        "push": null
+      },
+      "entries": [],
+      "disposition": "registry-only",
+      "responsibility": "Retired Watch development source entry; Watch duties remain frozen by #207",
+      "consumers": "none: the file is gone from main",
+      "exit": "already retired as a file; see member-recovery-sources for why the registration stays visible",
+      "registration": "disabled_manually"
+    },
+    {
+      "file": "watch-activity-sources.yml",
+      "state": "registry-only",
+      "name": "watch-activity-development-source",
+      "triggers": {
+        "dispatch": null,
+        "schedule": null,
+        "pull_request": null,
+        "push": null
+      },
+      "entries": [],
+      "disposition": "registry-only",
+      "responsibility": "Retired Watch activity source entry",
+      "consumers": "none: the file is gone from main",
+      "exit": "already retired as a file; see member-recovery-sources for why the registration stays visible",
+      "registration": "disabled_manually"
+    }
+  ]
+}

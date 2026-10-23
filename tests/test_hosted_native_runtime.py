@@ -8,6 +8,7 @@ from dataclasses import replace
 
 import pytest
 
+from decision_kernel.application.hosted_handoff import BOUND_SCHEMA
 from decision_kernel.domain.records import Conflict, MissingObject, RecordError, UnknownWrite, digest
 from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.methods.research import research_method
@@ -36,7 +37,10 @@ def document(api, root, kind):
     if kind == "quick":
         doc["research"] = ref
     else:
-        doc.update(body="合成Brief：保留原研究未解决问题，不代签结论。", baseline=None,
+        # A new Brief declares the stored slices of the revisions it adopted;
+        # they are read here from the retained revision, not invented.
+        doc.update(schema=BOUND_SCHEMA, body="合成Brief：保留原研究未解决问题，不代签结论。", baseline=None,
+                   watch_adoptions=[], sources=restored["record"]["input"]["sources"],
                    adoptions=[{"reference": ref, "body_sha256": digest(restored["body"].encode()),
                                "used_change": "Keep the unresolved source question"}])
     return doc, restored

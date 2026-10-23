@@ -25,9 +25,11 @@ def saved(tmp_path):
 
 
 def brief(store, ref):
-    return {"schema": handoff.SCHEMA, "kind": "brief", "execution_date": "2026-10-19", "cutoff": AT,
+    # A new Brief must declare its citations; this discovery revision has none.
+    return {"schema": handoff.BOUND_SCHEMA, "kind": "brief", "execution_date": "2026-10-19", "cutoff": AT,
         "scope": "Synthetic actual research adoption", "gaps": [], "baseline": None,
         "body": "这是合成Brief，实际采用已保存Quick的增长与现金分歧，而非复制标题。",
+        "watch_adoptions": [], "sources": [],
         "adoptions": [{"reference": asdict(ref), "body_sha256": digest(store.read_revision(ref)["body"].encode()),
                        "used_change": "Keep the specific cash-flow challenge"}]}
 

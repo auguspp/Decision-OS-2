@@ -60,7 +60,8 @@ def export_required(value):
     document = value.get("document", value)
     if not isinstance(document, dict):
         return False
-    if document.get("schema") == "hosted-ai-handoff-v2" and bool(document.get("watch_adoptions")):
+    if document.get("schema") in ("hosted-ai-handoff-v2", "hosted-ai-handoff-v3") \
+            and bool(document.get("watch_adoptions")):
         return True
     plan = document.get("plan", document)
     if isinstance(plan, dict) and bool(plan.get("watch_evidence")):

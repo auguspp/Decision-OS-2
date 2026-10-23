@@ -84,7 +84,7 @@ anchor_status: "not-established-by-provider-response"
 |---|---|---|---|---|
 | **L0** | 本文件；`checkpoint` / `save-hosted-handoff` 回执中加性输出 `reference_fixing` | 否（回执不入库） | 最低 | **已实现** |
 | **L1** | Research：让「引用即固定」可审计（`verify-reference-fixing`） | 否 | 低 | **已实现，范围见 6.2** |
-| **L2** | Brief：`save-hosted-handoff` 增加来源绑定 | 是（需版本升级 + 兼容期） | 中 | 未开始 |
+| **L2** | Brief：`save-hosted-handoff` 增加来源绑定（`hosted-ai-handoff-v3`） | 是（v3；v1/v2 照旧可读，见 6.4） | 中 | **已实现，范围见 6.4** |
 | **L3** | 收窄 `save-odds` 的仅声明路径 | 否（`compute()` 与记录格式均未动，见 6.3） | 中，见 6.3 | **已实现** |
 
 ### 6.1 Odds 结果的加性字段不成立
@@ -117,7 +117,7 @@ def read(self, reference):
 **一条必须写明的更正。** 本节原先把 L1 描述为「校验 `progress.sources` 覆盖被引用的价格日期（字段已存在，不改 schema）」。实现时确认这个说法不成立：现有 Research 字段里**没有任何可机读的「本次判断用了哪个标的、哪一天的价格」声明**。`findings[].evidence` 只指向 source 下标，不携带日期；正文是自由文本。因此：
 
 - 在**不改 schema** 的前提下，L1 能交付的是「每个引用是否被显式列出、字节是否被钉死、事后是否可复算」，**不能**交付「被引用的价格日期是否落在切片覆盖内」。
-- 后者需要先有声明字段，属 L2 的版本升级范围。在此之前，任何人说「日期已校验」都是超出实现的声称。
+- 后者需要先有声明字段。L2 确实做了版本升级（见 6.4），但**它绑定的是「哪些切片」，不是「切片内的哪一天」**——所以日期覆盖判定至今仍未做，不要把它当作 L2 的成果。
 
 `inspect` 报告的 `observed_dates` / `observed_securities` / `observed_markers` 是从已存载荷中**按固定键名**抽出的值，边界是 `MAX_NODES` / `MAX_VALUES` / `MAX_DEPTH`，触发边界即置 `harvest_truncated: true`。它们回答「这份切片里出现过什么」，**不回答**「这份切片覆盖了什么」——切片是请求范围的结果，不是历史完整性证明（与 `REQUESTED_PAGE_TERMINATION_NOT_HISTORY_COMPLETENESS` 同义）。
 
@@ -134,6 +134,30 @@ def read(self, reference):
 
 如果哪天要把「仅声明」也写进结果本身（例如加一条 limitation），那就回到 6.1 的结论：属版本升级，不是加性。
 
+### 6.4 L2 把「Brief 用了哪份证据」写成版本字段
+
+Brief 交接新增 `hosted-ai-handoff-v3`：在 v2 字段之外要求 `sources`，即这期 Brief 声明的引用清单。判据是**双向等值**——声明的集合必须等于「被采用 revision 的 `sources` 并集」：
+
+| 情形 | 后果 | 为什么 |
+|---|---|---|
+| 声明少于并集 | `HOSTED_SOURCE_BINDING_INCOMPLETE` | 漏报等于发布了一份不写清依据的正文 |
+| 声明多于并集 | `HOSTED_SOURCE_BINDING_UNSUPPORTED` | 多报等于声称回过一份没被任何 adopted revision 读过的切片 |
+| 声明内重复 | `HOSTED_SOURCE_BINDING_DUPLICATE` | 重复计数会把「几份证据」变成不可核的模糊量 |
+
+绑定不额外花预算：并集是「正在被读的 revision」的一个字段，`_restore()` 读 adoption 时顺带得到，因此校验期间**没有多读一次源**。用例专门锁住这一点：一次保存里 `read_revision` 恰好覆盖「两遍 × adoption 数」（写前门禁 + 读回自证），`read_source` 次数为 0。
+
+写入收窄与兼容期：
+
+- **新的 Brief 必须是 v3**，否则 `HOSTED_SOURCE_BINDING_REQUIRED`，且发生在写入之前，head 不变。
+- **replay 通道保留原版本**：`reconcile-hosted-handoff` 是重放已经写下去的原意图，重放时不能要求改写历史，因此它带 `replay=True` 放行 v1/v2；`save-hosted-handoff` 不带。
+- v1/v2/v3 **全部可读**。`validate` 按版本判断应有字段，旧文档不需要迁移。
+- Quick 交接仍是 v1：它只有一个 `research` 引用，其 sources 已由该 revision 固定，没有可声明的东西。
+
+**这一节要说清它证明不了什么。** v3 绑定的是「这份 Brief 站在哪些内容寻址的切片上」，不是「它引用的价格日期落在这些切片的范围内」。切片是请求范围的结果，把 `trade_date` 收窄到某一天仍然没有机读声明；所以 `coverage_assertion` 依旧固定为 `not-declared-in-existing-fields`。要推进日期覆盖，必须先有「本次判断用了哪个标的、哪一天」的声明字段——那是另一个版本变更，不是本节的遗留 bug。
+
+**顺手收掉的一处重复读。** 原先 `save()` 依次做 `resolve()`、`open_handoff()`、`receipt()`，同一批 revision 被读了三遍。现在并集由 `_restore()` 一次读出，`receipt()` 删除；保留两遍（写前门禁 + 读回自证）是刻意的，第二遍证明的是「存下去的字节按存下去的样子可被满足」，不是重复劳动。
+
+
 ## 7. 不做什么
 
 - 不改 `qualify_close` 的合格路径判定，不重开 #10 的 FTShare 主源裁决。
@@ -142,4 +166,4 @@ def read(self, reference):
 - 不用当前历史补成当时已获得的价格。
 - 不要求 Brief 之外尚未进入判断的取证材料入库。
 - 不在写入路径上为「固定」再读一次源：预算只有一份，`listing` 档因此连 `store` 参数都没有。
-- 不把 `observed_dates` 说成覆盖或历史 PIT 证明；在 L2 落地前，不声称「被引用价格日期已校验」。
+- 不把 `observed_dates` 说成覆盖或历史 PIT 证明；L2 之后也一样——`sources` 绑定的是切片，不是切片内的日期，因此不声称「被引用价格日期已校验」。

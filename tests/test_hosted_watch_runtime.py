@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from decision_kernel.application import hosted_handoff as handoff
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef, UnknownWrite
 from decision_kernel.infrastructure.github_store import GitHubStore
@@ -136,11 +137,15 @@ def test_actual_read_and_latest_never_release_watch_with_only_handoff_scope(publ
     doc, _ = full_brief
     ref = invoke(api, tmp_path / "saved", "save-hosted-handoff", payload(doc), "first")["result"]["reference"]
     if baseline_only:
+        # A v1 Brief cannot be written by a normal save any more, so the legacy
+        # shape is materialised as an explicit replay instead. The read gate is
+        # then tested against a document that really exists in that version.
         doc = deepcopy(doc)
         doc.update(schema="hosted-ai-handoff-v1", execution_date="2026-01-04", cutoff="2026-01-04T05:00:00Z",
                    baseline=ref)
-        doc.pop("watch_adoptions")
-        ref = invoke(api, tmp_path / "next", "save-hosted-handoff", payload(doc), "next")["result"]["reference"]
+        doc.pop("watch_adoptions"); doc.pop("sources")
+        legacy = VersionedStore(GitHubStore(replace(api.binding, write_enabled=True), api))
+        ref = handoff.save(legacy, doc, "next-legacy", replay=True)["reference"]
     grant["scopes"] = ["handoff"]
     path.write_text(json.dumps(grant))
     args = {"reference": ref} if operation == "read-hosted-handoff" else {

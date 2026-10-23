@@ -63,7 +63,10 @@ def test_listing_is_a_zero_read_receipt_of_content_addressed_citations():
     assert report["tier"] == "listing" and report["status"] == "fixed"
     assert report["sources"] == 1 and report["gaps"] == []
     assert report["slices"][0]["reference"]["manifest"]["sha256"] == REFERENCE.manifest.sha256
-    assert report["slices"][0]["selection"] == {"kind": "all", "start": None, "end": None, "columns": ()}
+    # Receipts must survive being stored as JSON and read back unchanged.
+    assert report["slices"][0]["reference"]["selection"] == {
+        "kind": "all", "start": None, "end": None, "columns": []}
+    assert json.loads(json.dumps(report)) == report
     assert listing(())["status"] == "no-references"
 
 
@@ -79,6 +82,7 @@ def test_inspect_reads_the_retained_slice_and_harvests_only_named_keys(store):
     assert row["observed_securities"] == ["000001.SZ", "600000.SH"]
     assert {"schema=market-query-custody-v1", "api=daily"} <= set(row["observed_markers"])
     assert row["original_verified"] is False
+    assert json.loads(json.dumps(report)) == report
 
 
 def test_inspect_reports_gaps_instead_of_skipping_a_cited_slice():
@@ -121,6 +125,8 @@ def test_handoff_receipt_carries_the_adopted_citation_inventory(store):
     assert result["reference_fixing"]["slices"][0]["reference"]["manifest"]["sha256"] == ref.manifest.sha256
     assert result["reference_fixing"]["gaps"] == []
     assert result["economic_assessment"] == "not-performed"
+    # The receipt is written to report.json and compared after reloading it.
+    assert json.loads(json.dumps(result)) == result
 
 
 def test_handoff_receipt_reports_a_payload_it_cannot_restore(store):

@@ -41,6 +41,14 @@ def _sources(values) -> tuple[SourceRef, ...]:
     return tuple(values)
 
 
+def _citation(ref: SourceRef) -> dict:
+    """JSON-round-trippable form: a receipt must compare equal after being stored and read."""
+    selection = ref.selection
+    return {"manifest": asdict(ref.manifest),
+            "selection": {"kind": selection.kind, "start": selection.start, "end": selection.end,
+                          "columns": list(selection.columns)}}
+
+
 def listing(sources, *, scope: str = "research-checkpoint") -> dict:
     """Zero-read receipt: what the citations fix, without touching the store."""
     fixed = _sources(sources)
@@ -52,8 +60,7 @@ def listing(sources, *, scope: str = "research-checkpoint") -> dict:
         "coverage_assertion": COVERAGE_ASSERTION,
         "meaning": LISTING_MEANING,
         "sources": len(fixed),
-        "slices": [{"index": index, "reference": asdict(ref),
-                    "selection": asdict(ref.selection)} for index, ref in enumerate(fixed)],
+        "slices": [{"index": index, "reference": _citation(ref)} for index, ref in enumerate(fixed)],
         "gaps": [],
         "write": "not-requested",
     }
@@ -105,9 +112,8 @@ def _audited_row(index: int, ref: SourceRef, view: dict) -> dict:
     dates, codes, markers, truncated = _harvest(excerpt) if excerpt is not None else ([], [], [], False)
     return {
         "index": index,
-        "reference": view["reference"],
+        "reference": _citation(ref),
         "source_id": manifest["input"]["source_id"],
-        "selection": asdict(ref.selection),
         "stored_bytes": representation.get("size"),
         "stored_sha256": representation.get("sha256"),
         "custody": manifest["input"]["custody"],
@@ -128,7 +134,7 @@ def inspect(store, sources, *, scope: str = "saved-research") -> dict:
         try:
             fixed.append(_audited_row(index, ref, store.read_source(ref)))
         except RecordError as error:
-            gaps.append({"index": index, "problem": str(error), "reference": asdict(ref)})
+            gaps.append({"index": index, "problem": str(error), "reference": _citation(ref)})
     return {
         "schema": REPORT_SCHEMA,
         "tier": "inspect",

@@ -25,7 +25,7 @@ PRICE_CONTEXT_DOES_NOT_ESTABLISH_HISTORICAL_PIT
 | **Odds** | `price.evidence.source`（SourceRef）+ `value_locator`/`security_locator`/`date_locator`，`_price_evidence()` 实际 `read_source` 并逐项比对 | 证据**可选**；缺失时降级为 `declared-reference-only` | `save-odds` 允许仅声明路径落库 |
 | **Odds（合格路径）** | `market` + `qualify_close()`（`odds_market.py`），要求 `FTSHARE_CLOSE_SCHEMA`、`RelayRegistry`、`market_policy`，产出 `source_references` | 走该路径时**强制** | 与仅声明路径并存，调用方可自行选择弱的那个 |
 | **Watch** | 复用 `FTSHARE_CLOSE_SCHEMA` 与 `retained_close_read_scope`，`odds_watch` 有 exact-source 记忆 | 走合格路径时强制 | `result["price"]["as_of"]` 本身只验时序（`<= activation`） |
-| **Research** | `ResearchProgress.sources: tuple[SourceRef, ...]`，且 `UNSOURCED_LIMITATION_REQUIRED` 要求无来源必须给 limitation | **强制有引用或明确 limitation** | `sources` 只证明「带了哪些引用」，**不校验被引用的价格日期是否落在这些引用的覆盖范围内** |
+| **Research** | `ResearchProgress.sources: tuple[SourceRef, ...]`，且 `UNSOURCED_LIMITATION_REQUIRED` 要求无来源必须给 limitation | **强制有引用或明确 limitation** | `sources` 只证明「带了哪些引用」，**不校验被引用的价格日期是否落在这些引用的覆盖范围内**；L1 之后该判定仍然不可做（见 6.2） |
 | **Brief** | 无 | **无** | `hosted_handoff.py` 没有任何 SourceRef 字段 |
 
 结论：**Odds / Watch 的机制已经存在且会真实回读**，不需要新建；缺的是「弱路径是否允许落库」。Research 是「有引用但不绑定切片」。Brief 是完全缺失。
@@ -80,12 +80,32 @@ anchor_status: "not-established-by-provider-response"
 
 按 Reuse First 与单一 writer 约束，分四级，不一次性大改。
 
-| 级别 | 内容 | 是否改 schema | 风险 |
+| 级别 | 内容 | 是否改 schema | 风险 | 状态 |
+|---|---|---|---|---|
+| **L0** | 本文件；`checkpoint` / `save-hosted-handoff` 回执中加性输出 `reference_fixing` | 否（回执不入库） | 最低 | **已实现** |
+| **L1** | Research：让「引用即固定」可审计（`verify-reference-fixing`） | 否 | 低 | **已实现，范围见 6.2** |
+| **L2** | Brief：`save-hosted-handoff` 增加来源绑定 | 是（需版本升级 + 兼容期） | 中 | 未开始 |
+| **L3** | 收窄 `save-odds` 的仅声明路径 | 是（影响现有调用方） | 中高，需单独 PR 与兼容期 | 未开始 |
+
+### 6.2 L0/L1 实际交付了什么，以及它证明不了什么
+
+实现在 `application/reference_fixing.py`，报告 schema `reference-fixing-report-v1`，两档故意分开：
+
+| 档 | 是否读源 | 用在哪 | 依据 |
 |---|---|---|---|
-| **L0** | 本文件；`save-hosted-handoff` 回执中加性输出 `reference_fixing` | 否（加性可选） | 最低 |
-| **L1** | Research：校验 `progress.sources` 覆盖被引用的价格日期 | 否（字段已存在） | 低 |
-| **L2** | Brief：`save-hosted-handoff` 增加来源绑定 | 是（需版本升级 + 兼容期） | 中 |
-| **L3** | 收窄 `save-odds` 的仅声明路径 | 是（影响现有调用方） | 中高，需单独 PR 与兼容期 |
+| `listing` | **不读** | `checkpoint` 与 `save-hosted-handoff` 的常规回执 | `SourceRef` 是内容寻址：`manifest.commit` + `path` + `sha256` 已经钉死被引用的字节，无需再读一次来"固定" |
+| `inspect` | 逐条 `read_source` | 只读命令 `verify-reference-fixing --ref`，审计已存 revision | 事后审计，不发生在写入路径上，也不取源 |
+
+两档分家的原因是预算，不是洁癖：写入路径本身已经由 `submit_revision` 对每个 `SourceRef` 做了一次 `read_source`，回执若再读一次，每次判断的源读取请求就翻倍。因此**回执只做零读取清单**，`listing` 的签名里根本没有 `store` 参数——它没有能力读，也就不会偷偷读。
+
+**一条必须写明的更正。** 本节原先把 L1 描述为「校验 `progress.sources` 覆盖被引用的价格日期（字段已存在，不改 schema）」。实现时确认这个说法不成立：现有 Research 字段里**没有任何可机读的「本次判断用了哪个标的、哪一天的价格」声明**。`findings[].evidence` 只指向 source 下标，不携带日期；正文是自由文本。因此：
+
+- 在**不改 schema** 的前提下，L1 能交付的是「每个引用是否被显式列出、字节是否被钉死、事后是否可复算」，**不能**交付「被引用的价格日期是否落在切片覆盖内」。
+- 后者需要先有声明字段，属 L2 的版本升级范围。在此之前，任何人说「日期已校验」都是超出实现的声称。
+
+`inspect` 报告的 `observed_dates` / `observed_securities` / `observed_markers` 是从已存载荷中**按固定键名**抽出的值，边界是 `MAX_NODES` / `MAX_VALUES` / `MAX_DEPTH`，触发边界即置 `harvest_truncated: true`。它们回答「这份切片里出现过什么」，**不回答**「这份切片覆盖了什么」——切片是请求范围的结果，不是历史完整性证明（与 `REQUESTED_PAGE_TERMINATION_NOT_HISTORY_COMPLETENESS` 同义）。
+
+报告固定携带 `coverage_assertion: "not-declared-in-existing-fields"`，这是个显式拒绝，不是占位符。
 
 ### 6.1 Odds 结果的加性字段不成立
 
@@ -110,3 +130,5 @@ def read(self, reference):
 - 不把「最新指针」改写为「当时指针」——两者语义不同，页面消费的是前者。
 - 不用当前历史补成当时已获得的价格。
 - 不要求 Brief 之外尚未进入判断的取证材料入库。
+- 不在写入路径上为「固定」再读一次源：预算只有一份，`listing` 档因此连 `store` 参数都没有。
+- 不把 `observed_dates` 说成覆盖或历史 PIT 证明；在 L2 落地前，不声称「被引用价格日期已校验」。

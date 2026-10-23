@@ -33,7 +33,7 @@
 
 | operation | payload | 效果 |
 |---|---|---|
-| `save-hosted-handoff` | `{"document": D, "rights_confirmed": true}` | 校验引用/正文及采用结果绑定，在原Artifact owner保存，独立新读操作再验证 |
+| `save-hosted-handoff` | `{"document": D, "rights_confirmed": true}` | 校验引用/正文及采用结果绑定，在原Artifact owner保存，独立新读操作再验证；回执含 `reference_fixing`（`tier=listing`，被采用研究的引用清单，零额外源读取）与 `economic_assessment=not-performed` |
 | `reconcile-hosted-handoff` | 原完整payload与submission_id | 原意图只读恢复；未找到不写 |
 | `read-hosted-handoff` | `{"reference": <确切Artifact BlobRef>}` | 返回原交接、实际研究正文和 v2 采用的实际 Watch 检查；相应采用哈希不一致拒绝 |
 | `latest-hosted-handoff` | `{"kind":"quick"或"brief","as_of":<带时区当前时钟>,"limit":1..3}` | 固定快照在最近7天实际保存版本中恢复；损坏/未来截止返回缺口，不用任务last_run_time替正文 |

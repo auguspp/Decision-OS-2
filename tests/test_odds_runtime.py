@@ -103,7 +103,11 @@ def exercise_installed_odds(command, outside, python, env, executable, store_pat
         result = command("calculate-odds", "--input", str(path))
         assert result["weighted_aggregate"] is None
         path.write_text(json.dumps(authorized("calculation", payload)), encoding="utf-8")
-        saved = command("save-odds", "--input", str(path), "--submission-id", "odds-save-"+str(i))
+        # These prices are synthetic declarations with no retained slice, so the
+        # command must acknowledge that explicitly instead of defaulting to it.
+        saved = command("save-odds", "--input", str(path), "--submission-id", "odds-save-"+str(i),
+                        "--allow-declared-only")
+        assert saved["price_evidence"] == "declared-only-acknowledged"
         refs.append(saved["reference"])
         path.write_text(json.dumps(saved["reference"]), encoding="utf-8")
         assert command("read-odds", "--ref", str(path))["result"] == result

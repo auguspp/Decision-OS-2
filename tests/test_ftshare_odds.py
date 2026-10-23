@@ -399,8 +399,11 @@ def test_matching_registry_is_required_even_when_prices_come_from_ftshare(case, 
 
 def test_old_declared_price_result_remains_byte_equal_and_requires_no_registry(case, monkeypatch):
     price = price_payload(security=case["spec"]["security"], price="10", as_of="2026-10-16T16:00:00+08:00")
-    original = case["conditional"].compute({"spec_ref": case["spec_ref"], "price": price})
-    receipt = case["conditional"].save(authorized("calculation", {"spec_ref": case["spec_ref"], "price": price}), submission_id="old-price")
+    # This deliberately re-creates the historical declared-only shape; the
+    # acknowledgement is what a legacy record would never have needed.
+    legacy = ConditionalOdds(case["store"], allow_declared_only=True)
+    original = legacy.compute({"spec_ref": case["spec_ref"], "price": price})
+    receipt = legacy.save(authorized("calculation", {"spec_ref": case["spec_ref"], "price": price}), submission_id="old-price")
     monkeypatch.setattr("decision_kernel.application.relay_registry.RelayRegistry",
                         lambda *args: pytest.fail("Old conditional results do not depend on a Registry"))
     restored = ConditionalOdds(case["fresh"]()).read(receipt["reference"])

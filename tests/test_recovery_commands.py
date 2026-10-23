@@ -92,7 +92,7 @@ def make_odds_case(directory, *, retained_market):
                 "synthetic:recovery-odds", "Synthetic economic assumptions only"))
             research = store.submit_revision("odds-research", RevisionInput("odds-case", "r1", "full",
                 "Synthetic research", "Synthetic commission", "synthetic", (source,), unresolved=("Unverified assumptions",)))
-            service = ConditionalOdds(store)
+            service = ConditionalOdds(store, allow_declared_only=True)
             spec = service.freeze(authorized("spec", spec_payload(asdict(research))), submission_id="odds-spec")["reference"]
             calculation = {"spec_ref": spec, "price": price_payload()}
         ref = service.save(authorized("calculation", calculation), submission_id="recovery-odds")["reference"]

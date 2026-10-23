@@ -21,7 +21,7 @@ def test_valid_artifact_hash_cannot_hide_tampered_calculation(context, spec):
 
 def test_old_source_is_not_silently_replaced_after_new_version(context, spec):
     store, _ = context
-    service = ConditionalOdds(store)
+    service = ConditionalOdds(store, allow_declared_only=True)
     frozen = service.freeze(authorized("spec", spec), submission_id="freeze")
     saved = service.save(authorized("calculation", {"spec_ref": frozen["reference"], "price": price_payload()}), submission_id="result")
     original = service.read(saved["reference"])["result"]

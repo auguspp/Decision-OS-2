@@ -38,7 +38,7 @@ def seed(model):
         unresolved=("Unverified synthetic economic assumption",)))
     writer.submit_revision("book-no-odds", RevisionInput("book-no-odds", "r1", "full",
         "SYNTHETIC_FULL_WITHOUT_ODDS", "Synthetic host contract", "synthetic", (source,)))
-    service = ConditionalOdds(writer)
+    service = ConditionalOdds(writer, allow_declared_only=True)
     valuation = service.freeze(authorized("spec", spec_payload(asdict(research))), submission_id="book-spec")
     odds = service.save(authorized("calculation", {"spec_ref": valuation["reference"],
         "price": price_payload()}), submission_id="book-odds")

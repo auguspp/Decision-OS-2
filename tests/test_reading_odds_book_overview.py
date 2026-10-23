@@ -157,7 +157,7 @@ def test_four_page_overview_and_exact_detail_cross_tree_cache_capacity(public_ho
     # real Git commit; the cold hosted consumer receives no writer cache.
     model.git.repository = model.binding.repository
     local, results = VersionedStore(model.git), []
-    service = ConditionalOdds(local)
+    service = ConditionalOdds(local, allow_declared_only=True)
     for number in range(11):
         key = f"pressure-{number:02d}"
         source = local.put_source(key + "-source", SourceInput(key, "content", "Synthetic cache basis",

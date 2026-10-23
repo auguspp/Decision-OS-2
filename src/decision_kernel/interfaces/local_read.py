@@ -1,0 +1,122 @@
+"""Local read-only console: the same reads, on the reader's machine, with no runner.
+
+Reads do not need a GitHub runner. They need the exact store, a token that cannot
+write, and a receipt that says which store and which command produced the output.
+This entry reuses ``decision-os store`` argument parsing and execution, so there is
+one implementation of every read; what it adds is a hard gate in front of it.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+from decision_kernel.domain.records import MAX_BYTES, RecordError, require
+from decision_kernel.infrastructure.github_store import GitHubBinding
+from decision_kernel.interfaces import (
+    auction_commands, auction_next_session_commands, close_structure_commands, delivery_commands,
+    odds_commands, outcome_review_commands, research_commands, store_cli,
+)
+
+READ_TOKEN = "DECISION_OS_READ_TOKEN"
+STORE_TOKEN = "DECISION_OS_STORE_TOKEN"
+SCHEMA = "local-read-receipt-v1"
+
+# Commands a workbench may run on a laptop. Writes and reconciliations are absent on
+# purpose: a reconciliation can replay an existing intent, so it is not a read.
+READ_ONLY = (
+    "research-catalogue", "prepare-research", "audit-numbers", "audit-source-use",
+    "verify-reference-fixing", "resume-research", "current", "search",
+    "read-source", "read-revision", "research-room",
+    "research-agenda", "read-research-agenda", "research-outcome-review",
+    "read-close-structure", "read-opening-auction", "read-auction-next-session",
+    "verify-delivery", "open-delivery", "read-artifact",
+) + odds_commands.READ_COMMANDS
+
+# Private decision preparation is excluded even though its two operations only read.
+# Its content is private custody and must keep the checked private adapter; a laptop
+# copy would move that content outside the boundary that verifies it.
+PRIVATE_ONLY = ("prepare-decision", "read-decision-preparation")
+
+
+def _binding(path: Path) -> GitHubBinding:
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_BYTES + 1)
+    require(len(raw) <= MAX_BYTES, "INPUT_TOO_LARGE")
+    return GitHubBinding.from_dict(json.loads(raw))
+
+
+def check(operation: str, binding_path: Path | None, environ) -> GitHubBinding:
+    """Refuse before any API call; every refusal names its own reason."""
+    require(operation in READ_ONLY + PRIVATE_ONLY, "LOCAL_READ_REFUSES_WRITE_COMMAND")
+    require(operation not in PRIVATE_ONLY, "LOCAL_READ_PRIVATE_CUSTODY_REQUIRES_GITHUB")
+    require(binding_path is not None, "LOCAL_READ_REQUIRES_A_BINDING")
+    require(bool(environ.get(READ_TOKEN)), "LOCAL_READ_TOKEN_REQUIRED")
+    require(not environ.get(STORE_TOKEN), "LOCAL_READ_REFUSES_STORE_TOKEN")
+    binding = _binding(Path(binding_path))
+    require(not binding.write_enabled, "LOCAL_READ_REQUIRES_READ_ONLY_BINDING")
+    require(binding.visibility == "public", "LOCAL_READ_PUBLIC_STORE_ONLY")
+    return binding
+
+
+def receipt(operation: str, binding: GitHubBinding, *, started: str, finished: str,
+            duration_ms: int, code: int) -> dict:
+    return {"schema": SCHEMA, "operation": operation, "runner": "local",
+            "store": {"repository": binding.repository, "branch": binding.branch,
+                      "anchor": binding.anchor, "store_id": binding.store_id,
+                      "visibility": binding.visibility},
+            "identity": {"token": "read-only-required", "write": "not-requested",
+                         "authority": "local-read-only-console"},
+            "started_at": started, "finished_at": finished,
+            "duration_ms": duration_ms, "exit_code": code}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="decision-os local-read",
+        description="Read the exact records snapshot locally; no runner, no write path")
+    commands = parser.add_subparsers(dest="local_command", required=True)
+    store_cli.configure(commands)
+    return parser
+
+
+def main(argv: list | None = None) -> int:
+    parser = _parser()
+    # The single "store" level is reused verbatim so every read keeps its own
+    # arguments; the caller passes them without naming that level.
+    args = parser.parse_args(["store", *(sys.argv[1:] if argv is None else argv)])
+    started_at = datetime.now(timezone.utc).isoformat()
+    clock = time.monotonic()
+    code = 2
+    try:
+        binding = check(args.store_command, args.binding, os.environ)
+    except RecordError as error:
+        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        return 2
+    except (OSError, ValueError, UnicodeError, TypeError, KeyError):
+        print('{"error":"LOCAL_READ_BINDING_UNREADABLE"}', file=sys.stderr)
+        return 2
+    # GitHubAPI reads this name and nothing else, so the read token is the only
+    # credential in the process for the duration of the command.
+    os.environ[STORE_TOKEN] = os.environ[READ_TOKEN]
+    try:
+        code = store_cli.execute(args)
+    finally:
+        os.environ.pop(STORE_TOKEN, None)
+        finished_at = datetime.now(timezone.utc).isoformat()
+        record = receipt(args.store_command, binding, started=started_at, finished=finished_at,
+                         duration_ms=int((time.monotonic() - clock) * 1000), code=code)
+        print(json.dumps({"local_read_receipt": record}, sort_keys=True), file=sys.stderr)
+        target = os.environ.get("DECISION_OS_READ_RECEIPT")
+        if target:
+            Path(target).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
+                                    encoding="utf-8")
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -678,9 +678,7 @@ def test_ftshare_workflow_default_cannot_open_an_implicit_legacy_plan(tmp_path, 
 
 
 @pytest.mark.parametrize("operation,source_env,module,directory,minutes", [
-    ("ftshare-calendar", "TUSHARE_PROXY_API_KEY", "ftshare_calendar_cli", "dos2-ftshare-calendar", "30"),
     ("ftshare-sync", "FTSHARE_API_KEY", "ftshare_collection_cli", "dos2-ftshare-collection", "360"),
-    ("ftshare-adopt-kernel", None, "ftshare_collection_cli", "dos2-ftshare-collection", "30"),
     ("ftshare-status", None, "ftshare_collection_cli", "dos2-ftshare-collection", "30"),
 ])
 def test_workflow_ftshare_production_scopes_credentials_and_live_private_release(

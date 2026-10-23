@@ -395,58 +395,32 @@ def test_missing_original_body_cannot_be_reconstructed_and_released(tmp_path):
     assert list(host.out.glob("*.raw.json")) == []
 
 
-def test_workflow_keeps_finite_check_read_only_and_secret_only_at_capture():
+RETIRED_DATED_CHECKS = ("ftshare-check", "ftshare-check-continue", "ftshare-check-kernel",
+                        "ftshare-adopt-kernel", "ftshare-calendar")
+
+
+def test_workflow_no_longer_offers_the_retired_dated_checks():
+    """The dated studies are closed by their own terms; the menu must not sell them again."""
     workflow = yaml.safe_load((Path(__file__).parents[1] / cli.WORKFLOW).read_text())
     # PyYAML's YAML 1.1 resolver reads the GitHub Actions key `on` as True.
     triggers = workflow.get("on", workflow.get(True))
-    assert set(triggers) == {"workflow_dispatch"}
-    assert "ftshare-check" in triggers["workflow_dispatch"]["inputs"]["operation"]["options"]
-    assert workflow["permissions"] == {}
-    assert workflow["concurrency"] == {"group": "decision-os-relay-source", "cancel-in-progress": False}
-    job = workflow["jobs"]["ftshare-check"]
-    assert job["permissions"] == {"contents": "read", "actions": "read"}
-    assert job["timeout-minutes"] <= 30
-    for clause in ["github.repository == 'auguspp/Decision-OS-2'", "github.ref == 'refs/heads/main'",
-                   "inputs.operation == 'ftshare-check'", "inputs.access_and_custody_confirmed == true",
-                   "github.event.repository.private == true", "inputs.public_rights_confirmed == false"]:
-        assert clause in job["if"]
-    denied = workflow["jobs"]["rejected-sync"]
-    for clause in ["inputs.operation == 'ftshare-check'", "inputs.access_and_custody_confirmed != true",
-                   "github.event.repository.private != true", "inputs.public_rights_confirmed != false"]:
-        assert clause in denied["if"]
-    assert denied["permissions"] == {"contents": "read"}
-    assert "exit 1" in denied["steps"][0]["run"]
+    options = triggers["workflow_dispatch"]["inputs"]["operation"]["options"]
+    assert options == ["status", "sync", "repair", "ftshare-sync", "ftshare-status"]
+    for retired in RETIRED_DATED_CHECKS:
+        assert retired not in options
+        assert retired not in workflow["jobs"]
+        assert "inputs.operation == '" + retired + "'" not in workflow["jobs"]["rejected-sync"]["if"]
+    # Only the standing collection path may reach the source key at all.
     holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
                for step in candidate["steps"] if "FTSHARE_API_KEY" in json.dumps(step)]
-    assert holders == [("ftshare-check", "capture"), ("ftshare-check-continue", "capture"),
-                       ("ftshare-check-kernel", "capture"), ("ftshare-sync", "runtime")]
+    assert holders == [("ftshare-sync", "runtime")]
     relay_holders = [(name, step.get("id")) for name, candidate in workflow["jobs"].items()
                      for step in candidate["steps"] if "TUSHARE_PROXY_API_KEY" in json.dumps(step)]
-    assert relay_holders == [("sync", None), ("repair", None), ("ftshare-calendar", "runtime")]
-    steps = {step["id"]: step for step in job["steps"] if "id" in step}
-    assert steps["capture"]["env"]["FTSHARE_API_KEY"] == "${{ secrets.FTSHARE_API_KEY }}"
-    assert "FTSHARE_API_KEY" not in workflow.get("env", {})
-    assert all("FTSHARE_API_KEY" not in candidate.get("env", {}) for candidate in workflow["jobs"].values())
-    for stage in ("prepare", "capture", "release"):
-        assert "decision_kernel.interfaces.ftshare_check_cli " + stage in steps[stage]["run"]
-    assert all(not step.get("continue-on-error") for step in job["steps"])
-    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"]["ref"] == "${{ github.sha }}"
-    assert checkout["with"]["persist-credentials"] is False
-
-
-def test_workflow_uploads_original_private_artifact_only_after_native_release_check():
-    workflow = yaml.safe_load((Path(__file__).parents[1] / cli.WORKFLOW).read_text())
-    steps = workflow["jobs"]["ftshare-check"]["steps"]
-    release_index = next(i for i, step in enumerate(steps) if step.get("id") == "release")
-    assert steps[release_index]["if"] == "always() && steps.prepare.outcome == 'success'"
-    upload = steps[release_index + 1]
-    assert re.fullmatch(r"actions/upload-artifact@[0-9a-f]{40}", upload["uses"])
-    assert upload["if"] == "always() && steps.release.outcome == 'success'"
-    assert upload["with"]["path"] == "${{ runner.temp }}/dos2-ftshare-check/"
-    assert "${{ github.run_id }}-${{ github.run_attempt }}" in upload["with"]["name"]
-    assert upload["with"]["if-no-files-found"] == "error"
-    assert upload["with"]["retention-days"] <= 30
+    assert relay_holders == [("sync", None), ("repair", None)]
+    for candidate in [workflow] + list(workflow["jobs"].values()):
+        assert "FTSHARE_API_KEY" not in candidate.get("env", {})
+    assert workflow["permissions"] == {}
+    assert workflow["concurrency"] == {"group": "decision-os-relay-source", "cancel-in-progress": False}
 
 
 @pytest.mark.parametrize("quota", ["key_remaining", "ip_remaining"])

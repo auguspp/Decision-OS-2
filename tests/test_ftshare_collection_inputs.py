@@ -105,6 +105,27 @@ def test_direct_forward_prices_need_no_factors_and_keep_all_scope_in_denominator
     assert view["freshness"]["status"] == "current-through-completed-day"
 
 
+def test_required_scope_reports_the_requested_set_without_widening_catalog_coverage():
+    """Two denominators stay separate: requested symbols never inflate the catalog."""
+    view, _, _ = read(inputs())
+    surfaces = (view["raw"], view["qfq"],
+                view["endpoint_comparisons"]["raw"], view["endpoint_comparisons"]["qfq"])
+    for surface in surfaces:
+        assert surface["coverage"] == "declared-current-L-snapshots"
+        assert surface["scope_count"] == 3 and surface["known_scope_count"] == 3
+        assert surface["required_scope_count"] == 2
+        assert surface["required_scope_basis"] == "requested-by-this-plan-not-catalog-coverage"
+        assert surface["required_observed_count"] <= surface["required_scope_count"]
+        assert surface["required_observed_count"] + surface["required_missing_count"] == 2
+    assert view["required_scope_count"] == 2
+    assert view["coverage_denominators"] == {"catalog": "declared-current-L-reference-snapshot",
+        "required": "symbols-requested-by-this-plan",
+        "note": "required coverage never substitutes for catalog coverage"}
+    assert "REQUIRED_SCOPE_IS_THE_REQUESTED_SET_NOT_CATALOG_COVERAGE" in view["qualification_limits"]
+    # catalog counters are unchanged by the new denominator
+    assert view["qfq"]["observed_count"] == 2 and view["qfq"]["missing_count"] == 1
+
+
 def test_intermediate_raw_gap_keeps_endpoints_and_forward_window_independent():
     bundle = inputs(edit=lambda adjust, code, day, row, days:
         None if adjust == "none" and code == CODES[0] and day == days[-3] else row)

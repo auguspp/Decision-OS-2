@@ -57,7 +57,12 @@ def _requested_scope(plan, context):
     return all(codes == set(context["eligible_symbols"]) for codes in owners.values())
 
 
-def _surface(kind, *, scope, page, cutoffs, versions, endpoint=False):
+def _surface(kind, *, scope, page, cutoffs, versions, endpoint=False, required=0):
+    """Two denominators stay separate and are never recomputed into each other.
+
+    ``scope_count`` is the declared-current-L catalog snapshot. ``required_*`` is
+    only the set this plan actually requests; it never widens catalog coverage.
+    """
     result = {"kind": "stock", "as_of": next(iter(set(cutoffs.values())))
         if len(set(cutoffs.values())) == 1 else None,
         "as_of_by_exchange": cutoffs, "market": "SH/SZ", "currency": "CNY",
@@ -66,6 +71,9 @@ def _surface(kind, *, scope, page, cutoffs, versions, endpoint=False):
         "coverage": "declared-current-L-snapshots", "scope_count": scope,
         "known_scope_count": scope, "observed_count": 0, "missing_count": scope,
         "incomplete_count": scope, "entries": [], "page": dict(page),
+        "required_scope_basis": "requested-by-this-plan-not-catalog-coverage",
+        "required_scope_count": required, "required_observed_count": 0,
+        "required_missing_count": required,
         "horizon_counts": [{"sessions": h, "scope_count": scope,
             "observed_count": 0, "missing_count": scope} for h in HORIZONS]}
     if not endpoint:
@@ -156,6 +164,11 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
             values[kind][code] = [{"trade_date": row["trade_date"], "close": row["close"]} for row in rows]
         for item in normalized["quarantined"]:
             bad[kind].setdefault(item["symbol"], {})[item["trade_date"]] = item["reason"]
+    # The requested set is the only thing this plan is responsible for. It is
+    # derived from its own slots, so it cannot be inflated by the catalog size.
+    required_codes = sorted({code for requested in owners.values() for code in requested})
+    required_set = set(required_codes)
+    require(required_set <= set(references), "FTSHARE_READING_REQUIRED_SCOPE")
     versions = {"calendar": digest(encoded(lineage["calendars"])),
         "universe": digest(encoded({v: m["version"] for v, m in context["masters"].items()}))}
     for adjustment, kind in KINDS.items():
@@ -166,10 +179,12 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
             "calendar": versions["calendar"], "universe": versions["universe"],
             "normalization": NORMALIZATION if kind == "qfq" else "unadjusted-source-close",
             "start": plan["start"], "end": plan["end"], "queries": slots}))
-    surfaces = {kind: _surface(kind, scope=len(codes), page=page, cutoffs=cutoffs, versions=versions)
+    surfaces = {kind: _surface(kind, scope=len(codes), page=page, cutoffs=cutoffs, versions=versions,
+                              required=len(required_codes))
                 for kind in KINDS.values()}
     endpoints = {kind: _surface(kind, scope=len(codes), page=page, cutoffs=cutoffs,
-                              versions=versions, endpoint=True) for kind in KINDS.values()}
+                              versions=versions, endpoint=True, required=len(required_codes))
+                 for kind in KINDS.values()}
     hashes = {purpose: hashlib.sha256() for purpose in ("daily", "endpoints")}
     by_venue = {venue: {"scope_count": len(context["masters"][venue]["securities"]),
         "as_of": cutoffs[venue], "calendar_session_count": len(sessions[venue]),
@@ -230,6 +245,9 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
                 surface["observed_count"] += int(any(seen))
                 surface["missing_count"] -= int(any(seen))
                 surface["incomplete_count"] -= int(all(seen))
+                if code in required_set:
+                    surface["required_observed_count"] += int(any(seen))
+                    surface["required_missing_count"] -= int(any(seen))
                 for index, accepted in enumerate(seen):
                     surface["horizon_counts"][index]["observed_count"] += int(accepted)
                     surface["horizon_counts"][index]["missing_count"] -= int(accepted)
@@ -270,6 +288,10 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
     view = {"schema": VIEW_SCHEMA, "provider": "FTSHARE", "start": start,
         "requested_end": end, "as_of": surfaces["raw"]["as_of"], "as_of_by_exchange": cutoffs,
         "scope_count": len(codes), "known_scope_count": len(codes), "by_exchange": by_venue,
+        "required_scope_count": len(required_codes),
+        "coverage_denominators": {"catalog": "declared-current-L-reference-snapshot",
+            "required": "symbols-requested-by-this-plan",
+            "note": "required coverage never substitutes for catalog coverage"},
         "master": {venue: {**{key: deepcopy(value) for key, value in master.items()
             if key not in ("securities", "qualification", "lineage")},
             "capture_times": {status: [page["captured_at"] for page in lineage["pages"]]
@@ -282,6 +304,7 @@ def _read_ftshare_inputs(collection, context, load_batch, *, offset=0, limit=50,
         "qualification_limits": ["DECLARED_CURRENT_L_REFERENCE_SNAPSHOT_NOT_HISTORICAL_UNIVERSE",
             "PROVIDER_FORWARD_SINGLE_REQUEST_NOT_END_ANCHORED_FACTOR_RECONSTRUCTION",
             "NO_FORWARD_SERIES_STITCHING_OR_PRICE_FILL", "NO_SUSPENSION_OR_TOTAL_RETURN_CERTIFICATION",
+            "REQUIRED_SCOPE_IS_THE_REQUESTED_SET_NOT_CATALOG_COVERAGE",
             "RESTORED_SOURCES_AND_WINDOWS_NOT_LONG_TERM_UPTIME_CERTIFICATION"]}
     view["view_version"] = digest(encoded({"context": view,
         "daily_sha256": hashes["daily"].hexdigest(), "endpoints_sha256": hashes["endpoints"].hexdigest()}))

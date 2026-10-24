@@ -377,3 +377,31 @@ def test_unavailable_current_catalog_cannot_claim_scope_departures(storage):
 
 
 
+
+
+def test_source_only_reader_locates_its_own_journal_without_widening_reads():
+    """重放要先找回自己的提交日志；放开只限这一种形状，且仍读出 source 视图。"""
+    from decision_kernel.infrastructure.market_snapshot import GitMarketReader, locatable
+
+    class Backend:
+        def __init__(self):
+            self.calls = []
+
+        def last_change(self, head, path):
+            self.calls.append((head, path))
+            return "0" * 40
+
+    backend = Backend()
+    reader = object.__new__(GitMarketReader)
+    reader._depth, reader._reader = 1, backend
+    journal = "submissions/" + "a" * 64 + ".json"
+    assert locatable(journal) and locatable("source-views/any/manifest.json")
+    assert reader.last_change("1" * 40, journal) == "0" * 40
+    assert backend.calls == [("1" * 40, journal)]
+    for bad in ("submissions/", "submissions/a/b.json", "submissions/UPPER.json",
+                "submissions/note.txt", "submissions/../store.json", "other/x.json",
+                "submissions/" + "a" * 97 + ".json"):
+        assert not locatable(bad), bad
+        with pytest.raises(RecordError, match="MARKET_SNAPSHOT_SOURCE_ONLY"):
+            reader.last_change("1" * 40, bad)
+    assert backend.calls == [("1" * 40, journal)]

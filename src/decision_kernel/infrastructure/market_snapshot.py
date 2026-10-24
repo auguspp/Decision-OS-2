@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager
 import os
+import re
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -18,6 +19,17 @@ from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.git_snapshot import GitSnapshot, MAX_BUNDLE_BYTES
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore, github_tree_inventory
 from decision_kernel.infrastructure.native_git_memo import native_git_memo_scope
+
+# A submission journal only names where an already-retained result was written.
+# The reader accepts that exact shape so an idempotent retry can locate its own
+# original commit; nothing else under submissions/ becomes readable, and the
+# located result must still resolve as a source view.
+JOURNAL_PATH = re.compile(r"submissions/[a-z0-9][a-z0-9_-]{0,95}\.json\Z")
+
+
+def locatable(path):
+    return isinstance(path, str) and (path.startswith("source-views/")
+        or JOURNAL_PATH.fullmatch(path) is not None)
 from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
 
 
@@ -133,7 +145,7 @@ class GitMarketReader:
         return self._call("resolve", reference)
 
     def last_change(self, head, path):
-        require(path.startswith("source-views/"), "MARKET_SNAPSHOT_SOURCE_ONLY")
+        require(locatable(path), "MARKET_SNAPSHOT_SOURCE_ONLY")
         return self._call("last_change", head, path)
 
     def market_inventory(self):

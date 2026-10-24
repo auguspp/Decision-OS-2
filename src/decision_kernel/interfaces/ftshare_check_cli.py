@@ -75,7 +75,7 @@ def settings(event, env):
 
 def check_private(api, selected):
     # Historical studies remain private-only; normal hosts may use #164 authority.
-    from decision_kernel.infrastructure.runtime_publication import native_publication_basis
+    from decision_kernel.infrastructure.runtime_publication import native_publication_basis, require_code_on_main
     meta = api.request('GET', PREFIX)
     authorization_selection = selected
     if meta.get('private') is False and set(selected) == {'code_sha'} \
@@ -91,8 +91,9 @@ def check_private(api, selected):
              and native_publication_basis(authorization_selection) is not None)
         and meta.get('archived') is False
         and meta.get('default_branch') == 'main', 'FTSHARE_PRIVATE_REPOSITORY_REQUIRED')
-    main = api.request('GET', PREFIX + '/git/ref/heads/main')
-    require(main.get('object', {}).get('sha') == selected['code_sha'], 'FTSHARE_MAIN_MOVED')
+    # A merge behind this run does not change the code it is executing; only a
+    # rewrite that removed its commit from main invalidates the run.
+    require_code_on_main(api, selected['code_sha'], 'FTSHARE_MAIN_MOVED')
 
 
 def native_ready(api, selected, *, title=TITLE):

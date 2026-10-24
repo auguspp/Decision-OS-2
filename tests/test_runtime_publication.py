@@ -63,7 +63,9 @@ class Native:
         if path == visibility.PREFIX + "/actions/runs/8001":
             return deepcopy(self.run)
         if path == visibility.PREFIX + "/git/ref/heads/main":
-            return {"object": {"sha": "a" * 40}}
+            return {"ref": "refs/heads/main", "object": {"type": "commit", "sha": "a" * 40}}
+        if "/compare/" in path:
+            return {"status": "diverged", "merge_base_commit": {"sha": "b" * 40}}
         pytest.fail("No source, artifact, records or write API permitted: " + path)
 
 

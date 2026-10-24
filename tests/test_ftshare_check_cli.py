@@ -48,6 +48,9 @@ class FakeGitHubAPI:
         self.metadata = {"id": REPOSITORY_ID, "full_name": cli.REPO,
             "private": True, "archived": False, "default_branch": "main"}
         self.main_sha = SHA
+        # Default: a later main that no longer reaches this run's code. A test
+        # that intends a plain merge sets this to an ahead verdict instead.
+        self.ancestry = {"status": "diverged", "merge_base_commit": {"sha": "b" * 40}}
         self.run = {"id": RUN_ID, "head_sha": SHA, "head_branch": "main",
             "run_attempt": 1, "event": "workflow_dispatch", "path": cli.WORKFLOW,
             "display_title": cli.TITLE, "status": "in_progress",
@@ -65,7 +68,9 @@ class FakeGitHubAPI:
         if parsed.path == cli.PREFIX:
             return deepcopy(self.metadata)
         if parsed.path == cli.PREFIX + "/git/ref/heads/main":
-            return {"object": {"sha": self.main_sha}}
+            return {"ref": "refs/heads/main", "object": {"type": "commit", "sha": self.main_sha}}
+        if "/compare/" in parsed.path:
+            return deepcopy(self.ancestry)
         if parsed.path == cli.PREFIX + "/actions/runs/" + str(RUN_ID):
             return deepcopy(self.run)
         if parsed.path == cli.PREFIX + "/actions/workflows/ci.yml/runs":
@@ -209,7 +214,7 @@ def test_native_reality_must_match_declared_identity_before_preparation(tmp_path
     assert host.client.calls == [] and not host.out.exists()
 
 
-def test_native_check_refuses_moved_main_and_missing_ci(tmp_path):
+def test_native_check_refuses_rewritten_main_and_missing_ci(tmp_path):
     host = Host(tmp_path)
     host.api.main_sha = "b" * 40
     with pytest.raises(RecordError, match="FTSHARE_MAIN_MOVED"):
@@ -218,6 +223,17 @@ def test_native_check_refuses_moved_main_and_missing_ci(tmp_path):
     host.api.ci = []
     with pytest.raises(RecordError, match="FTSHARE_MAIN_CI_REQUIRED"):
         host.execute("prepare")
+    assert host.client.calls == []
+
+
+def test_a_merge_landing_after_the_run_started_does_not_cancel_it(tmp_path):
+    # The run holds the tree it checked out; main advancing afterwards cannot
+    # change that tree. Refusing on head equality discarded a collection whose
+    # requests had already been spent, so a plain merge must now pass.
+    host = Host(tmp_path)
+    host.api.main_sha = "b" * 40
+    host.api.ancestry = {"status": "ahead", "merge_base_commit": {"sha": SHA}}
+    assert host.execute("prepare") == 0
     assert host.client.calls == []
 
 

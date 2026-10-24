@@ -374,3 +374,75 @@ def test_acquired_source_feeds_existing_numeric_audit_and_same_checkpoint(store)
     body = store.read_revision(BlobRef(**saved["reference"]))["body"]
     assert "66.67 percent" in body and "decision-os-numbers-v1:start" in body
     assert ResearchDelivery(store).verify(BlobRef(**saved["reference"]))["status"] == "verified-declared-inventory"
+
+
+def timed_delivery_payload():
+    payload = delivery_payload(method_id=EXTERNAL_METHOD)
+    source = payload["items"][-1]["source"]
+    source.update(published_at="2026-10-22T01:00:00Z", acquired_at="2026-10-23T01:00:00Z")
+    context = dict(subject="synthetic", period="2025-FY", scope="consolidated")
+    payload["numerical_workpaper"] = {
+        "schema": "research-numbers-v2", "knowledge_cutoff": "2026-10-23T08:00:00Z",
+        "evaluated_at": "2026-10-24T08:00:00Z", "inputs": [
+            dict(id="cash", value="2", unit="CNY", source=0,
+                 locator={"row": 2, "column": "value"}, **context)],
+        "calculations": [dict(id="shown", operation="identity", operands=["cash"], unit="CNY", **context)],
+        "template": "Synthetic cash {{number:shown}}"}
+    return payload
+
+
+@pytest.mark.parametrize("stored_at, expected", [
+    ("2026-10-23T07:00:00Z", "conditional"),
+    ("2026-10-23T09:00:00Z", "blocked"),
+])
+def test_v2_delivery_keeps_receipt_and_time_qualification_separate_through_replay(store, monkeypatch, stored_at, expected):
+    from decision_kernel.application import versioned_store
+    from decision_kernel.application.numerical_audit import NumericalAudit
+    monkeypatch.setattr(versioned_store, "_now", lambda: stored_at)
+    payload = timed_delivery_payload()
+    saved = ResearchDelivery(store).deliver(payload, submission_id="timed-delivery")
+    assert saved["numerical_audit"]["status"] == expected
+    assert saved["numerical_audit"]["schema"] == "research-numerical-audit-v2"
+    assert saved["numerical_audit"]["knowledge_cutoff"] == payload["numerical_workpaper"]["knowledge_cutoff"]
+    assert saved["research_assessment"] == "not-performed" and saved["human_acceptance"] == "not-confirmed"
+    fresh = lambda: VersionedStore(GitStore(store.backend.root))
+    assert verify_fresh(saved, fresh)["readback"] == "fresh-reader-verified"
+    ref = BlobRef(**saved["reference"])
+    body = fresh().read_revision(ref)["body"]
+    assert "decision-os-numbers-v2:start" in body
+    audited = NumericalAudit(fresh()).saved(ref)
+    assert audited["status"] == expected and audited["schema"] == "research-numerical-audit-v2"
+    assert audited["knowledge_cutoff"] == payload["numerical_workpaper"]["knowledge_cutoff"]
+    assert ResearchDelivery(fresh()).open(ref)["method"]["id"] == EXTERNAL_METHOD
+    head = store.backend.head()
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2035-01-01T00:00:00Z")
+    replay = ResearchDelivery(store).deliver(payload, submission_id="timed-delivery")
+    assert replay["reference"] == saved["reference"]
+    assert replay["numerical_audit"]["status"] == expected
+    assert replay["numerical_audit"]["knowledge_cutoff"] == payload["numerical_workpaper"]["knowledge_cutoff"]
+    assert replay["numerical_audit"]["evaluated_at"] == payload["numerical_workpaper"]["evaluated_at"]
+    assert store.backend.head() == head and fresh().read_revision(ref)["body"] == body
+
+
+@pytest.mark.parametrize("change", ["missing-time", "date-only", "naive-time", "reversed", "unsupported", "caller-qualified", "mixed-markers"])
+def test_v2_delivery_bad_envelope_is_rejected_before_intent_or_source_write(store, change):
+    payload = timed_delivery_payload()
+    numeric = payload["numerical_workpaper"]
+    if change == "missing-time":
+        numeric.pop("evaluated_at")
+    elif change == "date-only":
+        numeric["knowledge_cutoff"] = "2026-10-23"
+    elif change == "naive-time":
+        numeric["evaluated_at"] = "2026-10-24T08:00:00"
+    elif change == "reversed":
+        numeric["evaluated_at"] = "2026-10-22T08:00:00Z"
+    elif change == "unsupported":
+        numeric["schema"] = "research-numbers-v3"
+    elif change == "caller-qualified":
+        numeric["qualified"] = True
+    else:
+        payload["progress"]["body"] += "\n\n<!-- decision-os-numbers-v2:start -->\n"
+    head = store.backend.head()
+    with pytest.raises(RecordError):
+        ResearchDelivery(store).deliver(payload, submission_id="invalid-timed-delivery")
+    assert store.backend.head() == head

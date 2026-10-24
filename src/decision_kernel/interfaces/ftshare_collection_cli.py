@@ -20,6 +20,7 @@ from decision_kernel.application.ftshare_collection import (
     plan_ftshare_collection, plan_ftshare_single_collection, restore_ftshare_collection,
     retain_ftshare_batch, retain_ftshare_collection, retain_ftshare_single,
 )
+from decision_kernel.application.ftshare_on_demand import REQUEST_SCHEMA, plan_ftshare_on_demand
 from decision_kernel.application.ftshare_collection_inputs import read_ftshare_collection_version
 from decision_kernel.application.ftshare_daily import capture_batch
 from decision_kernel.application.ftshare_single import capture_single, single_request
@@ -29,7 +30,7 @@ from decision_kernel.application.market_custody import market_read_scope
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import (
-    RecordError, Selection, SourceRef, UnknownWrite, digest, encoded, identifier, require,
+    RecordError, Selection, SourceRef, UnknownWrite, checked_text, digest, encoded, identifier, require,
 )
 from decision_kernel.infrastructure.github_store import (
     MAX_REQUESTS, GitHubAPI, GitHubRateLimits, GitHubStore,
@@ -44,8 +45,19 @@ from decision_kernel.interfaces.market_collection_cli import (
 )
 
 CONFIG_FILE = Path("config/ftshare-daily.json")
+POLICY_FILE = Path("config/daily-market.json")
 SCHEMA = "ftshare-daily-runtime-v1"
 SOURCE_ADMISSION_API_REQUESTS = 240
+# 单个新 SourceInput 最多四个文件；80 覆盖 writer 的权限/head、journal、
+# identity/manifest 探测、CAS、parent/整树/逐字读回，以及控制边的两个独立
+# GitMarketReader scope（各预留18次 REST，含出口head前进的重新核验）。
+# writer 预留44次；scope 内前驱/上下文读取走本地快照。
+ON_DEMAND_STORE_REQUESTS = 80
+# 响应落盘后仍要保存原响应与结算两条保管边，共用同一个硬上限而非新请求阈值。
+# 两条边实测各约百次（含 exit 处 head 复核），故在两次 writer 预留上再加出口核验余量。
+ON_DEMAND_SETTLEMENT_REQUESTS = 2 * ON_DEMAND_STORE_REQUESTS + 60
+# begin 前再留 reservation 保管边；本次不引入并发探测，故不含探测开销。
+ON_DEMAND_RESERVATION_REQUESTS = ON_DEMAND_SETTLEMENT_REQUESTS + ON_DEMAND_STORE_REQUESTS
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 QUALIFICATION_TITLE = "FTShare daily check continuation 20261018"
 KERNEL_TITLE = "FTShare Kernel v1 daily check 20261019"
@@ -116,6 +128,33 @@ def _single_requests(sync):
     return requests
 
 
+def _on_demand_request(value, *, repository=None):
+    require(isinstance(value, dict) and set(value) == {
+        "schema", "id", "base_reference", "symbol", "adjust_kind", "reason"
+    } and value["schema"] == REQUEST_SCHEMA, "FTSHARE_ON_DEMAND_REQUEST")
+    identifier(value["id"])
+    checked_text(value["reason"], limit=1024)
+    require(isinstance(value["symbol"], str) and re.fullmatch(r"[0-9]{6}\.(SH|SZ)", value["symbol"])
+        and isinstance(value["adjust_kind"], str) and value["adjust_kind"] in {"none", "forward"},
+        "FTSHARE_SINGLE_TARGETS")
+    ref = SourceRef.from_dict(value["base_reference"])
+    require(ref.selection == Selection() and (repository is None or ref.manifest.repository == repository),
+        "FTSHARE_COLLECTION_EXACT_LOCAL_REFERENCE")
+    return {**deepcopy(value), "base_reference": _json(encoded(asdict(ref)))}
+
+
+def _on_demand_config(collection, config):
+    # 动态范围投影已核计划；资格信任锚只能来自当前配置，缺失不得由计划补齐。
+    plan = collection["plan"]
+    sync = {key: deepcopy(plan[key]) for key in (
+        "base_reference", "start", "end", "targets", "source_budget")}
+    if "completion_policy" in plan:
+        sync["completion_policy"] = deepcopy(plan["completion_policy"])
+    return {"schema": SCHEMA, **{key: deepcopy(plan[key]) for key in (
+        "collection_id", "generation", "legacy_reference")}, "qualification": None,
+        "kernel_adoption": deepcopy(config.get("kernel_adoption")), "kernel_sync": sync}
+
+
 def settings(event, env, config):
     config = configuration(config)
     require(env.get("GITHUB_REPOSITORY") == REPO and env.get("GITHUB_REF") == "refs/heads/main"
@@ -138,10 +177,16 @@ def settings(event, env, config):
     raw = data.get("selection")
     require(isinstance(raw, str) and 0 < len(raw.encode()) <= 6000, "FTSHARE_RUNTIME_FIXED_SELECTION")
     selection = _json(raw.encode())
-    require(isinstance(selection, dict) and {"collection_id", "generation"} <= set(selection)
-        <= {"collection_id", "generation", "calendar_references"}
-        and all(selection[k] == config[k] for k in ("collection_id", "generation")),
-        "FTSHARE_RUNTIME_FIXED_SELECTION")
+    on_demand = None
+    if isinstance(selection, dict) and "on_demand" in selection:
+        require(set(selection) == {"on_demand"} and operation in {"ftshare-sync", "ftshare-status"},
+            "FTSHARE_ON_DEMAND_SELECTION")
+        on_demand = _on_demand_request(selection["on_demand"], repository=REPO)
+    else:
+        require(isinstance(selection, dict) and {"collection_id", "generation"} <= set(selection)
+            <= {"collection_id", "generation", "calendar_references"}
+            and all(selection[k] == config[k] for k in ("collection_id", "generation")),
+            "FTSHARE_RUNTIME_FIXED_SELECTION")
     calendars = None
     if "calendar_references" in selection:
         values = selection["calendar_references"]
@@ -155,7 +200,8 @@ def settings(event, env, config):
     require(operation == "ftshare-sync" or calendars is None, "FTSHARE_RUNTIME_STATUS_CALENDAR_OVERRIDE")
     units = str(data.get("work_units", "1"))
     require(re.fullmatch(r"[1-9][0-9]?", units) and 1 <= int(units) <= 32
-        and (operation == "ftshare-sync" or units == "1"), "FTSHARE_RUNTIME_WORK_UNIT_BOUND")
+        and (operation == "ftshare-sync" or units == "1")
+        and (on_demand is None or units == "1"), "FTSHARE_RUNTIME_WORK_UNIT_BOUND")
     sha, run_id = data.get("code_sha"), env.get("GITHUB_RUN_ID")
     require(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{40}", sha)
         and sha == env.get("GITHUB_SHA"), "FTSHARE_RUNTIME_CODE_SHA")
@@ -163,7 +209,7 @@ def settings(event, env, config):
         "FTSHARE_RUNTIME_RUN_ID")
     return {"operation": operation, "code_sha": sha, "run_id": int(run_id), "run_attempt": 1,
         "max_work_units": int(units), "access_confirmed": authorized, "custody_authorized": authorized,
-        "calendar_references": calendars}
+        "calendar_references": calendars, "on_demand": on_demand}
 
 
 def native_ready(api, selected, config):
@@ -176,7 +222,7 @@ def native_ready(api, selected, config):
     """
     require(selected.get("operation") in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
     adopting = selected["operation"] == "ftshare-adopt-kernel"
-    single = config.get("kernel_sync") is not None
+    single = config.get("kernel_sync") is not None or selected.get("on_demand") is not None
     require(not adopting or not single, "FTSHARE_RUNTIME_KERNEL_ADOPTION_GENERATION_CLOSED")
     check_private(api, selected)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))
@@ -355,6 +401,12 @@ def _quota(api):
             or api.rate_limits.admits(MAX_REQUESTS - api._requests)))
 
 
+def _hard_quota(api, reserve):
+    return api is None or (0 <= api._requests <= MAX_REQUESTS - reserve
+        and (not isinstance(getattr(api, "rate_limits", None), GitHubRateLimits)
+            or api.rate_limits.admits(reserve)))
+
+
 def _transport(client, elapsed):
     meta = client.last_response_meta or client.last_error_meta or {}
     allowed = ("http_status", "received_at", "retry_after_state", "retry_after_seconds", "rate_limits",
@@ -470,7 +522,7 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                    guard=None, progress=None, clock=None, monotonic=time.monotonic,
                    sleep=time.sleep, capacity=market_capacity, calendar_references=None, master_references=None,
                    kernel_loader=None,
-                   quota_wait=None):
+                   quota_wait=None, on_demand=None, protected_symbols=None):
     """Finite source sync, source-free adoption, or independently restored status."""
     require(operation in OPERATIONS, "FTSHARE_RUNTIME_OPERATION")
     writing = operation != "ftshare-status"
@@ -478,7 +530,14 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
         and (operation == "ftshare-sync" or max_work_units == 1), "FTSHARE_RUNTIME_WORK_UNIT_BOUND")
     require(not writing or access_confirmed is True and custody_authorized is True,
         "FTSHARE_RUNTIME_SOURCE_CUSTODY_REQUIRED")
-    single = config.get("kernel_sync") is not None
+    if on_demand is not None:
+        on_demand = _on_demand_request(on_demand)
+        require(operation in {"ftshare-sync", "ftshare-status"} and max_work_units == 1
+            and calendar_references is None and master_references is None,
+            "FTSHARE_ON_DEMAND_SELECTION")
+        require(isinstance(protected_symbols, (list, tuple)) and 0 < len(protected_symbols) <= MAX_SOURCE_REQUESTS,
+            "FTSHARE_EXPANSION_PROTECTED_SYMBOLS")
+    single = config.get("kernel_sync") is not None or on_demand is not None
     require(master_references is None or operation == "ftshare-sync" and single,
             "FTSHARE_RUNTIME_MASTER_OVERRIDE_REQUIRES_SINGLE_SYNC")
     if operation == "ftshare-adopt-kernel":
@@ -504,6 +563,15 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             receipt["next_run_can_resume"] = False
         if progress is not None:
             progress(deepcopy(receipt))
+    def admit(reserve=ON_DEMAND_STORE_REQUESTS):
+        # 已发出的请求要能落盘结算：这里只核真实硬余量，不再套新请求准入阈值。
+        require(_hard_quota(api, reserve), "FTSHARE_STORE_SETTLEMENT_BUDGET")
+    def source_admit(reserve):
+        # 权限与余量必须在构造来源客户端之前核验；随后单独核结算预留。
+        require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+        guard(api)
+        require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+        admit(reserve)
     def retain(candidate, store, fresh):
         return retain_ftshare_collection(candidate, registry, store, fresh_reader=fresh,
             predecessor=reference, custody_authorized=True, public_rights_confirmed=False)
@@ -535,8 +603,16 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
             try:
                 if collection is None:
                     with market_read_scope(fresh()) as reader:
-                        reference = latest_ftshare_reference(reader, registry,
-                            collection_id=config["collection_id"], generation=config["generation"])
+                        if on_demand is not None:
+                            planned = plan_ftshare_on_demand(on_demand, registry, reader,
+                                created_at=clock(), protected_symbols=protected_symbols)
+                            collection, reference = planned["collection"], planned["reference"]
+                            config = _on_demand_config(collection, config)
+                            calendar_references = deepcopy(collection["plan"]["calendar_references"])
+                            master_references = deepcopy(collection["plan"]["master_references"])
+                        else:
+                            reference = latest_ftshare_reference(reader, registry,
+                                collection_id=config["collection_id"], generation=config["generation"])
                         if not writing:
                             if reference is None:
                                 receipt.update(status="not-retained", reason_code="FTSHARE_COLLECTION_NOT_RETAINED")
@@ -550,9 +626,9 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                                     receipt["next_run_can_resume"] = False
                             unit["status"] = receipt["status"]
                             break
-                        if reference is not None:
+                        if on_demand is None and reference is not None:
                             collection = restore_ftshare_collection(reference, registry, reader)["collection"]
-                        elif single:
+                        elif on_demand is None and single:
                             sync = config["kernel_sync"]
                             collection = plan_ftshare_single_collection(sync["base_reference"], registry, reader,
                                 collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
@@ -560,7 +636,7 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                                 source_budget=sync["source_budget"], calendar_references=calendar_references,
                                 master_references=master_references,
                                 completion_policy=sync.get("completion_policy"))
-                        else:
+                        elif on_demand is None:
                             collection = plan_ftshare_collection(config["legacy_reference"], registry, reader,
                                 collection_id=config["collection_id"], generation=config["generation"], created_at=clock(),
                                 calendar_references=calendar_references)
@@ -581,6 +657,9 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                 receipt["capacity"] = capacity(fresh())
                 require(receipt["capacity"]["admit_work_unit"], "FTSHARE_STORAGE_CAPACITY")
                 require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+                if on_demand is not None:
+                    source_admit(ON_DEMAND_RESERVATION_REQUESTS
+                        + (ON_DEMAND_STORE_REQUESTS if reference is None else 0))
                 if client is None:
                     if client_factory is None:
                         from decision_kernel.infrastructure.ftshare_http import FTShareHTTP
@@ -593,6 +672,8 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                 if reference is None:
                     saved = retain(collection, store, fresh)
                     reference, collection = saved["reference"], saved["restored"]["collection"]
+                if on_demand is not None:
+                    source_admit(ON_DEMAND_RESERVATION_REQUESTS)
                 slot = min(pending, key=lambda candidate: _slot_order(collection, candidate))
                 unit["slot"] = slot
                 candidate = begin_ftshare_slot(collection, slot, at=clock())
@@ -603,8 +684,11 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                 reference, collection = saved["reference"], saved["restored"]["collection"]
                 unit["status"] = "in-flight"
                 report()
-                guard(api)
-                require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
+                if on_demand is not None:
+                    source_admit(ON_DEMAND_SETTLEMENT_REQUESTS)
+                else:
+                    guard(api)
+                    require(_quota(api), "FTSHARE_STORE_ADMISSION_BUDGET")
                 spec = collection["plan"]["requests"][slot]["parameters"]
                 before, request_started, failure, captured = client.requests, monotonic(), None, None
                 try:
@@ -631,7 +715,10 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                     unit.update(source_requests=count, transport=_transport(client, monotonic() - request_started))
                     receipt["source_requests"] += count
                     report()
-                guard(api)
+                if on_demand is not None:
+                    admit(ON_DEMAND_SETTLEMENT_REQUESTS)
+                else:
+                    guard(api)
                 require(count == 1, "FTSHARE_REQUEST_NOT_CONFIRMED")
                 source_hold, delay = _source_instruction(unit["transport"])
                 raw_reference = None
@@ -646,7 +733,10 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
                             sleep(delay)
                     except Exception:
                         source_hold = "FTSHARE_WAIT_INSTRUCTION_UNUSABLE"
-                guard(api)
+                if on_demand is not None:
+                    admit(ON_DEMAND_STORE_REQUESTS)
+                else:
+                    guard(api)
                 candidate = finish_ftshare_slot(collection, slot, at=clock(), reference=raw_reference,
                     reason_code=failure, source_hold=source_hold)
                 unit["status"] = "settling"
@@ -688,10 +778,22 @@ def run_collection(*, operation, config, registry, open_unit, max_work_units=1,
     return {"receipt": receipt, "reference": reference}
 
 
+def collection_guard(api, selected):
+    # 只检权限与真实硬余量；新来源的 <240 准入由执行阶段单独核验。
+    # 并发探测不属于本组范围，接入时另计其开销，不能用它替代硬余量。
+    check_private(api, selected)
+    require(_hard_quota(api, ON_DEMAND_STORE_REQUESTS), "FTSHARE_STORE_SETTLEMENT_BUDGET")
+
+
 @diagnosed
 def run_runtime(event, env, out, *, execute=run_collection):
     config = configuration(_json(_regular(CONFIG_FILE, 65536)))
     selected = settings(event, env, config)
+    demand_options = {}
+    if selected["on_demand"] is not None:
+        from decision_kernel.application.daily_market import policy
+        approved = policy(_json(_regular(POLICY_FILE, 8192)))
+        demand_options = {"on_demand": selected["on_demand"], "protected_symbols": approved["symbols"]}
     root = Path(env["RUNNER_TEMP"]).resolve(strict=True)
     out = Path(out)
     require(not out.exists() and not out.is_symlink() and out.parent.resolve().is_relative_to(root)
@@ -720,8 +822,9 @@ def run_runtime(event, env, out, *, execute=run_collection):
             custody_authorized=selected["custody_authorized"],
             calendar_references=selected["calendar_references"],
             client_factory=client_factory, kernel_loader=kernel_loader,
-            guard=lambda api: check_private(api, selected),
-            progress=lambda value: save_receipt({**context, **value}))
+            guard=(lambda api: collection_guard(api, selected)) if demand_options
+                and selected["operation"] == "ftshare-sync" else lambda api: check_private(api, selected),
+            progress=lambda value: save_receipt({**context, **value}), **demand_options)
         save_receipt({**context, **result["receipt"]})
         if result["reference"] is not None:
             # Only the private control artifact carries the exact source locator.

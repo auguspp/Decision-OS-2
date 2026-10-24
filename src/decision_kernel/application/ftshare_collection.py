@@ -717,6 +717,7 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
 
     Reinvoking the exact state reconciles its original manifest. Neither a stale
     predecessor nor a restarted pending state creates another request allowance.
+    Single 控制新写入绑定核验 scope 的 head；冲突不刷新重试，已存 journal 先对账。
     """
     visibility = authorize_market_custody(store, custody_authorized=custody_authorized,
                                          public_rights_confirmed=public_rights_confirmed)
@@ -731,6 +732,23 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
     plan = checked["plan"]
     reader = fresh_market_reader(store, fresh_reader)
     with market_read_scope(reader) as grouped:
+        expected_head = grouped.backend.head() if plan["schema"] == SINGLE_PLAN_SCHEMA else None
+        if expected_head is not None and (checked["revision"] == 0 or predecessor is not None):
+            replay_parent = _genesis_parent(plan) if checked["revision"] == 0 else predecessor
+            replay_content = {"schema": SCHEMA, "registry": deepcopy(registry.snapshot),
+                "predecessor": _ref(replay_parent, store.backend.repository), "collection": checked}
+            replay_source = _source(replay_content)
+            # 原 journal 先对账旧意图；当前 tip/frontier 不替换已存的确切版本。
+            replay = grouped._replay(expected_head,
+                "market-custody-" + digest(encoded(asdict(replay_source))),
+                {"operation": "source", "input": asdict(replay_source)})
+            if replay is not None:
+                exact, restored_body = _manifest(SourceRef(replay), registry, grouped)
+                require(encoded(restored_body) == encoded(replay_content), "FTSHARE_COLLECTION_READBACK_CHANGED")
+                return {"status": "stored-and-independently-restored-ftshare-collection",
+                    "reference": exact, "source_id": replay_source.source_id,
+                    "restored": {"reference": exact, "collection": restored_body["collection"],
+                                 "context_restored": False, "batches_restored": False}}
         previous_ref, previous_body = _tip(grouped, registry, plan["collection_id"], plan["generation"])
         previous = None if previous_body is None else previous_body["collection"]
         if previous is not None and previous == checked:
@@ -780,7 +798,12 @@ def retain_ftshare_collection(collection, registry, store, *, fresh_reader, pred
     content = {"schema": SCHEMA, "registry": deepcopy(registry.snapshot),
                "predecessor": parent, "collection": checked}
     source = _source(content)
-    reference = _put(store, source)
+    if expected_head is None:
+        reference = _put(store, source)
+    else:
+        # 仅 single 控制写绑定同一核验快照；put_source 保留 journal 优先与原生 CAS。
+        reference = store.put_source("market-custody-" + digest(encoded(asdict(source))), source,
+                                     expected_head=expected_head)
     # Verify the new control with a genuinely fresh Store. Re-fetching the same
     # old masters/calendars and all settled batches here would multiply source
     # restoration cost by every state edge. The ordinary reader proves them.

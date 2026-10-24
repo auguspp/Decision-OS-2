@@ -17,7 +17,7 @@ on:
         type: string
         default: '{"collection_id":"ftshare-cn-eod","generation":"g20261016-v1"}'
         required: true
-        description: 'FTShare: trusted finite collection_id/generation; <=6000 bytes'
+        description: 'FTShare: fixed collection_id/generation, or exclusively {"on_demand":{"schema":"ftshare-on-demand-request-v1","id":...,"base_reference":...,"symbol":...,"adjust_kind":...,"reason":...}} for sync/status; on_demand requires work_units=1; <=6000 bytes'
       work_units:
         type: string
         default: '1'

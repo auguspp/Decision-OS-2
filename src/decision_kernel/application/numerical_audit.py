@@ -16,6 +16,9 @@ from typing import TYPE_CHECKING
 from decision_kernel.application.numerical_evidence_time import (
     EVIDENCE_TIME_SCOPE, VERSION as TIME_VERSION, assess_source_time, time_bounds,
 )
+from decision_kernel.application.numerical_evidence_use import (
+    EVIDENCE_USE_SCOPE, VERSION as USE_VERSION, calculation_use, input_use,
+)
 from decision_kernel.domain.records import (
     BlobRef, IntegrityError, MAX_BYTES, MissingObject, RecordError, SourceRef,
     StoreUnavailable, checked_text, digest, encoded, identifier, require,
@@ -30,12 +33,15 @@ if TYPE_CHECKING:
 START = "\n\n<!-- decision-os-numbers-v1:start -->\n"
 INPUT = "\n<!-- decision-os-numbers-v1:input -->\n```json\n"
 END = "```\n<!-- decision-os-numbers-v1:end -->\n"
-NUMERICAL_SCHEMAS = (VERSION, TIME_VERSION)
+NUMERICAL_SCHEMAS = (VERSION, TIME_VERSION, USE_VERSION)
 _MARKERS = {
     VERSION: (START, INPUT, END),
     TIME_VERSION: ("\n\n<!-- decision-os-numbers-v2:start -->\n",
                    "\n<!-- decision-os-numbers-v2:input -->\n```json\n",
                    "```\n<!-- decision-os-numbers-v2:end -->\n"),
+    USE_VERSION: ("\n\n<!-- decision-os-numbers-v3:start -->\n",
+                  "\n<!-- decision-os-numbers-v3:input -->\n```json\n",
+                  "```\n<!-- decision-os-numbers-v3:end -->\n"),
 }
 _MARKER_PREFIX = re.compile(r"<!--\s*decision-os-numbers-")
 _STRUCTURAL_MARKER = re.compile(r"^[ \t]*<!--\s*decision-os-numbers-", re.MULTILINE)
@@ -68,12 +74,14 @@ def validate_numerical_workpaper(payload: dict, *, with_sources: bool = False) -
     required = {"schema", "inputs", "calculations"}
     if with_sources:
         required.add("sources")
-    if payload.get("schema") == TIME_VERSION:
+    timed = payload.get("schema") == TIME_VERSION or (payload.get("schema") == USE_VERSION
+            and bool({"knowledge_cutoff", "evaluated_at"} & set(payload)))
+    if timed:
         required.update(("knowledge_cutoff", "evaluated_at"))
     _shape(payload, required, {"template"})
     require(payload["schema"] in NUMERICAL_SCHEMAS and len(encoded(payload)) <= MAX_BYTES,
             "NUMERICAL_SCHEMA_OR_SIZE_LIMIT")
-    if payload["schema"] == TIME_VERSION:
+    if timed:
         time_bounds(payload)
 
 
@@ -153,7 +161,8 @@ class NumericalAudit:
 
     def audit(self, payload: dict) -> dict:
         validate_numerical_workpaper(payload, with_sources=True)
-        timed = payload["schema"] == TIME_VERSION
+        semantic = payload["schema"] == USE_VERSION
+        timed = payload["schema"] == TIME_VERSION or (semantic and "knowledge_cutoff" in payload)
         bounds = time_bounds(payload) if timed else None
         markers = _MARKERS[payload["schema"]]
         require(isinstance(payload["sources"], list) and len(payload["sources"]) <= 64,
@@ -168,7 +177,7 @@ class NumericalAudit:
         require(len(ids) == len(set(ids)), "DUPLICATE_NUMERICAL_ID")
         template = checked_text(payload.get("template", ""), empty=True)
         require(not any(mark.strip() in template for mark in (START, INPUT, END)), "RESERVED_NUMERICAL_MARKER")
-        if timed:
+        if payload["schema"] != VERSION:
             require(not has_numerical_appendix(template), "RESERVED_NUMERICAL_MARKER")
         require("{{number:" not in PLACEHOLDER.sub("", template), "INVALID_NUMERICAL_PLACEHOLDER")
         calc_ids = {item["id"] for item in payload["calculations"]}
@@ -178,6 +187,7 @@ class NumericalAudit:
         cache: dict[int, dict | RecordError] = {}
         source_notes: dict[int, dict] = {}
         quantities: dict[str, Quantity] = {}
+        evidence_uses: dict[str, dict] = {}
         inputs, calculations = [], []
 
         def read(index: int) -> dict:
@@ -213,21 +223,27 @@ class NumericalAudit:
             row = {"id": item["id"], "status": "blocked"}
             try:
                 common = {"id", "value", "unit", *CONTEXT_FIELDS}
+                if semantic:
+                    common.add("evidence_use")
+                view = None
                 if "assumption" in item:
                     _shape(item, common | {"assumption"})
                     checked_text(item["assumption"], limit=4096)
                     warnings = ["EXPLICIT_ASSUMPTION"]
                     row["assumption"] = item["assumption"]
-                    if timed:
+                    if timed or semantic:
                         row["evidence_time"] = {"status": "not-applicable",
                                                 "reason": "explicit-assumption-is-not-source-evidence"}
                 else:
-                    _shape(item, common | {"source", "locator"}, {"context_bindings"})
+                    _shape(item, common | {"source", "locator"},
+                           {"context_bindings", "evidence_bindings"} if semantic else {"context_bindings"})
                     view = read(item["source"])
                     if timed:
                         row["evidence_time"] = source_notes[item["source"]]["evidence_time"]
                         require(row["evidence_time"]["status"] == "checked",
                                 row["evidence_time"].get("error", "NUMERICAL_TIME_UNAVAILABLE"))
+                    elif semantic:
+                        row["evidence_time"] = {"status": "not-requested"}
                     raw = _extract(view["data"], item["locator"], numeric=True)
                     row["source_value"] = raw
                     require(number(raw) == number(item["value"]), "SOURCE_VALUE_MISMATCH")
@@ -252,8 +268,14 @@ class NumericalAudit:
                         warnings.append("SOURCE_IS_EXCERPT_OR_LOCATOR")
                     if view["limitations"]:
                         warnings.append("SOURCE_HAS_LIMITATIONS")
+                if semantic:
+                    use, use_warnings = input_use(item, view, _extract)
+                    row["evidence_use"] = use
+                    warnings.extend(use_warnings)
                 quantity = Quantity(number(item["value"]), unit(item["unit"]), _context(item), tuple(warnings))
                 quantities[item["id"]] = quantity
+                if semantic:
+                    evidence_uses[item["id"]] = use
                 row.update(status="conditional" if warnings else "checked", value=str(quantity.value),
                            unit=quantity.unit, warnings=warnings)
             except (RecordError, KeyError, TypeError) as error:
@@ -263,8 +285,12 @@ class NumericalAudit:
         for item in payload["calculations"]:
             row = {"id": item["id"], "status": "blocked"}
             try:
-                _shape(item, {"id", "operation", "operands", "unit", *CONTEXT_FIELDS},
-                       {"places", "claimed", "context_bridge"})
+                required = {"id", "operation", "operands", "unit", *CONTEXT_FIELDS}
+                optional = {"places", "claimed", "context_bridge"}
+                if semantic:
+                    required.add("evidence_use")
+                    optional.add("evidence_bridge")
+                _shape(item, required, optional)
                 require(isinstance(item["operands"], list) and 1 <= len(item["operands"]) <= 16
                         and all(isinstance(i, str) and i in quantities for i in item["operands"]),
                         "OPERAND_NOT_AVAILABLE")
@@ -280,6 +306,10 @@ class NumericalAudit:
                             "CALCULATION_CONTEXT_MISMATCH:" + key)
                 if bridges:
                     warnings.append("DECLARED_CONTEXT_BRIDGE_REQUIRES_REVIEW")
+                if semantic:
+                    use, use_warnings = calculation_use(item, [evidence_uses[i] for i in item["operands"]])
+                    row["evidence_use"] = use
+                    warnings.extend(use_warnings)
                 value, displayed, rounded = calculate(item["operation"], values, item["unit"], item.get("places", 2))
                 row.update(value=str(value), display_number=displayed, unit=unit(item["unit"]),
                            context=dict(zip(CONTEXT_FIELDS, context)), arithmetic_rounded=rounded)
@@ -290,6 +320,8 @@ class NumericalAudit:
                 row.update(status="conditional" if warnings else "checked", warnings=sorted(set(warnings)),
                            display=displayed + " " + unit(item["unit"]))
                 quantities[item["id"]] = Quantity(value, unit(item["unit"]), context, tuple(row["warnings"]))
+                if semantic:
+                    evidence_uses[item["id"]] = use
             except (RecordError, KeyError, TypeError) as error:
                 row["error"] = str(error) if isinstance(error, RecordError) else "INVALID_NUMERICAL_SHAPE"
             calculations.append(row)
@@ -308,7 +340,8 @@ class NumericalAudit:
         start_marker, input_marker, end_marker = markers
         appendix = start_marker + NOTICE + "\n\n" + table + ("\n" + rendered + "\n" if template else "") + input_marker + encoded(payload).decode() + end_marker
         require(len(appendix.encode("utf-8")) <= MAX_BYTES, "NUMERICAL_APPENDIX_TOO_LARGE")
-        result = {"schema": "research-numerical-audit-v2" if timed else "research-numerical-audit-v1", "status": status,
+        result = {"schema": "research-numerical-audit-v3" if semantic else
+                           "research-numerical-audit-v2" if timed else "research-numerical-audit-v1", "status": status,
                 "input_sha256": digest(encoded(payload)), "arithmetic": "Decimal-80-ROUND_HALF_EVEN",
                 "sources": [source_notes[i] for i in sorted(source_notes)], "inputs": inputs,
                 "calculations": calculations, "table_markdown": table, "rendered_excerpt": rendered,
@@ -318,6 +351,9 @@ class NumericalAudit:
         if timed:
             result.update(knowledge_cutoff=payload["knowledge_cutoff"], evaluated_at=payload["evaluated_at"],
                           evidence_time_scope=EVIDENCE_TIME_SCOPE)
+        if semantic:
+            result["evidence_use_scope"] = EVIDENCE_USE_SCOPE
+            result.setdefault("evidence_time_scope", "not-requested")
         return result
 
     def saved(self, reference: BlobRef) -> dict:
@@ -340,7 +376,7 @@ class NumericalAudit:
         require(start < split < end, "INVALID_NUMERICAL_APPENDIX")
         outside = body[:start] + body[end + len(end_marker):]
         require(_STRUCTURAL_MARKER.search(outside) is None, "INVALID_NUMERICAL_APPENDIX")
-        if version == TIME_VERSION:
+        if version != VERSION:
             # Exclude JSON string values from structural detection. V2 reserves
             # markers in its rendered template; v1 keeps its original semantics.
             rendered_section = body[start:split + len(input_marker)] + body[end:end + len(end_marker)]

@@ -247,9 +247,10 @@ class ResearchDelivery:
                 try:
                     audited = NumericalAudit(self.store).saved(ref)
                     numerical = {"status": audited["status"], "saved_render": audited.get("saved_render")}
-                    if audited.get("schema") == "research-numerical-audit-v2":
+                    if audited.get("schema") in ("research-numerical-audit-v2", "research-numerical-audit-v3"):
                         numerical.update({key: audited[key] for key in (
-                            "schema", "knowledge_cutoff", "evaluated_at", "evidence_time_scope")})
+                            "schema", "knowledge_cutoff", "evaluated_at", "evidence_time_scope", "evidence_use_scope")
+                            if key in audited})
                 except RecordError:
                     numerical = {"status": "blocked", "error": "NUMERICAL_ASSESSMENT_UNAVAILABLE"}
             result = {"reference": asdict(ref), "declared_stop": work[1].stop if work else None,

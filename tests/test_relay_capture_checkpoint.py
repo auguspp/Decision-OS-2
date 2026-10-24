@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from decision_kernel.application.relay_capture_checkpoint import (
-    CaptureCheckpoint, CheckpointStateError, CheckpointWriteError,
-    validate_capture_checkpoint, validate_capture_transition,
+    CaptureCheckpoint, CheckpointStateError, CheckpointWriteError, RELEASE_DECISION,
+    release_in_flight, validate_capture_checkpoint, validate_capture_transition,
 )
 from decision_kernel.application.research_sources import (
     capture_registered, inspect_result, source_inputs, source_page_inputs, validate_plan,
@@ -420,6 +420,56 @@ def test_terminal_cannot_be_published_as_a_fresh_budget_under_its_predecessor():
     validate_capture_checkpoint(new, use, registry(), max_pages=4)
     with pytest.raises(RecordError, match='TERMINAL_RESTART'):
         validate_capture_transition(old, new, use, registry(), max_pages=4)
+
+
+def _unconfirmed():
+    """A real in-flight reservation: the second request was sent, no answer came back."""
+    saved = []
+    with pytest.raises(RuntimeError):
+        run(busy(504), RuntimeError('source response lost'), writer=lambda s: saved.append(deepcopy(s)))
+    assert saved[-1]['control']['retry']['phase'] == 'in-flight'
+    return saved[-1]
+
+
+def test_release_names_the_unknown_request_and_leaves_the_venue_resumable():
+    old = _unconfirmed()
+    use = old['control']['request']
+    released = release_in_flight(old)
+    # Nothing recorded is dropped: the unknown request stays named in history.
+    assert released['control']['retry']['attempts'] == old['control']['retry']['attempts']
+    assert released['control']['retry']['wait_budget_seconds'] == old['control']['retry']['wait_budget_seconds']
+    assert released['control']['retry']['reserved_attempt'] is None
+    assert released['control']['retry']['decision'] == RELEASE_DECISION
+    # The control phase is deliberately unchanged: only the reservation is gone.
+    assert old['control']['state'] == released['control']['state'] == 'executing'
+    assert released['control']['page_number'] == old['control']['page_number']
+    validate_capture_checkpoint(released, use, registry(), max_pages=4)
+    validate_capture_transition(old, released, use, registry(), max_pages=4)
+
+
+def test_released_checkpoint_resumes_on_the_next_invocation():
+    released = release_in_flight(_unconfirmed())
+    capture, _, _, _, _ = run(body(), saved=released)
+    assert capture['complete'] is True
+
+
+def test_release_is_refused_when_nothing_is_unconfirmed():
+    _, saves, _, _, _ = run(body())
+    with pytest.raises(RecordError, match='NOT_INFLIGHT'):
+        release_in_flight(saves[-1])
+    with pytest.raises(RecordError, match='NOT_INFLIGHT'):
+        release_in_flight(release_in_flight(_unconfirmed()))
+
+
+def test_release_decision_cannot_smuggle_a_dropped_attempt():
+    old = _unconfirmed()
+    use = old['control']['request']
+    released = release_in_flight(old)
+    released['control']['retry']['attempts'] = released['control']['retry']['attempts'][:-1]
+    released['control']['retry']['wait_budget_seconds'] = 0
+    validate_capture_checkpoint(released, use, registry(), max_pages=4)
+    with pytest.raises(RecordError, match='UNSETTLED'):
+        validate_capture_transition(old, released, use, registry(), max_pages=4)
 
 
 def test_transition_requires_new_success_to_settle_the_reserved_attempt_number():

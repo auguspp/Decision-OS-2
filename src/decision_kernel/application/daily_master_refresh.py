@@ -21,8 +21,8 @@ from decision_kernel.application.market_custody import (
 )
 from decision_kernel.application.market_security_inputs import MASTER_FIELDS, inspect_security_master
 from decision_kernel.application.relay_capture_checkpoint import (
-    CheckpointStateError, CheckpointWriteError, STOP_CLASSES, checkpoint_time,
-    validate_capture_checkpoint,
+    RELEASE_DECISION, CheckpointStateError, CheckpointWriteError, STOP_CLASSES, checkpoint_time,
+    release_in_flight, validate_capture_checkpoint,
 )
 from decision_kernel.application.research_sources import capture_registered, source_inputs, validate_plan
 from decision_kernel.application.versioned_store import VersionedStore
@@ -126,6 +126,67 @@ def _reason(error):
         and len(error.args) == 1 and type(error.args[0]) is str else None
     return value if isinstance(value, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", value) \
         else "DAILY_MASTER_FAILED"
+
+
+def release_master_venue(cycle, venue, registry, store, fresh_reader):
+    """Make one unconfirmed venue reservation explicitly resumable.
+
+    This is the exit `_stop` never had. An unconfirmed reservation used to
+    freeze a venue permanently: every later invocation returned
+    persistence-unconfirmed before it could issue anything, so no amount of new
+    windows could advance it and the only recourse was editing records by hand.
+
+    Releasing does not invent a response and does not reopen the request budget.
+    It records that the reservation is abandoned and leaves the venue ready for
+    its next page, with the unknown request still named in the checkpoint's own
+    history.
+    """
+    owner, use = checkpoint_id(cycle, venue), _use(cycle, venue, registry)
+    row = cycle["masters"][venue]
+    require(cycle["status"] == "master-pending" and row["status"] == "in-flight"
+        and type(row["reserved_queries"]) is int and row["reserved_queries"] == 1
+        and row["reference"] is None and row["reason_code"] is None, "DAILY_MASTER_PHASE")
+    with market_read_scope(store) as reader:
+        newest = latest_market_reference(reader, registry, checkpoint_id=owner)
+        require(newest is not None, "DAILY_MASTER_CHECKPOINT_REQUIRED")
+        saved = _restore_owned(newest, cycle, venue, registry, reader)
+        state = saved["state"]
+        retry = state["control"]["retry"]
+        require(isinstance(retry, dict) and retry.get("phase") == "in-flight",
+            "DAILY_MASTER_NOT_INFLIGHT")
+        released = release_in_flight(state)
+        _check_state(released, cycle, use, registry)
+        retained = retain_market_checkpoint(released, registry, store, checkpoint_id=owner,
+            predecessor=newest, fresh_reader=fresh_reader,
+            custody_authorized=True, public_rights_confirmed=False)
+    return {"status": "released", "venue": venue,
+        "prior_checkpoint_reference": newest, "checkpoint_reference": retained["reference"],
+        "released_attempt": retry["reserved_attempt"], "recorded_attempts": len(retry["attempts"]),
+        "page_number": state["control"]["page_number"], "decision": deepcopy(RELEASE_DECISION)}
+
+
+def _unconfirmed(cycle, venue, registry, store):
+    """Whether this venue's newest checkpoint still holds an unanswered request."""
+    row = cycle["masters"][venue]
+    if row["status"] != "in-flight" or row["reference"] is not None:
+        return False
+    with market_read_scope(store) as reader:
+        newest = latest_market_reference(reader, registry, checkpoint_id=checkpoint_id(cycle, venue))
+        if newest is None:
+            return False
+        retry = _restore_owned(newest, cycle, venue, registry, reader)["state"]["control"]["retry"]
+    return isinstance(retry, dict) and retry.get("phase") == "in-flight"
+
+
+def release_unconfirmed_masters(cycle, registry, store, fresh_reader):
+    """Release every venue that actually holds an unanswered request.
+
+    Selection comes from the observed checkpoint, not from an argument, so this
+    cannot release a venue that has nothing to release and needs no extra
+    dispatch input. Each release is reported separately.
+    """
+    return [release_master_venue(cycle, venue, registry, store, fresh_reader)
+        for venue in POLICY["venues"] if _unconfirmed(cycle, venue, registry, store)]
 
 
 def _count(state):

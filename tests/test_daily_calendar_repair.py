@@ -283,8 +283,12 @@ def test_workflow_uses_the_existing_serial_writer_and_no_new_source_secret_route
     from decision_kernel.interfaces import daily_visibility_cli as visibility
     root = Path(__file__).resolve().parents[1]
     flow = yaml.load((root / '.github/workflows/daily-market.yml').read_text(), Loader=yaml.BaseLoader)
-    assert flow['on']['workflow_dispatch']['inputs']['operation']['options'] == [
-        'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write', 'external-clock', 'clock-probe']
+    options = flow['on']['workflow_dispatch']['inputs']['operation']['options']
+    # Every recovery entry the settings gate actually admits must stay reachable
+    # from the dispatch menu; the menu may gain entries but may not lose them.
+    assert {'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write',
+            'release-master', 'external-clock', 'clock-probe'} <= set(options)
+    assert len(options) == len(set(options)) and 'status' in options
     assert set(flow['jobs']) == {'visibility', 'status', 'daily', 'clock-probe'} and flow['permissions'] == {}
     assert flow['concurrency'] == {'group': 'decision-os-relay-source', 'cancel-in-progress': 'false'}
     assert "inputs.operation == 'repair-calendar'" in flow['jobs']['daily']['if']

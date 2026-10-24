@@ -15,7 +15,8 @@ CURRENT_MAIN = "current-main"
 RUN_TITLE = "decision-os-daily-market"
 EXTERNAL_RUN_TITLE = RUN_TITLE + " / external-clock"
 PROBE_RUN_TITLE = RUN_TITLE + " / clock-probe"
-MANUAL_OPERATIONS = frozenset({"status", "update", "recover-late", "repair-calendar", "reconcile-write"})
+MANUAL_OPERATIONS = frozenset({"status", "update", "recover-late", "repair-calendar",
+    "reconcile-write", "release-master"})
 DISPATCH_OPERATIONS = MANUAL_OPERATIONS | {EXTERNAL_CLOCK, CLOCK_PROBE}
 
 

@@ -268,7 +268,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
               sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False,
               calendar_repair=None, write_reconciliation=None, reconciliation_verifier=None,
-              master_refresh=None, master_client_factory=None, execute_master_unit=None):
+              master_refresh=None, master_client_factory=None, execute_master_unit=None,
+              release_master=None):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
@@ -276,6 +277,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     require(calendar_repair is None or operation == "update", "DAILY_CALENDAR_REPAIR_OPERATION")
     require(write_reconciliation is None or operation == "update" and calendar_repair is None,
         "DAILY_WRITE_RECONCILIATION_OPERATION")
+    require(release_master is None or release_master is True and operation == "update"
+        and calendar_repair is None and write_reconciliation is None and master_refresh is not None,
+        "DAILY_MASTER_RELEASE_OPERATION")
     if master_refresh is not None:
         from decision_kernel.application.daily_master_refresh import policy as master_policy
         master_refresh = master_policy(master_refresh)
@@ -340,6 +344,22 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 require(capacity(fresh())["admit_work_unit"] is True, "DAILY_MARKET_STORAGE_CAPACITY")
             _admit(api)
         return store, fresh, api
+    if release_master:
+        # An unconfirmed reservation has no automatic exit: every later run stops
+        # before issuing anything, so the cycle can never advance through new
+        # windows. This is the one act that names the abandoned request and
+        # leaves the venue ready; it spends no source request and grants none.
+        from decision_kernel.application.daily_master_refresh import release_unconfirmed_masters
+        store, fresh, api = unit(True)
+        current = latest_cycle(fresh_market_reader(store, fresh), registry=registry,
+            protected_symbols=approved["symbols"])
+        releases = release_unconfirmed_masters(current["cycle"], registry, store, fresh)
+        report.update(status="released" if releases else "nothing-to-release",
+            cycle_date=current["cycle"]["date"], master_releases=releases)
+        update()
+        report["finished_at"] = clock()
+        update()
+        return {"receipt": report, "control": control}
     def refresh_masters():
         from decision_kernel.application.daily_master_refresh import run_master_unit
         execute = execute_master_unit or run_master_unit
@@ -667,6 +687,10 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         repair_options["write_reconciliation"] = load_grant()
         repair_options["reconciliation_verifier"] = lambda grant: verify_native_reconciliation(
             api, grant, token=env[TOKEN_ENV])
+    elif selected["invocation"] == "release-master":
+        # The only exit from an unconfirmed reservation. It spends nothing and
+        # grants nothing; it names what was left unknown and readies the venue.
+        repair_options["release_master"] = True
     if selected["operation"] == "update" and selected["invocation"] != "reconcile-write":
         from decision_kernel.application.daily_master_refresh import policy as master_policy
         repair_options["master_refresh"] = master_policy(_json(_regular(MASTER_POLICY_FILE, 8192)))
@@ -690,7 +714,8 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
     check_private(api, selected)
     progress(executed["receipt"], executed["control"])
     print(json.dumps({**executed["receipt"], **selected}, ensure_ascii=False))
-    return 0 if executed["receipt"]["status"] in {"read", "complete", "already-complete", "no-new-session", "paused", "not-due"} else 2
+    return 0 if executed["receipt"]["status"] in {"read", "complete", "already-complete",
+        "no-new-session", "paused", "not-due", "released", "nothing-to-release"} else 2
 
 
 def run_clock_probe(event, env, out, *, api=None):

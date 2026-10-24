@@ -15,7 +15,8 @@ from decision_kernel.infrastructure.relay_failure import KNOWN_ERRORS
 CHECKPOINT_SCHEMA = 'relay-capture-checkpoint-v1'
 POLICY = {'max_attempts': 4, 'max_wait_seconds': 180}
 DECISIONS = frozenset({'response', 'retry', 'not-retryable', 'retry-after-unusable',
-    'attempt-limit', 'wait-budget', 'run-deadline', 'work-unit-complete'})
+    'attempt-limit', 'wait-budget', 'run-deadline', 'work-unit-complete', 'released-unconfirmed'})
+RELEASE_DECISION = {'reason': 'released-unconfirmed', 'required_wait_seconds': None}
 PHASES = frozenset({'ready', 'in-flight', 'waiting', 'response', 'paused', 'failed'})
 STOP_CLASSES = frozenset({'auth-or-entitlement', 'rate-limit', 'source-unavailable'})
 FAILURE_CLASSES = frozenset({'auth-or-entitlement', 'rate-limit', 'source-unavailable',
@@ -185,6 +186,33 @@ def validate_attempts(attempts, *, complete=False):
 def new_retry_state():
     return {'phase': 'ready', 'attempts': [], 'reserved_attempt': None, 'wait_budget_seconds': 0,
             'pending_wait_seconds': None, 'not_before': None, 'decision': None}
+
+
+def release_in_flight(value):
+    """Turn an unconfirmed reservation into an explicit, resumable state.
+
+    A persisted in-flight retry says the last request may have reached the
+    source without a recorded answer. The transition table deliberately allows
+    that state to leave only into what a real recorded response produces, so no
+    reader can mistake an abandoned reservation for a settled attempt. Without a
+    separate, explicit act, every later invocation stops at once and the venue
+    can never advance no matter how many windows pass.
+
+    The returned state keeps every recorded attempt, its wait budget and the
+    executing control phase; only the reservation is dropped and the retry
+    decision names what happened. The unknown request therefore stays visible in
+    the checkpoint history instead of disappearing. It is not counted as a
+    source request, which keeps the budget conservative rather than optimistic.
+    """
+    require(isinstance(value, dict) and isinstance(value.get('control'), dict), 'RELAY_CHECKPOINT_RELEASE')
+    state = deepcopy(value)
+    control = state['control']
+    retry = control.get('retry')
+    require(control.get('state') == 'executing' and isinstance(retry, dict)
+            and retry.get('phase') == 'in-flight', 'RELAY_CHECKPOINT_NOT_INFLIGHT')
+    control['retry'] = {**retry, 'phase': 'ready', 'reserved_attempt': None,
+                        'decision': deepcopy(RELEASE_DECISION)}
+    return state
 
 
 def validate_retry_state(value):
@@ -370,6 +398,16 @@ def _check_capture_transition(old, new):
         return new
     require(after is not None, 'RELAY_CHECKPOINT_BUDGET_RESET')
     if before['phase'] == 'in-flight':
+        # One edge is added to the table: an unconfirmed reservation may be
+        # released into the state an explicit decision names. It is admissible
+        # only when the decision is exactly that release, nothing recorded is
+        # dropped and no wait is claimed, so a missing response can never be
+        # laundered into a settled attempt or a free retry.
+        if after['phase'] == 'ready' and after['decision'] == RELEASE_DECISION \
+                and after['reserved_attempt'] is None and after['attempts'] == before['attempts'] \
+                and after['wait_budget_seconds'] == before['wait_budget_seconds'] \
+                and after['pending_wait_seconds'] is None and after['not_before'] is None:
+            return new
         require(after['phase'] in ('waiting', 'paused', 'failed', 'response')
                 and len(after['attempts']) == len(before['attempts']) + 1
                 and after['attempts'][:-1] == before['attempts']

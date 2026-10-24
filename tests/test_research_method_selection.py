@@ -13,6 +13,7 @@ from decision_kernel.methods.research import (
 QUICK_V1 = "c2186dad0da13b8ea6fac3195640991c4b2fbf5c3dc284655dd39d176d45b764"
 FULL_V1 = "1626dd595adfbc731c674080d54fca04072e0b99b843d0c5e37d3a276f4a0138"
 FULL_V2 = "6509212be4fa216b6d2333ffa1a2568b4b7e556070d390d19939eb382ededc62"
+EXTERNAL_FULL_V1 = "e3d52b9cd39885fb5a05cc86f5573e257d4b59f6c3878b9b87eecdb1b31485ef"
 
 
 def token(method):
@@ -32,7 +33,8 @@ class ResearchMethodSelectionTests(unittest.TestCase):
 
     def test_external_identity_is_explicit_and_returns_fresh_definition(self):
         selected = research_method("full", method_id=EXTERNAL_METHOD_ID)
-        sha = selected["sha256"]
+        sha = EXTERNAL_FULL_V1
+        self.assertEqual(selected["sha256"], sha)
         self.assertEqual(digest(encoded({k: v for k, v in selected.items() if k != "sha256"})), sha)
         self.assertEqual(research_method("full", sha256=sha), selected)
         self.assertEqual(selected["source_use_contract"], "research-external-source-use-audit-v1")

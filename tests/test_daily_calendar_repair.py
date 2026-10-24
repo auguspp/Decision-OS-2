@@ -284,7 +284,7 @@ def test_workflow_uses_the_existing_serial_writer_and_no_new_source_secret_route
     root = Path(__file__).resolve().parents[1]
     flow = yaml.load((root / '.github/workflows/daily-market.yml').read_text(), Loader=yaml.BaseLoader)
     assert flow['on']['workflow_dispatch']['inputs']['operation']['options'] == [
-        'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write', 'external-clock', 'clock-probe']
+        'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write', 'release-master', 'external-clock', 'clock-probe']
     assert set(flow['jobs']) == {'visibility', 'status', 'daily', 'clock-probe'} and flow['permissions'] == {}
     assert flow['concurrency'] == {'group': 'decision-os-relay-source', 'cancel-in-progress': 'false'}
     assert "inputs.operation == 'repair-calendar'" in flow['jobs']['daily']['if']

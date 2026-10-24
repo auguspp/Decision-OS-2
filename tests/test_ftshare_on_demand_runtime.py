@@ -27,6 +27,22 @@ from test_ftshare_on_demand import LATER, STAMP, no_network, ready, request
 from test_market_relay_inputs import REGISTRY
 
 
+class PeerAPI(SingleNativeAPI):
+    """Restore the real paged in_progress listing shape for peer-detection cases."""
+    def __init__(self):
+        super().__init__()
+        self.peers = []
+
+    def request(self, method, path, payload=None):
+        if "?status=in_progress&per_page=100&page=" in path:
+            self.calls.append(path)
+            self._requests += 1
+            rows = [deepcopy(self.run), *deepcopy(self.peers)]
+            page = int(path.rsplit("=", 1)[1])
+            return {"total_count": len(rows), "workflow_runs": rows[(page - 1) * 100:page * 100]}
+        return super().request(method, path, payload)
+
+
 class NativeStoreModel:
     """只模拟传输响应；真实GitHubAPI/Store负责预算、CAS及逐字读回。"""
     def __init__(self):
@@ -35,7 +51,9 @@ class NativeStoreModel:
         anchor = self.git.commit({"store.json": self.binding.marker()}, expected=self.git.head())
         self.binding = replace(self.binding, anchor=anchor)
         self.git.repository, self.git.binding = cli.REPO, self.binding
-        self.native = SingleNativeAPI()
+        self.native = PeerAPI()
+        self.native.peers = [{"id": 9000 + i, "status": "in_progress", "path": ".github/workflows/ci.yml"}
+            for i in range(999)]
         self.requests, self.writes, self.before_write = [], 0, None
         self.blobs = {}
 

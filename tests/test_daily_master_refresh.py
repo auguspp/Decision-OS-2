@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from io import BytesIO
 import json
+import socket
 from urllib.error import HTTPError
 
 import pytest
@@ -28,6 +29,14 @@ from test_market_session_coverage import SessionOpener
 from test_market_snapshot import local_fetch, native
 
 STAMP = "2026-10-20T12:00:00+00:00"
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("禁止真实网络")
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
 
 
 class Clock:
@@ -183,6 +192,150 @@ def test_retry_budget_survives_new_clients_without_replaying_accepted_pages():
     state = host.checkpoint()["state"]
     assert [len(page["attempts"]) for page in state["capture"]["pages"]] == [1, 2]
     assert [int(params.get("offset", 0)) for _, params in host.opener.calls] == [0, 500, 500]
+
+
+def test_phased_source_units_keep_four_attempts_and_original_waits():
+    host = Host()
+    host.opener.fail = "stock_basic"
+    phases, results = [], []
+    for _ in range(8):
+        value = host.run(source_guard=phases.append)
+        results.append(value)
+        if value["status"] == "failed":
+            break
+    assert [row["source_requests"] for row in results] == [1, 0, 1, 0, 1, 0, 1]
+    assert results[-1]["cumulative_source_requests"] == 4
+    assert phases == ["reservation", "http"] * 4
+    state = host.checkpoint()["state"]
+    assert state["control"]["state"] == "terminal"
+    assert state["control"]["retry"]["decision"]["reason"] == "attempt-limit"
+    assert sum(host.clock.waits) == 90
+    assert all(client.requests <= 1 for client in host.clients)
+    again = host.run(source_guard=phases.append,
+        client_factory=lambda: pytest.fail("终态不能构造来源客户端"))
+    assert again["source_requests"] == 0 and again["status"] == "failed"
+
+
+def test_phased_wait_keeps_original_180_second_budget():
+    host = Host()
+    def busy(api, parameters):
+        raise HTTPError("https://example.invalid/never-followed", 504, "PRIVATE_PROSE",
+            {"Retry-After": "180"}, BytesIO(b'{"error":"upstream_timeout"}'))
+    host.opener.before = busy
+    phases = []
+    first = host.run(source_guard=lambda _: None)
+    assert first["status"] == "partial" and host.clock.waits == []
+    retry = host.checkpoint()["state"]["control"]["retry"]
+    assert retry["pending_wait_seconds"] == retry["wait_budget_seconds"] == 180
+    second = host.run(source_guard=lambda _: pytest.fail("等待单元不得发HTTP"),
+        client_factory=lambda: pytest.fail("等待单元不得构造客户端或校验凭据"),
+        settlement_guard=phases.append)
+    assert second["source_requests"] == 0 and second["checkpoint_advanced"]
+    assert phases == ["wait"] and host.clock.waits == [60, 60, 60]
+    third = host.run(source_guard=lambda _: None)
+    assert third["status"] == "failed" and third["cumulative_source_requests"] == 2
+    assert host.checkpoint()["state"]["control"]["retry"]["wait_budget_seconds"] == 180
+
+
+@pytest.mark.parametrize("elapsed", [0, 10, 30, 45])
+def test_phased_wait_without_client_preserves_retry_and_stops_at_ready(monkeypatch, elapsed):
+    assert issubclass(refresh._UnitComplete, BaseException)
+    assert not issubclass(refresh._UnitComplete, Exception)
+    host = Host()
+    host.opener.fail, host.opener.once = "stock_basic", True
+    first = host.run(source_guard=lambda _: None)
+    before = host.checkpoint()
+    retry = before["state"]["control"]["retry"]
+    assert first["source_requests"] == 1 and retry["pending_wait_seconds"] == 30
+    host.clock.seconds += elapsed
+    phases, saved_phases = [], []
+    retain = refresh.retain_market_checkpoint
+    def saved(value, *args, **kwargs):
+        saved_phases.append(value["control"]["retry"]["phase"])
+        return retain(value, *args, **kwargs)
+    monkeypatch.setattr(refresh, "retain_market_checkpoint", saved)
+    waited = host.run(client_factory=lambda: pytest.fail("等待不得获取来源凭据"),
+        source_guard=lambda _: pytest.fail("等待不得进入来源准入"), settlement_guard=phases.append)
+    monkeypatch.setattr(refresh, "retain_market_checkpoint", retain)
+    after = host.checkpoint()
+    ready = after["state"]["control"]["retry"]
+    assert waited["status"] == "partial" and waited["checkpoint_advanced"]
+    assert waited["source_requests"] == 0 and waited["cumulative_source_requests"] == 1
+    assert saved_phases == ["waiting", "ready"] and phases == ["wait"]
+    assert ready["phase"] == "ready" and ready["reserved_attempt"] is None
+    assert ready["pending_wait_seconds"] is ready["not_before"] is None
+    assert ready["wait_budget_seconds"] == retry["wait_budget_seconds"] == 30
+    expected = deepcopy(retry["attempts"])
+    expected[-1]["completed_wait_seconds"] += max(0, 30 - elapsed)
+    assert ready["attempts"] == expected
+    assert host.clock.waits == ([30 - elapsed] if elapsed < 30 else [])
+    assert len(host.clients) == len(host.opener.calls) == 1
+    assert after["reference"] != before["reference"]
+    resumed = host.run(source_guard=phases.append)
+    assert resumed["status"] == "partial" and resumed["cumulative_source_requests"] == 2
+    assert phases == ["wait", "reservation", "http"]
+    attempts = host.checkpoint()["state"]["capture"]["pages"][0]["attempts"]
+    assert [row["attempt"] for row in attempts] == [1, 2]
+    assert attempts[0] == expected[0] and len(host.opener.calls) == 2
+
+
+def test_phased_interrupted_wait_keeps_original_budget_without_client():
+    host = Host()
+    host.opener.fail = "stock_basic"
+    host.run(source_guard=lambda _: None)
+    def interrupted(seconds):
+        host.clock.seconds += 10
+        raise RecordError("SYNTHETIC_WAIT_INTERRUPTED")
+    failed = host.run(source_guard=lambda _: pytest.fail("等待不得来源准入"),
+        client_factory=lambda: pytest.fail("等待不得构造客户端"), sleep=interrupted)
+    assert failed["source_requests"] == 0 and failed["cumulative_source_requests"] == 1
+    pending = host.checkpoint()["state"]["control"]["retry"]
+    assert pending["phase"] == "waiting" and pending["wait_budget_seconds"] == 30
+    assert pending["pending_wait_seconds"] == 30
+    assert pending["attempts"][-1]["completed_wait_seconds"] == 0
+    resumed = host.run(source_guard=lambda _: pytest.fail("等待恢复不得来源准入"),
+        client_factory=lambda: pytest.fail("等待恢复不得构造客户端"))
+    ready = host.checkpoint()["state"]["control"]["retry"]
+    assert resumed["checkpoint_advanced"] and resumed["source_requests"] == 0
+    assert resumed["cumulative_source_requests"] == 1 and ready["phase"] == "ready"
+    assert ready["wait_budget_seconds"] == 30 and len(ready["attempts"]) == 1
+    assert ready["attempts"][-1]["completed_wait_seconds"] == 20
+    assert host.clock.waits == [20] and len(host.clients) == len(host.opener.calls) == 1
+
+
+def test_phased_wait_denied_before_client_sleep_or_checkpoint_write():
+    host = Host()
+    host.opener.fail = "stock_basic"
+    host.run(source_guard=lambda _: None)
+    before = host.checkpoint()
+    head = host.backend.head()
+    def denied(phase):
+        assert phase == "wait"
+        raise RecordError("DAILY_MARKET_STORE_SETTLEMENT_BUDGET")
+    result = host.run(settlement_guard=denied,
+        source_guard=lambda _: pytest.fail("等待不得来源准入"),
+        client_factory=lambda: pytest.fail("等待不得构造客户端"))
+    assert result["status"] == "failed" and result["source_requests"] == 0
+    assert result["reason_code"] == "DAILY_MARKET_STORE_SETTLEMENT_BUDGET"
+    assert result["cumulative_source_requests"] == 1
+    assert host.backend.head() == head and host.checkpoint() == before
+    assert host.clock.waits == [] and len(host.clients) == 1
+
+
+def test_phased_paged_capture_stops_after_durable_page_and_promotes_without_source():
+    host = Host(count=501)
+    phases = []
+    first = host.run(source_guard=phases.append)
+    assert first["status"] == "partial" and first["source_requests"] == 1
+    assert host.checkpoint()["state"]["control"]["state"] == "ready"
+    second = host.run(source_guard=phases.append)
+    assert second["status"] == "partial" and second["source_requests"] == 1
+    assert host.checkpoint()["state"]["control"]["state"] == "complete"
+    final = host.run(source_guard=lambda _: pytest.fail("promotion不能来源准入"),
+        client_factory=lambda: pytest.fail("promotion不能构造来源客户端"))
+    assert final["status"] == "complete" and final["source_requests"] == 0
+    assert final["cumulative_source_requests"] == 2
+    assert phases == ["reservation", "http"] * 2
 
 
 def test_four_attempts_end_original_page_and_no_new_owner_is_created():
@@ -491,6 +644,9 @@ def test_native_daily_master_stage_preserves_budget_after_completed_generation(n
     original_request = model.request
 
     def request(method, path, payload=None):
+        if "/actions/runs?status=in_progress&" in path:
+            model.requests.append((method, path, deepcopy(payload)))
+            return {"total_count": 1, "workflow_runs": [deepcopy(authority.run)]}
         if path == cli.PREFIX + "/git/ref/heads/main" or "/actions/" in path:
             model.requests.append((method, path, deepcopy(payload)))
             return authority.request(method, path, payload)
@@ -546,7 +702,8 @@ def test_native_daily_master_stage_preserves_budget_after_completed_generation(n
 
     initial_calls = len(model.requests)
     result = host.run(open_unit=cli.remote_units("synthetic-whole-host-master", selected),
-        guard=lambda api: cli.check_private(api, selected), capacity=market_capacity,
+        guard=lambda api: cli.collection_guard(api, selected),
+        read_guard=lambda api: cli.check_private(api, selected), capacity=market_capacity,
         execute_master_unit=execute, execute_prices=pause_prices)
     measured = {"unit_requests": [api._requests for api in apis], "master_units": units,
         "before_source": source_admissions, "snapshots": len(fetches)}
@@ -559,9 +716,9 @@ def test_native_daily_master_stage_preserves_budget_after_completed_generation(n
     item = host.cycle()
     assert item["cycle"]["status"] == "market-pending" and item["cycle"]["revision"] == 10
     assert all(row["status"] == "complete" for row in item["cycle"]["masters"].values())
-    assert [row["status"] for row in units] == ["partial", "complete", "complete"]
-    assert [row["source_requests"] for row in units] == [1, 1, 1]
-    assert all(len(row["preflight_requests"]) >= 4 for row in units)
+    assert [row["status"] for row in units] == ["partial", "partial", "complete", "partial", "complete"]
+    assert [row["source_requests"] for row in units] == [1, 1, 0, 1, 0]
+    assert all(len(row["preflight_requests"]) >= 3 for row in units)
     assert source_admissions and max(source_admissions) < cli.ADMISSION_REQUESTS == 240
     assert all(0 < api._requests <= MAX_REQUESTS == 512 for api in apis)
     assert sum(api._requests for api in apis) == len(model.requests) - initial_calls

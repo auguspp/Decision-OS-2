@@ -8,25 +8,26 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import datetime, timezone
 import re
 
 from decision_kernel.application.market_collection_custody import (
     retain_market_checkpoint, restore_market_checkpoint,
 )
 from decision_kernel.application.market_collection_reading import (
-    latest_market_reference, require_checkpoint_descendant,
+    latest_market_reference, require_checkpoint_descendant, same_reference,
 )
 from decision_kernel.application.market_custody import (
     fresh_market_reader, market_read_scope, restore_market_query, retain_market_query,
 )
 from decision_kernel.application.market_security_inputs import MASTER_FIELDS, inspect_security_master
 from decision_kernel.application.relay_capture_checkpoint import (
-    CheckpointStateError, CheckpointWriteError, STOP_CLASSES, checkpoint_time,
-    validate_capture_checkpoint,
+    RELEASE_DECISION, UNKNOWN_ATTEMPT, CheckpointStateError, CheckpointWriteError, STOP_CLASSES, checkpoint_time,
+    release_in_flight, validate_capture_checkpoint,
 )
 from decision_kernel.application.research_sources import capture_registered, source_inputs, validate_plan
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import RecordError, UnknownWrite, encoded, require
+from decision_kernel.domain.records import Conflict, RecordError, UnknownWrite, encoded, require
 from decision_kernel.infrastructure.relay_http import RelayHTTP
 from decision_kernel.infrastructure.relay_retry import RetryingRelay, RetryPolicy
 from decision_kernel.infrastructure.runtime_performance import measure_phase, timed
@@ -80,7 +81,8 @@ def _check_state(state, cycle, use, registry):
         attempts.extend(page["attempts"])
     attempts.extend((state["control"]["retry"] or {}).get("attempts", []))
     require(all(checkpoint_time(row[key]) >= born for row in attempts
-        for key in ("requested_at", "received_at")), "DAILY_MASTER_OLD_CAPTURE")
+        for key in (("reconciled_at",) if row.get("outcome") == UNKNOWN_ATTEMPT
+            else ("requested_at", "received_at"))), "DAILY_MASTER_OLD_CAPTURE")
     return state
 
 
@@ -128,6 +130,104 @@ def _reason(error):
         else "DAILY_MASTER_FAILED"
 
 
+def _released_retry(retry):
+    return isinstance(retry, dict) and retry["phase"] in ("ready", "failed") \
+        and bool(retry["attempts"]) and retry["attempts"][-1].get("outcome") == UNKNOWN_ATTEMPT \
+        and retry["decision"] == RELEASE_DECISION
+
+
+def _release_latest(cycle, venue, registry, reader):
+    newest = latest_market_reference(reader, registry, checkpoint_id=checkpoint_id(cycle, venue))
+    require_checkpoint_descendant(newest, cycle["masters"][venue]["checkpoint_reference"], registry, reader)
+    return None if newest is None else _restore_owned(newest, cycle, venue, registry, reader)
+
+
+def release_master_venue(cycle, venue, registry, store, fresh_reader, *, clock=None,
+                         guard=None, preflight=None):
+    """将未知预留计入原 attempt；重复裁定只读，不重写、不请求来源。
+
+    preflight(reader) 在独立 fresh scope 内核对 daily current/frontier。
+    最终核验与确切 tip 共用 snapshot head，原 control/journal 写以此 CAS。
+    冲突不刷新重试；重复调用先读原 tip 对账，裁定不新增 page。
+    """
+    clock = clock if clock is not None else lambda: datetime.now(timezone.utc).isoformat()
+    guard = guard if guard is not None else lambda: None
+    require(callable(clock), "DAILY_MASTER_CLOCK")
+    require(callable(guard) and (preflight is None or callable(preflight)), "DAILY_MASTER_PREFLIGHT")
+    owner, use = checkpoint_id(cycle, venue), _use(cycle, venue, registry)
+    row = cycle["masters"][venue]
+    require(cycle["status"] == "master-pending" and row["status"] == "in-flight"
+        and type(row["reserved_queries"]) is int and row["reserved_queries"] == 1
+        and row["reference"] is None and row["reason_code"] is None, "DAILY_MASTER_PHASE")
+
+    def fresh():
+        original = fresh_market_reader(store, fresh_reader)
+        return VersionedStore(_CheckedReads(original.backend, preflight, stable_head=True))
+
+    def report(saved, changed):
+        state = saved["state"]
+        retry = state["control"]["retry"]
+        attempt = retry["attempts"][-1]
+        terminal = state["control"]["state"] == "terminal"
+        return {"status": "released" if changed else "already-released", "venue": venue,
+            "prior_checkpoint_reference": saved["predecessor"],
+            "checkpoint_reference": saved["reference"], "released_attempt": attempt["attempt"],
+            "charged_attempt": attempt["attempt"], "attempts_charged": int(changed),
+            "recorded_attempts": len(retry["attempts"]), "cumulative_source_requests": _count(state),
+            "source_requests": 0, "terminal": terminal, "outcome": "failed" if terminal else "ready",
+            "reason_code": state["capture"]["error"] if terminal else None,
+            "reconciled_at": attempt["reconciled_at"], "page_number": state["control"]["page_number"],
+            "decision": deepcopy(RELEASE_DECISION)}
+
+    guard()
+    with market_read_scope(fresh()) as reader:
+        saved = _release_latest(cycle, venue, registry, reader)
+    require(saved is not None, "DAILY_MASTER_CHECKPOINT_REQUIRED")
+    retry = saved["state"]["control"]["retry"]
+    if _released_retry(retry):
+        return report(saved, False)
+    require(isinstance(retry, dict) and retry["phase"] == "in-flight", "DAILY_MASTER_NOT_INFLIGHT")
+    reconciled_at = clock()
+    require(checkpoint_time(reconciled_at) >= checkpoint_time(cycle["created_at"]), "DAILY_MASTER_CLOCK")
+    released = release_in_flight(saved["state"], reconciled_at=reconciled_at)
+    _check_state(released, cycle, use, registry)
+    guard()
+    with market_read_scope(fresh()) as reader:
+        expected_head = reader.backend.head()
+        latest = _release_latest(cycle, venue, registry, reader)
+        require(latest is not None and same_reference(latest["reference"], saved["reference"]),
+            "DAILY_MASTER_STALE_CHECKPOINT")
+    guard()
+    retained = retain_market_checkpoint(released, registry, store, checkpoint_id=owner,
+        predecessor=saved["reference"], fresh_reader=fresh, expected_head=expected_head,
+        custody_authorized=True, public_rights_confirmed=False)
+    return report(retained["restored"], True)
+
+
+def release_unconfirmed_masters(cycle, registry, store, fresh_reader, *, clock=None,
+                                guard=None, preflight=None):
+    """从原 checkpoint 选择未知预留及已裁定 tip，逐 venue 返回幂等结果。"""
+    require((guard is None or callable(guard)) and (preflight is None or callable(preflight)),
+        "DAILY_MASTER_PREFLIGHT")
+    require(clock is None or callable(clock), "DAILY_MASTER_CLOCK")
+    results = []
+    for venue in POLICY["venues"]:
+        row = cycle["masters"][venue]
+        if row["status"] != "in-flight" or row["reference"] is not None:
+            continue
+        if guard is not None:
+            guard()
+        original = fresh_market_reader(store, fresh_reader)
+        with market_read_scope(VersionedStore(_CheckedReads(original.backend, preflight,
+                stable_head=True))) as reader:
+            saved = _release_latest(cycle, venue, registry, reader)
+        retry = None if saved is None else saved["state"]["control"]["retry"]
+        if isinstance(retry, dict) and (retry["phase"] == "in-flight" or _released_retry(retry)):
+            results.append(release_master_venue(cycle, venue, registry, store, fresh_reader,
+                clock=clock, guard=guard, preflight=preflight))
+    return results
+
+
 def _count(state):
     if state is None:
         return 0
@@ -163,9 +263,12 @@ class _CheckedReads:
     check before HTTP, not a CAS condition on those checkpoint writes. A failed
     readback leaves the durable in-flight reservation for explicit reconciliation.
     The daily owner separately binds its full-query reservation to its snapshot.
+    release 的 stable_head 在 preflight 前取 head，读完再次核对；不以写 store
+    的对账 head 补位，也不在发现变版后刷新 snapshot。
     """
-    def __init__(self, backend, preflight):
+    def __init__(self, backend, preflight, *, stable_head=False):
         self.backend, self.preflight = backend, preflight
+        self.stable_head = stable_head
 
     def __getattr__(self, key):
         return getattr(self.backend, key)
@@ -173,10 +276,14 @@ class _CheckedReads:
     @contextmanager
     def market_read_scope(self):
         with market_read_scope(VersionedStore(self.backend)) as reader:
+            snapshot = reader.backend.head() if self.stable_head else None
             if self.preflight is not None:
                 with measure_phase("master.preflight"):
                     self.preflight(reader)
             yield reader.backend
+            # 原 pinned reader 返回同一 head；非 pinned fallback 变版则拒绝输出。
+            if self.stable_head and reader.backend.head() != snapshot:
+                raise Conflict("HEAD_CHANGED")
 
 
 class _AdmissionStopped(RuntimeError):

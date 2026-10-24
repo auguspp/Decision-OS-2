@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 import pytest
 
 from decision_kernel.application.relay_capture_checkpoint import (
-    CaptureCheckpoint, CheckpointStateError, CheckpointWriteError,
-    validate_capture_checkpoint, validate_capture_transition,
+    CHECKPOINT_SCHEMA, RECONCILED_SCHEMA, UNKNOWN_ATTEMPT,
+    CaptureCheckpoint, CheckpointStateError, CheckpointWriteError, RELEASE_DECISION,
+    release_in_flight, validate_capture_checkpoint, validate_capture_transition, validate_retry_state,
 )
 from decision_kernel.application.research_sources import (
     capture_registered, inspect_result, source_inputs, source_page_inputs, validate_plan,
@@ -422,6 +423,65 @@ def test_terminal_cannot_be_published_as_a_fresh_budget_under_its_predecessor():
         validate_capture_transition(old, new, use, registry(), max_pages=4)
 
 
+def _unconfirmed():
+    """A real in-flight reservation: the second request was sent, no answer came back."""
+    saved = []
+    with pytest.raises(RuntimeError):
+        run(busy(504), RuntimeError('source response lost'), writer=lambda s: saved.append(deepcopy(s)))
+    assert saved[-1]['control']['retry']['phase'] == 'in-flight'
+    return saved[-1]
+
+
+def test_release_names_the_unknown_request_and_leaves_the_venue_resumable():
+    old = _unconfirmed()
+    original = deepcopy(old)
+    use = old['control']['request']
+    stamp = Clock(45).now()
+    released = release_in_flight(old, reconciled_at=stamp)
+    retry = released['control']['retry']
+    assert old == original and old['schema'] == CHECKPOINT_SCHEMA
+    assert released['schema'] == RECONCILED_SCHEMA
+    assert retry['attempts'][:-1] == old['control']['retry']['attempts']
+    assert retry['attempts'][-1] == {
+        'attempt': 2, 'outcome': UNKNOWN_ATTEMPT, 'error': 'RELAY_REQUEST_UNCONFIRMED',
+        'reconciled_at': stamp, 'retry_decision': RELEASE_DECISION,
+        'checkpoint_wait_seconds': 0, 'completed_wait_seconds': 0, 'checkpoint_not_before': None}
+    assert retry['wait_budget_seconds'] == old['control']['retry']['wait_budget_seconds'] == 30
+    assert retry['reserved_attempt'] is None and retry['decision'] == RELEASE_DECISION
+    assert old['control']['state'] == released['control']['state'] == 'executing'
+    assert released['control']['page_number'] == old['control']['page_number']
+    validate_capture_checkpoint(released, use, registry(), max_pages=4)
+    validate_capture_transition(old, released, use, registry(), max_pages=4)
+
+
+def test_released_checkpoint_resumes_on_the_next_invocation():
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(45).now())
+    capture, states, client, _, clock = run(body(), saved=released, seconds=45)
+    assert capture['complete'] is True and client.requests == 1 and clock.waits == []
+    assert [a['attempt'] for a in capture['pages'][0]['attempts']] == [1, 2, 3]
+    assert capture['pages'][0]['attempts'][:-1] == released['control']['retry']['attempts']
+    assert all(s['schema'] == RECONCILED_SCHEMA for s in states)
+    assert states[-1]['control']['retry']['wait_budget_seconds'] == 30
+
+
+def test_release_is_refused_when_nothing_is_unconfirmed():
+    _, saves, _, _, _ = run(body())
+    with pytest.raises(RecordError, match='NOT_INFLIGHT'):
+        release_in_flight(saves[-1], reconciled_at=STAMP)
+
+
+def test_release_decision_cannot_smuggle_a_dropped_attempt():
+    old = _unconfirmed()
+    use = old['control']['request']
+    released = release_in_flight(old, reconciled_at=Clock(30).now())
+    released['control']['retry']['attempts'] = released['control']['retry']['attempts'][1:]
+    released['control']['retry']['attempts'][0]['attempt'] = 1
+    released['control']['retry']['wait_budget_seconds'] = 0
+    validate_capture_checkpoint(released, use, registry(), max_pages=4)
+    with pytest.raises(RecordError, match='SCHEMA|UNSETTLED'):
+        validate_capture_transition(old, released, use, registry(), max_pages=4)
+
+
 def test_transition_requires_new_success_to_settle_the_reserved_attempt_number():
     saved = []
     with pytest.raises(RuntimeError):
@@ -459,6 +519,231 @@ def test_state_validation_failure_does_not_attempt_a_write_or_http(monkeypatch):
         capture_registered(use, registry(), RetryingRelay(client, clock=lambda: STAMP),
                            max_pages=4, checkpoint_writer=writes.append)
     assert not writes and client.requests == len(opener.calls) == 0
+
+
+@pytest.mark.parametrize('number', [1, 2, 3, 4])
+def test_repeated_unknowns_consume_original_attempts_and_fourth_is_terminal(number):
+    saved = []
+    with pytest.raises(RuntimeError):
+        run(RuntimeError('response lost'), writer=lambda s: saved.append(deepcopy(s)))
+    for attempt in range(1, number + 1):
+        old = saved[-1]
+        released = release_in_flight(old, reconciled_at=Clock(attempt).now())
+        use = old['control']['request']
+        validate_capture_transition(old, released, use, registry(), max_pages=4)
+        assert len(released['control']['retry']['attempts']) == attempt
+        assert [a['attempt'] for a in released['control']['retry']['attempts']] == list(range(1, attempt + 1))
+        assert released['control']['retry']['wait_budget_seconds'] == 0
+        again = release_in_flight(released, reconciled_at=Clock(attempt + 100).now())
+        assert again == released and again is not released
+        if attempt < number:
+            saved = []
+            with pytest.raises(RuntimeError):
+                run(RuntimeError('response lost'), saved=released, seconds=attempt + 1,
+                    writer=lambda s: saved.append(deepcopy(s)))
+    if number == 4:
+        assert released['control']['state'] == 'terminal'
+        assert released['control']['retry']['phase'] == 'failed'
+        assert released['capture']['error'] == 'RELAY_REQUEST_UNCONFIRMED'
+        out, states, client, _, _ = run(saved=released, seconds=1000)
+        assert out == released['capture'] and client.requests == 0 and states == []
+        fake = fresh_looking_state(released)
+        with pytest.raises(RecordError, match='TERMINAL_RESTART'):
+            validate_capture_transition(released, fake, use, registry(), max_pages=4)
+        with pytest.raises(RecordError, match='NOT_RESUMABLE'):
+            RetryingRelay(client).run(lambda: pytest.fail('不能重新发请求'),
+                continuation=released['control']['retry'], checkpoint=lambda _: None)
+
+
+@pytest.mark.parametrize('where', ['retry', 'page'])
+def test_v1_reader_rejects_unknown_even_when_v2_reader_accepts_it(where):
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(30).now())
+    if where == 'page':
+        _, states, _, _, _ = run(body(), saved=released, seconds=30)
+        released = states[-1]
+    use = released['control']['request']
+    validate_capture_checkpoint(released, use, registry(), max_pages=4)
+    released['schema'] = CHECKPOINT_SCHEMA
+    with pytest.raises(RecordError, match='UNKNOWN_ATTEMPT'):
+        validate_capture_checkpoint(released, use, registry(), max_pages=4)
+
+
+def test_ordinary_writer_keeps_v1_and_schema_changes_require_an_actual_reconciliation():
+    _, states, _, _, _ = run(busy(504), body())
+    assert all(s['schema'] == CHECKPOINT_SCHEMA for s in states)
+    old = states[0]
+    fake = deepcopy(old)
+    fake['schema'] = RECONCILED_SCHEMA
+    use = old['control']['request']
+    validate_capture_checkpoint(fake, use, registry(), max_pages=4)
+    with pytest.raises(RecordError, match='SCHEMA'):
+        validate_capture_transition(old, fake, use, registry(), max_pages=4)
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(30).now())
+    _, states, _, _, _ = run(body(), saved=released, seconds=30)
+    downgraded = deepcopy(states[-1])
+    downgraded['schema'] = CHECKPOINT_SCHEMA
+    with pytest.raises(RecordError):
+        validate_capture_transition(released, downgraded, use, registry(), max_pages=4)
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda s: s['control']['retry']['attempts'][-1].__setitem__('requested_at', STAMP),
+    lambda s: s['control']['retry']['attempts'][-1].__setitem__('received_at', STAMP),
+    lambda s: s['control']['retry']['attempts'][-1].__setitem__('attempt', 3),
+    lambda s: s['control']['retry']['attempts'][-1].__setitem__('reconciled_at', STAMP),
+    lambda s: s['control']['retry']['attempts'][-1].__setitem__('completed_wait_seconds', True),
+    lambda s: s['control'].__setitem__('state', 'terminal'),
+    lambda s: s['capture'].__setitem__('error', 'RELAY_FAKE'),
+])
+def test_reconciliation_edge_is_exact_and_cannot_invent_response_or_change_capture(mutate):
+    old = _unconfirmed()
+    released = release_in_flight(old, reconciled_at=Clock(45).now())
+    mutate(released)
+    with pytest.raises(RecordError):
+        validate_capture_transition(old, released, old['control']['request'], registry(), max_pages=4)
+
+
+def test_free_release_without_appending_reserved_attempt_is_no_longer_valid():
+    old = _unconfirmed()
+    fake = deepcopy(old)
+    fake['control']['retry'].update(phase='ready', reserved_attempt=None, decision=RELEASE_DECISION)
+    with pytest.raises(RecordError):
+        validate_capture_transition(old, fake, old['control']['request'], registry(), max_pages=4)
+
+
+def test_release_cannot_precede_original_clock_or_unfinished_wait():
+    old = _unconfirmed()
+    with pytest.raises(RecordError, match='CLOCK'):
+        release_in_flight(old, reconciled_at=Clock(-1).now())
+    # 模拟恢复时仅部分等待由本进程实际 sleep 完成的原始历史。
+    prior = old['control']['retry']['attempts'][0]
+    prior['completed_wait_seconds'] = 10
+    release_in_flight(old, reconciled_at=Clock(30).now())
+    with pytest.raises(RecordError, match='RETRY_AFTER'):
+        release_in_flight(old, reconciled_at=Clock(29).now())
+
+
+@pytest.mark.parametrize('direct', [False, True])
+def test_reconciliation_clock_rejects_rollback_before_any_write_or_http(direct):
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(45).now())
+    client, opener = http(body())
+    writes = []
+    session = RetryingRelay(client, clock=Clock(44).now)
+    with pytest.raises(RecordError, match='CLOCK'):
+        if direct:
+            session.run(lambda: client.request_registered(registry(), 'daily', request()['parameters']),
+                continuation=released['control']['retry'], checkpoint=writes.append)
+        else:
+            capture_registered(released['control']['request'], registry(), session, max_pages=4,
+                checkpoint=released, checkpoint_writer=writes.append)
+    assert client.requests == len(opener.calls) == 0 and writes == []
+
+
+@pytest.mark.parametrize('direct', [False, True])
+@pytest.mark.parametrize('stop', ['auth-or-entitlement', 'rate-limit', 'source-unavailable'])
+def test_unknown_does_not_hide_existing_global_stop(direct, stop):
+    old = _unconfirmed()
+    first = old['control']['retry']['attempts'][0]
+    first['failure']['classification'] = stop
+    first['failure']['retry_after_state'] = 'valid'
+    first['failure']['retry_after_seconds'] = 30
+    if stop != 'rate-limit':
+        # 非重试停止不能伪装为合法的前序尝试。
+        with pytest.raises(RecordError):
+            release_in_flight(old, reconciled_at=Clock(45).now())
+        return
+    released = release_in_flight(old, reconciled_at=Clock(45).now())
+    client, _ = http(body())
+    session = RetryingRelay(client, clock=Clock(45).now)
+    with pytest.raises(RecordError, match='GLOBAL_STOP'):
+        if direct:
+            session.run(lambda: pytest.fail('不能跨越停止边界'),
+                continuation=released['control']['retry'], checkpoint=lambda _: None)
+        else:
+            capture_registered(released['control']['request'], registry(), session, max_pages=4,
+                checkpoint=released, checkpoint_writer=lambda _: None)
+    assert client.requests == 0
+
+
+def test_unknown_keeps_original_wait_budget_and_can_exhaust_it_on_the_next_failure():
+    saved = []
+    with pytest.raises(RuntimeError):
+        run(busy(504, headers={'Retry-After': '120'}), RuntimeError('response lost'),
+            writer=lambda s: saved.append(deepcopy(s)))
+    released = release_in_flight(saved[-1], reconciled_at=Clock(120).now())
+    out, states, client, _, clock = run(busy(504, headers={'Retry-After': '61'}),
+        saved=released, seconds=120)
+    assert not out['complete'] and client.requests == 1 and clock.waits == []
+    retry = states[-1]['control']['retry']
+    assert retry['wait_budget_seconds'] == 120 and retry['decision']['reason'] == 'wait-budget'
+    assert [a['attempt'] for a in retry['attempts']] == [1, 2, 3]
+    assert states[-1]['control']['state'] == 'terminal'
+
+
+def test_reconciled_history_cannot_be_reset_or_reopened_as_an_empty_budget():
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(45).now())
+    fake = fresh_looking_state(released)
+    use = released['control']['request']
+    validate_capture_checkpoint(fake, use, registry(), max_pages=4)
+    with pytest.raises(RecordError, match='BUDGET_RESET'):
+        validate_capture_transition(released, fake, use, registry(), max_pages=4)
+
+
+def test_v2_completed_checkpoint_restores_schema_without_writer_or_http():
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(45).now())
+    capture, states, client, _, _ = run(body(), saved=released, seconds=45)
+    saved = states[-1]
+    controller = CaptureCheckpoint(saved['control']['request'], registry(),
+        RetryingRelay(client, clock=Clock(45).now), saved['capture'], max_pages=4, value=saved)
+    assert controller.schema == RECONCILED_SCHEMA
+    again, writes, later, _, _ = run(saved=saved, seconds=46)
+    assert again == capture and later.requests == 0 and writes == []
+
+
+def test_v2_schema_survives_page_acceptance_and_next_page_pause():
+    use = validate_plan(plan(request(limit=1)), registry())['requests'][0]
+    saved = []
+    with pytest.raises(RuntimeError):
+        run(RuntimeError('response lost'), use=use, writer=lambda s: saved.append(deepcopy(s)))
+    released = release_in_flight(saved[-1], reconciled_at=Clock(1).now())
+    out, states, client, _, _ = run(body(), use=use, saved=released, seconds=1,
+        pause=lambda op: bool(op.calls))
+    assert client.requests == 1 and not out['complete']
+    assert states[-1]['control']['retry'] is None
+    assert all(s['schema'] == RECONCILED_SCHEMA for s in states)
+    complete, next_states, client, _, _ = run(empty(), use=use, saved=states[-1], seconds=2)
+    assert complete['complete'] and client.requests == 1
+    assert complete['pages'][0] == out['pages'][0]
+    assert all(s['schema'] == RECONCILED_SCHEMA for s in next_states)
+
+
+def test_known_wait_after_unknown_resumes_without_shortening_or_rebudgeting():
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(45).now())
+    _, states, first, _, clock = run(busy(504, headers={'Retry-After': '60'}),
+        saved=released, seconds=45, budget=40)
+    assert first.requests == 1 and clock.waits == []
+    saved = states[-1]
+    assert saved['control']['retry']['wait_budget_seconds'] == 90
+    out, later_states, later, _, clock = run(body(), saved=saved, seconds=55)
+    assert out['complete'] and later.requests == 1 and clock.waits == [50]
+    assert [a['attempt'] for a in out['pages'][0]['attempts']] == [1, 2, 3, 4]
+    assert out['pages'][0]['attempts'][1] == released['control']['retry']['attempts'][1]
+    assert later_states[-1]['control']['retry']['wait_budget_seconds'] == 90
+
+
+@pytest.mark.parametrize('stop', ['deadline', 'pause'])
+def test_reconciled_ready_still_obeys_zero_http_admission_stops(stop):
+    released = release_in_flight(_unconfirmed(), reconciled_at=Clock(45).now())
+    out, states, client, _, clock = run(saved=released, seconds=45,
+        budget=0 if stop == 'deadline' else 600,
+        pause=(lambda _: True) if stop == 'pause' else None)
+    assert client.requests == 0 and clock.waits == [] and not out['complete']
+    assert states[-1]['control']['state'] == 'paused'
+    assert states[-1]['control']['retry']['attempts'] == released['control']['retry']['attempts']
+    assert states[-1]['control']['retry']['wait_budget_seconds'] == 30
+    validate_retry_state(states[-1]['control']['retry'])
+    completed, _, resumed, _, _ = run(body(), saved=states[-1], seconds=46)
+    assert completed['complete'] and resumed.requests == 1
 
 
 def test_slow_reservation_save_cannot_allow_http_after_the_shared_deadline():

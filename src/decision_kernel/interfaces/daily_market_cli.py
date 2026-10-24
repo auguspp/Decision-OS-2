@@ -268,7 +268,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               progress=None, capacity=market_capacity, monotonic=time.monotonic,
               sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False,
               calendar_repair=None, write_reconciliation=None, reconciliation_verifier=None,
-              master_refresh=None, master_client_factory=None, execute_master_unit=None):
+              master_refresh=None, master_client_factory=None, execute_master_unit=None,
+              read_guard=None, release_master=None):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
@@ -276,11 +277,15 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     require(calendar_repair is None or operation == "update", "DAILY_CALENDAR_REPAIR_OPERATION")
     require(write_reconciliation is None or operation == "update" and calendar_repair is None,
         "DAILY_WRITE_RECONCILIATION_OPERATION")
+    require(release_master is None or release_master is True and operation == "update"
+        and calendar_repair is None and write_reconciliation is None and master_refresh is not None,
+        "DAILY_MASTER_RELEASE_OPERATION")
     if master_refresh is not None:
         from decision_kernel.application.daily_master_refresh import policy as master_policy
         master_refresh = master_policy(master_refresh)
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda api: None)
+    read_guard = read_guard or guard
     report = {"schema": "daily-market-runtime-v1", "operation": operation, "status": "started",
         "reason_code": None, "source_requests": 0, "calendar_source_requests": 0,
         "price_source_requests": 0, "master_source_requests": 0, "calendar_source_budget": 2,
@@ -334,7 +339,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     def unit(write):
         store, fresh, api = open_unit(write)
         with measure_phase("daily.guard"):
-            guard(api)
+            (guard if write else read_guard)(api)
         if write:
             with measure_phase("daily.capacity"):
                 require(capacity(fresh())["admit_work_unit"] is True, "DAILY_MARKET_STORAGE_CAPACITY")
@@ -405,6 +410,30 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
         store, fresh, api = unit(operation == "update" and approved["enabled"])
         if operation == "status" or not approved["enabled"]:
             report["status"] = "read" if approved["enabled"] else "paused"
+        elif release_master:
+            from decision_kernel.application.daily_market import policy_digest
+            from decision_kernel.application.daily_master_refresh import release_unconfirmed_masters
+            item = latest_cycle(fresh_market_reader(store, fresh), registry=registry,
+                protected_symbols=approved["symbols"])
+            require(item is not None, "DAILY_MASTER_RELEASE_CURRENT_REQUIRED")
+            cycle = item["cycle"]
+            require(cycle["policy_sha256"] == policy_digest(approved), "DAILY_MARKET_POLICY_CHANGED")
+            require(cycle["schema"] in MASTER_SCHEMAS and cycle["status"] == "master-pending",
+                "DAILY_MASTER_PHASE")
+            require(cycle["master_refresh"] == master_refresh, "DAILY_MASTER_POLICY_CHANGED")
+            def release_preflight(reader):
+                require(latest_cycle(reader, registry=registry, protected_symbols=approved["symbols"]) == item,
+                    "DAILY_MARKET_STALE_CONTROL")
+                check_cycle_frontier(cycle, registry, reader, protected_symbols=approved["symbols"])
+            def release_guard():
+                guard(api)
+                _admit(api)
+            with market_read_scope(fresh_market_reader(store, fresh)) as reader:
+                release_preflight(reader)
+            releases = release_unconfirmed_masters(cycle, registry, store, fresh,
+                clock=clock, guard=release_guard, preflight=release_preflight)
+            report.update(status="released" if releases else "nothing-to-release", master_releases=releases)
+            update()
         else:
             repair_new = False
             reconciliation_new = False
@@ -602,7 +631,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 pending_control[key] = deepcopy(resolved[key])
             if resolved["frontier_reason_code"] is not None:
                 pending_report["frontier_reason_code"] = resolved["frontier_reason_code"]
-                if pending_report["status"] in {"read", "complete", "already-complete", "no-new-session"}:
+                if pending_report["status"] in {"read", "complete", "already-complete", "no-new-session",
+                        "released", "nothing-to-release"}:
                     pending_report.update(status="blocked", reason_code=resolved["frontier_reason_code"])
             if resolved["cycle"] is not None:
                 current = resolved["cycle"]
@@ -633,14 +663,15 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                 reading_failure = exc
         if reading_failure is None:
             with measure_phase("daily.guard"):
-                guard(api)
+                read_guard(api)
         control.update(pending_control)
         report.update(pending_report)
         if reading_failure is not None:
             raise reading_failure
     except Exception as exc:
         report["reading_reason_code"] = _reason(exc)
-        if report["status"] in {"read", "complete", "already-complete", "no-new-session"}:
+        if report["status"] in {"read", "complete", "already-complete", "no-new-session",
+                "released", "nothing-to-release"}:
             report.update(status="reading-unavailable", reason_code=_reason(exc))
     report["finished_at"] = clock()
     update()
@@ -667,6 +698,10 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         repair_options["write_reconciliation"] = load_grant()
         repair_options["reconciliation_verifier"] = lambda grant: verify_native_reconciliation(
             api, grant, token=env[TOKEN_ENV])
+    elif selected["invocation"] == "release-master":
+        # The only exit from an unconfirmed reservation. It spends nothing and
+        # grants nothing; it names what was left unknown and readies the venue.
+        repair_options["release_master"] = True
     if selected["operation"] == "update" and selected["invocation"] != "reconcile-write":
         from decision_kernel.application.daily_master_refresh import policy as master_policy
         repair_options["master_refresh"] = master_policy(_json(_regular(MASTER_POLICY_FILE, 8192)))
@@ -683,14 +718,16 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         _save_receipt(out / "control.json", control)
     executed = execute(approved=approved, registry=RelayRegistry(REGISTRY),
         open_unit=open_unit or remote_units(env[TOKEN_ENV], selected), operation=selected["operation"],
-        guard=lambda current: check_private(current, selected), progress=progress,
+        guard=lambda current: check_private(current, selected),
+        read_guard=lambda current: check_private(current, selected), progress=progress,
         calendar_client_factory=lambda: RelayHTTP(credential=env.get(SECRET_ENV, ""), request_timeout_seconds=90),
         admission_at=created.isoformat(),
         allow_late=selected["invocation"] in {"schedule", "recover-late", EXTERNAL_CLOCK}, **repair_options)
     check_private(api, selected)
     progress(executed["receipt"], executed["control"])
     print(json.dumps({**executed["receipt"], **selected}, ensure_ascii=False))
-    return 0 if executed["receipt"]["status"] in {"read", "complete", "already-complete", "no-new-session", "paused", "not-due"} else 2
+    return 0 if executed["receipt"]["status"] in {"read", "complete", "already-complete",
+        "no-new-session", "paused", "not-due", "released", "nothing-to-release"} else 2
 
 
 def run_clock_probe(event, env, out, *, api=None):

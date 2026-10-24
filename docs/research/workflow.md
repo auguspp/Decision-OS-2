@@ -18,6 +18,20 @@
 
 没有独立审阅时写自查；不能靠字段齐全认证经济分析。算术/单位检查仍须落到真实计算，本入口不执行研究者提交的代码，不实现Odds或宣称全文数值已自动审计。
 
+<a id="external-method"></a>
+
+## 受信外部 Full 合同
+
+默认 Quick v1 / Full v2 保持原内容。获准外部研究宿主可显式选择 `decision-os-research-external-full-v1`：CLI 的 `prepare-research --method-id` 或宿主 `prepare` 顶层 `method_id`，也可离线读取 `python -m decision_kernel.methods.research --kind full --method-id decision-os-research-external-full-v1`。这是代码内有限的版本化合同，复用原 Full 研究纪律，允许合法外部来源及实际保留表示；不接受上传方法正文、任意执行模块、自报 approved 或动态插件。
+
+方法选择不进入 `ResearchRequest` / `ResearchProgress`，不改变工作底稿 schema。保存继续携带本次准备结果的 `method.sha256`：宿主 `checkpoint` / `deliver` 使用原 `method_sha256`，CLI `checkpoint-research` 用 `--method-sha256`（省略仍选择默认方法）。记录中的 `id@sha256:摘要` 与附录内 `id/sha256` 必须一致。新宿主写只接受当前 Quick v1、Full v2 或此外部合同；旧 Full v1 摘要继续可读及只读对账，不能因此新增宿主写入。
+
+从确切外部版本 `prepare(case_id/reference)` 或 `open-delivery` 接续，未显式换方法时沿用该外部合同；证据分页的 `next_prepare_payload` 保留选定方法。跨入或跨出外部合同须在后继提交的 `scope_change_reason` 说明变化；只读准备同 kind 的另一方法可先查看。原问题、来源移除说明及未解挑战继续保留，外部转 Quick 也不能删除旧未解挑战。默认 Full v1 到 v2 的既有升级及历史重放政策不变。
+
+外部准备返回 `external-full-execution-contract-v1`，沿已有授权取材、保留真实表示、将 findings/challenges 的 evidence 下标绑定来源，保存后用精确引用核验。它不把 Pool/Relay 设为此外部合同的必需来源，也不把旧默认方法的未完成项改记成功。`audit-source-use` 从**实际存储的确切方法身份**分派：外部输入仅为 `{"reference": <已保存的完整 BlobRef>}`；核验范围和状态见[来源使用核查](source-use-audit.md#external-evidence-use)。
+
+保存、已保留表示可读、作者采用、经济充分性、行情/概率资格和人工确认分别成立。来源可仅保留摘录或外部定位并明确限制；没有可读采用证据仍可保存诚实的部分成果。所有外部材料继续遵守现役来源保管与公开权利、原意图/前驱/CAS/只读对账边界，不扩大采集、任务或人工 Decision 权限。
+
 ## 请求与工作底稿
 
 `ResearchRequest` 由调用方选定：`case_id`、`kind`、`mandate`、`questions`（1—32项，稳定question_id与原问题文本）、可选`predecessor`、`scope_change_reason`。同案后继保留所有原问题ID及原文；新增问题可以追加，旧问题被证据重构/取消时以`reframed`保留解释，不直接删掉。委托或kind改变必须留下明确范围变化原因和前驱，不能靠生成的底稿悄悄改目标。
@@ -69,4 +83,4 @@ decision-os store --path /tmp/dos2-demo.git prepare-research --case-id demo
 
 输入沿既有2MiB上限，问题32项、挑战/来源各64项；溢出明确拒绝，不静默丢字段。限制全文留在附录，原unresolved只是有界定位摘要。来源损坏/缺失不能伪称引用成功；新部分成果可解释撤除相关来源并保留旧前驱。源码回退不撤回已保存成果，不执行清理。
 
-测试归属：`test_research_workpaper.py`保护方法载荷/逐题与停止矛盾/原样恢复；`test_research_workflow.py`保护真实合成Git上的提交、前驱、幂等、失败与CLI边界；`test_distribution.py`在**原同一次冷安装**中运行prepare→阶段保存→恢复→实质修订→再次读回。替换本方法入口时处理这些专属方法/载荷消费者，保留原版本保管与引用保护；不因Issue关闭删测试。真实Full、正向Quick、市场/产业接线和Brief采用仍按#7原范围单独验收。
+测试归属：`test_research_workpaper.py`保护方法载荷/逐题与停止矛盾/原样恢复；`test_research_workflow.py`保护真实合成Git上的提交、前驱、幂等、失败与CLI边界；`test_research_method_selection.py`保护有限方法选择及历史摘要，`test_research_external_use.py`保护外部表示采用与默认审计分界；`test_distribution.py`在**原同一次冷安装**中运行prepare→阶段保存→恢复→实质修订→再次读回及外部合同消费者。替换本方法入口时处理这些专属方法/载荷消费者，保留原版本保管与引用保护；不因Issue关闭删测试。真实Full、正向Quick、市场/产业接线和Brief采用仍按#7原范围单独验收。

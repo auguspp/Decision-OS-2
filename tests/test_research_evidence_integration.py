@@ -11,7 +11,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError
 from decision_kernel.interfaces import research_runtime as runtime
 from decision_kernel.infrastructure.relay_http import RelayHTTP
-from test_research_runtime import host, invoke, request, source, work
+from test_research_runtime import EXTERNAL_METHOD, host, invoke, request, source, work
 from test_research_sources import plan as relay_plan, request as relay_request
 
 
@@ -36,15 +36,21 @@ def test_normal_host_prepare_discovers_then_existing_writer_and_reader_consume(h
     assert restored['research_assessment'] == 'not-performed'
 
 
-def test_evidence_pages_use_explicit_request_not_floating_case_selection(host, tmp_path):
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_evidence_pages_use_explicit_request_not_floating_case_selection(host, tmp_path, method_id):
     for ident in ('b', 'c'):
         invoke(host, tmp_path/ident, 'put-source', source(source_id=ident, text='铜 '+ident), ident)
+    selection = {'method_id':method_id} if method_id else {}
     result = invoke(host, tmp_path/'prepare', 'prepare',
-                    {'request':request(), 'evidence_plan':evidence_plan(), 'evidence_limit':1})['result']
+                    {'request':request(), 'evidence_plan':evidence_plan(), 'evidence_limit':1, **selection})['result']
     invoke(host, tmp_path/'a', 'put-source', source(source_id='a',text='铜 later'), 'a')
     payload = result['evidence']['next_prepare_payload']
     assert 'request' in payload and 'case_id' not in payload
-    tail = invoke(host, tmp_path/'tail', 'prepare', payload)['result']['evidence']
+    assert payload['method_id'] == result['method']['id']
+    before = host.writes
+    continued = invoke(host, tmp_path/'tail', 'prepare', payload)['result']
+    assert continued['method'] == result['method'] and host.writes == before
+    tail = continued['evidence']
     assert tail['snapshot'] == result['evidence']['snapshot']
     assert [s['source_id'] for s in tail['sources']] == ['c']
     assert tail['next_cursor'] is None

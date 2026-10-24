@@ -6,8 +6,8 @@ import pytest
 
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, Conflict, MissingObject, RecordError, RevisionInput
-from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest, render_workpaper
+from decision_kernel.domain.records import BlobRef, Conflict, MissingObject, RecordError, RevisionInput, encoded
+from decision_kernel.domain.research_work import WORK_MARKER, ResearchProgress, ResearchRequest
 from decision_kernel.infrastructure.github_store import GitHubStore
 from decision_kernel.methods.research import research_method
 from decision_kernel.methods.research_v1 import research_method as legacy_method
@@ -18,8 +18,20 @@ def legacy_checkpoint(store, payload, submission):
     req = ResearchRequest.from_dict(payload["request"])
     progress = ResearchProgress.from_dict(payload["progress"])
     method = legacy_method(req.kind)
+    # Freeze the old wire shape rather than asking today's renderer to invent
+    # its own historical fixture. Source references still come from real Git.
+    old_request = {"case_id": req.case_id, "kind": req.kind, "mandate": req.mandate,
+        "questions": [asdict(question) for question in req.questions],
+        "predecessor": asdict(req.predecessor) if req.predecessor else None,
+        "scope_change_reason": req.scope_change_reason}
+    old_progress = {name: asdict(progress)[name] for name in (
+        "findings", "stop", "stop_reason", "sources", "challenges", "limitations",
+        "source_changes", "challenge_note")}
+    note = {"schema": "research-workpaper-v1", "request": old_request, "progress": old_progress,
+            "method": {"id": method["id"], "sha256": method["sha256"]}}
+    body = progress.body + WORK_MARKER + encoded(note).decode("utf-8") + "```\n"
     return store.submit_revision(submission, RevisionInput(
-        req.case_id, payload["revision_id"], req.kind, render_workpaper(req, progress, method),
+        req.case_id, payload["revision_id"], req.kind, body,
         req.mandate, method["id"] + "@sha256:" + method["sha256"],
         progress.sources, req.predecessor, progress.unresolved(req)))
 

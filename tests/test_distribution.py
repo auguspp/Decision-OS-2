@@ -237,3 +237,52 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     # Same cold wheel: exact original forecast, actual source and normal Room/CLI.
     from test_outcome_room_integration import exercise_installed_outcome
     exercise_installed_outcome(command, outside, store)
+
+    # Same cold wheel: an external contract survives partial save and independent
+    # CLI continuation without adding fields to the existing research request.
+    external_id = "decision-os-research-external-full-v1"
+    external_method = subprocess.run([str(python), "-I", "-m", "decision_kernel.methods.research",
+        "--kind", "full", "--method-id", external_id], cwd=outside, env=no_host,
+        check=True, capture_output=True, text=True)
+    external_method = json.loads(external_method.stdout)
+    assert external_method["id"] == external_id
+    external_request = outside / "external-request.json"
+    external_request.write_text(json.dumps({"case_id": "installed-external", "kind": "full",
+        "mandate": "合成外部方法接收，尚未完成经济研究",
+        "questions": [{"question_id": "external", "text": "哪些原判断仍需验证"}]}, ensure_ascii=False), encoding="utf-8")
+    prepared_external = command("prepare-research", "--request", str(external_request), "--method-id", external_id)
+    assert prepared_external["method"] == external_method
+    assert prepared_external["full_execution"]["schema"] == "external-full-execution-contract-v1"
+    assert prepared_external["evidence"]["status"] == "optional-not-requested"
+    assert set(prepared_external["request"]) == {
+        "case_id", "kind", "mandate", "questions", "predecessor", "scope_change_reason"}
+    external_progress = outside / "external-progress.json"
+    external_progress.write_text(json.dumps({"body": "外部方法的合成部分结果，不认证经济充分性。",
+        "findings": [{"question_id": "external", "status": "open", "finding": "原始解释仍需核算",
+            "remaining_kind": "acquired-unanalysed", "next_action": "完成原问题的计算", "evidence": [0]}],
+        "sources": [reference], "stop": "continue", "stop_reason": "保留尚未完成的研究工作"},
+        ensure_ascii=False), encoding="utf-8")
+    external_args = ("checkpoint-research", "--request", str(external_request), "--input", str(external_progress),
+        "--method-sha256", external_method["sha256"], "--submission-id", "installed-external", "--revision-id", "r1")
+    external_saved = command(*external_args)
+    assert command(*external_args) == external_saved
+    assert external_saved["research_assessment"] == "not-performed" and external_saved["human_acceptance"] == "not-confirmed"
+    external_ref = outside / "external-reference.json"
+    external_ref.write_text(json.dumps(external_saved["reference"]), encoding="utf-8")
+    external_read = command("resume-research", "--ref", str(external_ref))
+    external_record = external_read["research"]["record"]["input"]
+    assert external_record["method"] == external_id + "@sha256:" + external_method["sha256"]
+    assert external_record["sources"] == [reference] and external_record["unresolved"]
+    assert external_read["source_use_acceptance"]["method"] == {
+        "id": external_id, "sha256": external_method["sha256"]}
+    continued_external = command("prepare-research", "--case-id", "installed-external")
+    assert continued_external["method"] == external_method
+    assert continued_external["request"]["predecessor"] == external_saved["reference"]
+    external_audit_input = outside / "external-audit.json"
+    external_audit_input.write_text(json.dumps({"reference": external_saved["reference"]}), encoding="utf-8")
+    # command(check=True) requires the normal CLI success exit, not merely JSON output.
+    external_audit = command("audit-source-use", "--input", str(external_audit_input))
+    assert external_audit["schema"] == "research-external-source-use-audit-v1"
+    assert external_audit["status"] == "external-evidence-use-demonstrated"
+    assert external_audit["reference"] == external_saved["reference"]
+    assert external_audit["default_full_acceptance"] == "not-assessed"

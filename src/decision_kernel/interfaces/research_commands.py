@@ -9,6 +9,7 @@ from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.domain.records import BlobRef
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest
+from decision_kernel.methods.research import research_method, writable_research_method
 
 COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "audit-numbers",
             "audit-source-use", "verify-reference-fixing") + agenda_commands.LOCAL_COMMANDS + (reading_commands.COMMAND,)
@@ -17,8 +18,8 @@ COMMANDS = ("prepare-research", "checkpoint-research", "research-catalogue", "au
 def configure(actions) -> None:
     reading_commands.configure(actions)
     agenda_commands.configure(actions)
-    usage = actions.add_parser("audit-source-use", help="verify native pool/Relay receipts and exact research adoption; no writes")
-    usage.add_argument("--input", type=Path, required=True, help="request/progress or saved reference, native receipt IDs and explicit exceptions")
+    usage = actions.add_parser("audit-source-use", help="verify the saved method's source-use contract; no writes")
+    usage.add_argument("--input", type=Path, required=True, help="external: exact saved reference only; default: native receipts and research selector")
     audit = actions.add_parser("audit-numbers", help="recompute declared source-bound numbers; read only, not economic approval")
     select_numbers = audit.add_mutually_exclusive_group(required=True)
     select_numbers.add_argument("--input", type=Path, help="research-numbers-v1 JSON")
@@ -29,6 +30,7 @@ def configure(actions) -> None:
     select.add_argument("--case-id", help="continue the saved workpaper's scope, selecting current once")
     select.add_argument("--ref", type=Path, help="exact saved workpaper BlobRef JSON")
     prepare.add_argument("--source-limit", type=int, default=4)
+    prepare.add_argument("--method-id", help="supported current method; omitted preserves an external predecessor's contract")
     prepare.add_argument("--evidence-plan", type=Path, help="question-scoped pool queries, not source URLs")
     prepare.add_argument("--evidence-cursor", type=Path, help="exact evidence-page continuation")
     prepare.add_argument("--evidence-limit", type=int, default=4)
@@ -37,6 +39,7 @@ def configure(actions) -> None:
     checkpoint.add_argument("--input", type=Path, required=True, help="progress JSON; cannot select case, kind or permissions")
     checkpoint.add_argument("--submission-id", required=True)
     checkpoint.add_argument("--revision-id", required=True)
+    checkpoint.add_argument("--method-sha256", help="exact supported method digest from prepare; omitted selects the default method")
     catalogue = actions.add_parser("research-catalogue", help="browse saved research and remaining work; read only")
     catalogue.add_argument("--cursor", type=Path, help="exact catalogue next_cursor JSON, not a source cursor")
     catalogue.add_argument("--limit", type=int, default=4, help="case cards per page, 1 to 8")
@@ -69,8 +72,13 @@ def execute(args, store, load) -> dict:
             evidence_plan=load(args.evidence_plan) if args.evidence_plan else None,
             evidence_cursor=load(args.evidence_cursor) if args.evidence_cursor else None,
             evidence_limit=args.evidence_limit,
+            method_id=args.method_id,
         )
+    request = ResearchRequest.from_dict(load(args.request))
+    method = writable_research_method(request.kind, args.method_sha256 if args.method_sha256 is not None
+                                     else research_method(request.kind)["sha256"])
     return workflow.checkpoint(
-        ResearchRequest.from_dict(load(args.request)), ResearchProgress.from_dict(load(args.input)),
+        request, ResearchProgress.from_dict(load(args.input)),
         submission_id=args.submission_id, revision_id=args.revision_id,
+        method_sha256=method["sha256"],
     )

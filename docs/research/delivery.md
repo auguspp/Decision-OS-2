@@ -14,6 +14,8 @@
 
 `research-delivery-v1` 包含原 `request/progress/revision_id/method_sha256`，以及 `rights_confirmed=true`、`rights_basis`、`body_mode`、`items`，可选 `numerical_workpaper`。授权字段是调用者须事先核实的声明，不是来源正文提供的工具权限，也不是服务端身份隔离。
 
+`method_sha256` 绑定准备时选定的受信方法，包括[外部 Full 合同](workflow.md#external-method)；不向 delivery 增加自报 method_id/approved。跨外部合同边界须在 request.scope_change_reason 说明变化，预检在意图与来源/附件保管前拒绝缺理由的切换。成功重放回执与 open-delivery 从已存方法恢复外部合同，默认 Full 的旧版升级及只读原意图对账仍保持。
+
 每项 `id/role/status/required/reason` 必须齐全。三类责任均要交代：`report-original`、`calculation-file`、`source-evidence`；其他文件可用 `supporting-file`。没有工作簿可说明不适用，不要求制造空 Excel。
 
 | 状态 | 输入和结果 |

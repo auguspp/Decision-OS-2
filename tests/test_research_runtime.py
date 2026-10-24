@@ -12,6 +12,7 @@ from decision_kernel.methods.research import research_method
 from test_github_store import GitAPI
 
 CODE = "a" * 40
+EXTERNAL_METHOD = "decision-os-research-external-full-v1"
 
 
 @pytest.fixture
@@ -54,27 +55,45 @@ def invoke(host, tmp_path, operation, payload, submission="", expected=None):
                                output=tmp_path, run_id="123", attempt="1")
 
 
-def test_full_source_checkpoint_and_exact_read_roundtrip(host, tmp_path):
-    prepared = invoke(host, tmp_path / "prepare", "prepare", {"request": request()})
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_full_source_checkpoint_and_exact_read_roundtrip(host, tmp_path, method_id):
+    selection = {"method_id": method_id} if method_id else {}
+    prepared = invoke(host, tmp_path / "prepare", "prepare", {"request": request(), **selection})
+    method = prepared["result"]["method"]
     assert prepared["result"]["previous_context"] is None
     assert prepared["result"]["method"]["kind"] == "full" and host.writes == 0
     saved = invoke(host, tmp_path / "source", "put-source", source(), "source-one")
     ref = saved["result"]["reference"]
     assert saved["write"] == "published" and not host.binding.write_enabled
-    first = invoke(host, tmp_path / "first", "checkpoint", work(ref), "research-one")
+    paper = work(ref, method_sha256=method["sha256"])
+    if method_id == EXTERNAL_METHOD:
+        paper["progress"]["findings"][0]["evidence"] = [0]
+    first = invoke(host, tmp_path / "first", "checkpoint", paper, "research-one")
     revision = first["result"]["reference"]
     assert first["write"] == "published" and first["research_assessment"] == "not-performed"
     restored = invoke(host, tmp_path / "restore", "resume", {"reference": revision})
     assert restored["result"]["research"]["reference"] == revision
+    assert restored["result"]["research"]["record"]["input"]["method"] == method["id"] + "@sha256:" + method["sha256"]
     assert restored["result"]["source_page"]["items"][0]["view"]["data"] == source()["text"]
     continued = invoke(host, tmp_path / "next", "prepare", {"case_id": "example"})
     assert continued["result"]["request"]["predecessor"] == revision
-    second_work = work(ref, request=continued["result"]["request"], revision_id="r2")
+    assert continued["result"]["method"] == method
+    second_work = work(ref, request=continued["result"]["request"], revision_id="r2", method_sha256=method["sha256"])
     second = invoke(host, tmp_path / "second", "checkpoint", second_work, "research-two")
-    replay = invoke(host, tmp_path / "reconcile", "reconcile-checkpoint", work(ref), "research-one")
+    replay = invoke(host, tmp_path / "reconcile", "reconcile-checkpoint", paper, "research-one")
     assert replay["result"]["reference"] == revision
+    assert replay["result"] == first["result"]
     assert replay["write"] == "reconciled-without-write" and host.writes == 3
     assert second["result"]["reference"] != revision
+    if method_id == EXTERNAL_METHOD:
+        head, writes = host.git.head(), host.writes
+        audit = invoke(host, tmp_path / "audit", "audit-source-use", {"reference": revision})
+        assert audit["status"] == "completed" and audit["write"] == "not-requested"
+        assert audit["result"]["schema"] == "research-external-source-use-audit-v1"
+        assert audit["result"]["status"] == "external-evidence-use-demonstrated"
+        assert audit["result"]["reference"] == revision
+        assert audit["result"]["default_full_acceptance"] == "not-assessed"
+        assert host.git.head() == head and host.writes == writes
 
 
 def test_cursor_remains_on_original_revision_after_new_checkpoint(host, tmp_path):
@@ -90,10 +109,13 @@ def test_cursor_remains_on_original_revision_after_new_checkpoint(host, tmp_path
     assert last["research"]["reference"] == first and last["source_page"]["offset"] == 1
 
 
-@pytest.mark.parametrize("operation", ["put-source", "checkpoint"])
-def test_lost_receipt_has_original_inputs_and_readonly_recovery(host, tmp_path, operation):
+@pytest.mark.parametrize("operation,method_id", [
+    ("put-source", None), ("checkpoint", None), ("checkpoint", EXTERNAL_METHOD),
+])
+def test_lost_receipt_has_original_inputs_and_readonly_recovery(host, tmp_path, operation, method_id):
     ref = invoke(host, tmp_path / "source", "put-source", source(), "source")["result"]["reference"]
-    payload = source(source_id="lost") if operation == "put-source" else work(ref)
+    payload = source(source_id="lost") if operation == "put-source" else work(
+        ref, method_sha256=research_method("full", method_id=method_id)["sha256"])
     expected = host.git.head()
     def lose(_):
         raise UnknownWrite("REMOTE_WRITE_UNCONFIRMED")
@@ -124,10 +146,12 @@ def test_source_reconcile_missing_is_not_a_write(host, tmp_path):
     assert report["status"] == "failed" and report["write"] == "not-requested"
 
 
-def test_unpublished_research_reconcile_cannot_write(host, tmp_path):
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_unpublished_research_reconcile_cannot_write(host, tmp_path, method_id):
     ref = invoke(host, tmp_path / "src", "put-source", source(), "src")["result"]["reference"]
+    paper = work(ref, method_sha256=research_method("full", method_id=method_id)["sha256"])
     with pytest.raises(MissingObject, match="SUBMISSION_NOT_FOUND_NO_WRITE"):
-        invoke(host, tmp_path / "none", "reconcile-checkpoint", work(ref), "none")
+        invoke(host, tmp_path / "none", "reconcile-checkpoint", paper, "none")
     assert host.writes == 1
 
 
@@ -167,11 +191,34 @@ def test_readback_failure_does_not_claim_saved_and_recovers(host, tmp_path):
     assert recovered["status"] == "completed" and host.writes == 1
 
 
-def test_method_pin_rejects_changed_method_before_new_write(host, tmp_path):
+@pytest.mark.parametrize("kind,selection", [("full", "unknown"), ("quick", "external")])
+def test_method_pin_rejects_changed_method_before_new_write(host, tmp_path, kind, selection):
     ref = invoke(host, tmp_path / "src", "put-source", source(), "src")["result"]["reference"]
+    method_sha256 = research_method("full", method_id=EXTERNAL_METHOD)["sha256"] if selection == "external" else "0" * 64
+    head = host.git.head()
     with pytest.raises(RecordError, match="RESEARCH_METHOD_CHANGED"):
-        invoke(host, tmp_path / "method", "checkpoint", work(ref, method_sha256="0" * 64), "bad")
-    assert host.writes == 1
+        invoke(host, tmp_path / "method", "checkpoint", work(ref, request=request(kind=kind), method_sha256=method_sha256), "bad")
+    assert host.writes == 1 and host.git.head() == head
+
+
+@pytest.mark.parametrize("location", ["request", "progress", "checkpoint"])
+def test_method_selection_does_not_expand_request_progress_or_checkpoint_shape(host, tmp_path, location):
+    ref = invoke(host, tmp_path / "src", "put-source", source(), "src")["result"]["reference"]
+    payload = work(ref, method_sha256=research_method("full", method_id=EXTERNAL_METHOD)["sha256"])
+    target = payload if location == "checkpoint" else payload[location]
+    target["method_id"] = EXTERNAL_METHOD
+    head, writes = host.git.head(), host.writes
+    with pytest.raises(RecordError, match="INVALID_(RESEARCH_REQUEST|RESEARCH_PROGRESS|CHECKPOINT_PAYLOAD)"):
+        invoke(host, tmp_path / "invalid", "checkpoint", payload, "invalid")
+    assert host.git.head() == head and host.writes == writes
+
+
+@pytest.mark.parametrize("kind,method_id", [("full", "invented-external-method"), ("quick", EXTERNAL_METHOD)])
+def test_prepare_cannot_install_unknown_or_wrong_kind_method(host, tmp_path, kind, method_id):
+    head = host.git.head()
+    with pytest.raises(RecordError, match="UNKNOWN_RESEARCH_METHOD"):
+        invoke(host, tmp_path / "invalid", "prepare", {"request": request(kind=kind), "method_id": method_id})
+    assert host.git.head() == head and host.writes == 0
 
 
 def test_source_text_is_data_not_shell_or_automatic_url_fetch(host, tmp_path):

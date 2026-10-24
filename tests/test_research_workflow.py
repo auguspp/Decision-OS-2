@@ -8,11 +8,14 @@ import pytest
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_workflow import ResearchWorkflow
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, Conflict, IntegrityError, RecordError, RevisionInput, SourceInput, UnknownWrite
+from decision_kernel.domain.records import BlobRef, Conflict, IntegrityError, RecordError, RevisionInput, SourceInput, UnknownWrite, encoded
 from decision_kernel.domain.research_work import (
-    QuestionFinding, ResearchChallenge, ResearchProgress, ResearchQuestion, ResearchRequest, read_workpaper,
+    WORK_MARKER, QuestionFinding, ResearchChallenge, ResearchProgress, ResearchQuestion, ResearchRequest, read_workpaper,
 )
 from decision_kernel.infrastructure.git_store import GitStore
+from decision_kernel.methods.research import research_method
+
+EXTERNAL_METHOD = "decision-os-research-external-full-v1"
 
 
 @pytest.fixture
@@ -36,8 +39,9 @@ def progress(ref, **updates):
     return ResearchProgress(**{**values, **updates})
 
 
-def save(workflow, req, work, key="one", rev="r1"):
-    result = workflow.checkpoint(req, work, submission_id=key, revision_id=rev)
+def save(workflow, req, work, key="one", rev="r1", *, method_sha256=None):
+    result = workflow.checkpoint(req, work, submission_id=key, revision_id=rev,
+                                 method_sha256=method_sha256)
     return BlobRef(**result["reference"])
 
 
@@ -53,6 +57,74 @@ def test_direct_full_prepares_without_quick_or_any_write(system):
     assert context["source_page"]["items"][0]["view"]["data"] == "仅合成数据。"
     assert context["research"]["record"]["input"]["kind"] == "full"
     assert read_workpaper(context["research"])[0].mandate == "合成研究委托"
+
+
+def test_external_partial_roundtrip_retains_exact_method_without_expanding_workpaper(system, monkeypatch):
+    backend, store, workflow, ref = system
+    head = backend.head()
+    monkeypatch.setattr(store, "search", lambda *a, **k: pytest.fail("no implicit pool scan"))
+    prepared = workflow.prepare(request(), method_id=EXTERNAL_METHOD)
+    method = prepared["method"]
+    identity = {key: method[key] for key in ("id", "sha256")}
+    assert method["id"] == EXTERNAL_METHOD
+    assert prepared["full_execution"]["schema"] == "external-full-execution-contract-v1"
+    assert prepared["evidence"]["status"] == "optional-not-requested" and prepared["evidence"]["required"] is False
+    assert set(prepared["request"]) == {
+        "case_id", "kind", "mandate", "questions", "predecessor", "scope_change_reason"}
+    assert prepared["persistence"] == "not-written" and backend.head() == head
+
+    receipt = workflow.checkpoint(request(), progress(ref), submission_id="external", revision_id="r1",
+                                  method_sha256=method["sha256"])
+    saved = BlobRef(**receipt["reference"])
+    fresh = VersionedStore(GitStore(backend.root))
+    context = ResearchReader(fresh).resume(reference=saved)
+    research = context["research"]
+    note = json.loads(research["body"].partition(WORK_MARKER)[2][:-4])
+    assert set(note) == {"schema", "request", "progress", "method"}
+    assert note["schema"] == "research-workpaper-v1" and note["method"] == identity
+    assert note["request"] == json.loads(encoded(prepared["request"]))
+    assert research["record"]["input"]["method"] == method["id"] + "@sha256:" + method["sha256"]
+    assert context["source_page"]["items"][0]["reference"] == asdict(ref)
+    assert research["record"]["input"]["unresolved"]
+    assert receipt["source_use_acceptance"]["method"] == identity
+    assert receipt["source_use_acceptance"]["status"] == "not-demonstrated"
+    assert receipt["research_assessment"] == "not-performed" and receipt["human_acceptance"] == "not-confirmed"
+    assert context["source_use_acceptance"]["method"] == identity
+    for selector in ({"case_id": "case"}, {"reference": saved}):
+        resumed = ResearchWorkflow(fresh).prepare(**selector)
+        assert resumed["method"] == method and resumed["request"]["predecessor"] == asdict(saved)
+        assert resumed["continuation"]["actions"][0]["next_action"] == "补算已取得数据"
+
+
+@pytest.mark.parametrize("before_id,after_kind,after_id", [
+    ("decision-os-research-full-v2", "full", EXTERNAL_METHOD),
+    (EXTERNAL_METHOD, "full", "decision-os-research-full-v2"),
+    (EXTERNAL_METHOD, "quick", "decision-os-research-quick-v1"),
+])
+def test_method_change_accounts_for_scope_and_cannot_drop_pending_challenge(system, before_id, after_kind, after_id):
+    backend, store, workflow, ref = system
+    before = research_method("full", method_id=before_id)
+    after = research_method(after_kind, method_id=after_id)
+    challenge = ResearchChallenge("q1", "可能遗漏扩张现金投入", "unresolved", "保留待核", (0,))
+    first = save(workflow, request(), progress(ref, challenges=(challenge,)), method_sha256=before["sha256"])
+    head = backend.head()
+    changed = request(kind=after_kind, predecessor=first)
+    if after_kind == "full":
+        preview = workflow.prepare(changed, method_id=after_id)
+        assert preview["method"] == after and backend.head() == head
+    with pytest.raises(RecordError, match="EXPLICIT_SCOPE_CHANGE"):
+        save(workflow, changed, progress(ref), "two", "r2", method_sha256=after["sha256"])
+    explicit = replace(changed, scope_change_reason="调用方显式选择另一方法；原未决工作仍须逐项回应")
+    with pytest.raises(RecordError, match="UNRESOLVED_CHALLENGE_MUST_BE_ADDRESSED"):
+        save(workflow, explicit, progress(ref), "two", "r2", method_sha256=after["sha256"])
+    assert backend.head() == head and store.current("case") == first
+    responded = replace(challenge, disposition="changed", response="已补算并收窄原判断")
+    second = save(workflow, explicit, progress(ref, challenges=(responded,)), "two", "r2",
+                  method_sha256=after["sha256"])
+    old_work, new_work = read_workpaper(store.read_revision(first)), read_workpaper(store.read_revision(second))
+    assert old_work[1].challenges == (challenge,) and new_work[1].challenges == (responded,)
+    assert new_work[0].questions == old_work[0].questions and new_work[0].predecessor == first
+    assert store.read_revision(second)["record"]["input"]["method"] == after["id"] + "@sha256:" + after["sha256"]
 
 
 def test_saved_work_resumes_same_questions_and_mandate_and_allows_revision(system):
@@ -71,17 +143,23 @@ def test_saved_work_resumes_same_questions_and_mandate_and_allows_revision(syste
     assert store.read_revision(second)["record"]["human_acceptance"] == "not-confirmed"
 
 
-def test_same_intent_replay_survives_current_advancing(system):
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_same_intent_replay_survives_current_advancing(system, method_id):
     backend, store, workflow, ref = system
     req, work = request(), progress(ref)
-    first = save(workflow, req, work)
+    method_sha256 = research_method("full", method_id=method_id)["sha256"]
+    first = save(workflow, req, work, method_sha256=method_sha256)
     next_req = ResearchRequest.from_dict(workflow.prepare(case_id="case")["request"])
-    second = save(workflow, next_req, replace(work, body="later"), "two", "r2")
+    second = save(workflow, next_req, replace(work, body="later"), "two", "r2", method_sha256=method_sha256)
     head = backend.head()
-    assert save(workflow, req, work) == first and backend.head() == head
-    assert save(workflow, next_req, replace(work, body="later"), "two", "r2") == second
+    assert save(workflow, req, work, method_sha256=method_sha256) == first and backend.head() == head
+    assert save(workflow, next_req, replace(work, body="later"), "two", "r2", method_sha256=method_sha256) == second
     with pytest.raises(Conflict, match="SUBMISSION_CONTENT_CONFLICT"):
-        save(workflow, req, replace(work, body="different"))
+        save(workflow, req, replace(work, body="different"), method_sha256=method_sha256)
+    other = research_method("full", method_id=None if method_id else EXTERNAL_METHOD)
+    with pytest.raises(Conflict, match="SUBMISSION_CONTENT_CONFLICT"):
+        save(workflow, req, work, method_sha256=other["sha256"])
+    assert backend.head() == head
 
 
 def test_publish_then_lost_receipt_reconciles_without_second_commit(system, monkeypatch):
@@ -99,13 +177,15 @@ def test_publish_then_lost_receipt_reconciles_without_second_commit(system, monk
     assert backend.head() == published
 
 
-def test_stale_predecessor_never_overwrites_new_work(system):
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_stale_predecessor_never_overwrites_new_work(system, method_id):
     backend, store, workflow, ref = system
-    first = save(workflow, request(), progress(ref))
+    method_sha256 = research_method("full", method_id=method_id)["sha256"]
+    first = save(workflow, request(), progress(ref), method_sha256=method_sha256)
     req = replace(request(), predecessor=first)
-    second = save(workflow, req, progress(ref), "two", "r2")
+    second = save(workflow, req, progress(ref), "two", "r2", method_sha256=method_sha256)
     with pytest.raises(Conflict, match="STALE_PREDECESSOR"):
-        save(workflow, req, progress(ref), "three", "r3")
+        save(workflow, req, progress(ref), "three", "r3", method_sha256=method_sha256)
     assert store.current("case") == second
 
 

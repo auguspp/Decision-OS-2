@@ -10,7 +10,7 @@
 
 ## 输入与来源资格
 
-`research-numbers-v1` 包含 `schema/sources/inputs/calculations` 和可选 `template`；`research-numbers-v2` 在同一形状上增加必填的 `knowledge_cutoff/evaluated_at`，用于下述截止时点核验。分别最多 64 个来源/输入/计算，每项计算最多 16 个操作数，整个输入与附录均不超过原记录的 2 MiB。来源列表是真实已保管 SourceRef，不是 URL 或自造哈希。
+`research-numbers-v1` 包含 `schema/sources/inputs/calculations` 和可选 `template`；`research-numbers-v2` 在同一形状上增加必填的 `knowledge_cutoff/evaluated_at`，用于下述截止时点核验；`research-numbers-v3` 增加逐项指标、数据角色与证券/股类用途声明，时间用途成对可选。分别最多 64 个来源/输入/计算，每项计算最多 16 个操作数，整个输入与附录均不超过原记录的 2 MiB。来源列表是真实已保管 SourceRef，不是 URL 或自造哈希。
 
 每个输入必须声明 `id/value/unit/subject/period/scope`，另选其一：
 
@@ -44,7 +44,7 @@ v2 只增加一个明确用途：**在所声明的研究截止时点，OS2 已�
 
 v2 输出为 `research-numerical-audit-v2`，保留两项底稿时点，`evidence_time_scope=retained-by-declared-cutoff`。逐输入 `evidence_time` 报告时点原值、精度、出处及具体限制；显式假设的时间核验为 not-applicable。只有实际掌握这些时点时才使用 v2 的时间用途；不能证明时仍可保存部分研究，或沿 v1 做没有声明此时间资格的算术核验，不伪造时间来取得通过。
 
-访问、保管和公开再分发仍须按原入口与来源权利判断；时间字段不提供这些授权，也不认证外部原件。股类、指标语义的进一步绑定、第二个真实来源的等价使用及 Odds 资格由各自后继验收，本版不据此宣布完整来源接入已完成。
+访问、保管和公开再分发仍须按原入口与来源权利判断；时间字段不提供这些授权，也不认证外部原件。v2 未核股类和指标标签，不能因下面新增 v3 而追认这些历史资格。第二个真实来源的等价使用及 Odds 资格仍由各自实际验收，不据此宣布完整来源接入已完成。
 
 ### 有明确来源的合成输入示例
 
@@ -81,6 +81,75 @@ Path("numbers.json").write_text(json.dumps(payload, ensure_ascii=False), encodin
 
 随后按原 `audit-numbers --input numbers.json` 读取。若该来源在示例 cutoff 后才保管，数值可以匹配而时间用途仍 blocked；修改 cutoff 意味着形成新的底稿意图，不能拿新时间重放或覆盖旧已保存正文。
 
+<a id="evidence-qualified-v3"></a>
+## v3：指标、数据角色与证券用途
+
+v3 让研究者显式区分收入/利润、已观察数值/预测/假设，以及公司层面与证券或股类层面的量。它只核对这些声明、来源表示中的字面绑定和依赖传播，不自动识别会计科目、证券身份、A/H 对应关系或预测真实性。输出为 `research-numerical-audit-v3`，`evidence_use_scope=declared-source-fields-and-computation-lineage`；原单位、币种、主体、期间、归属和 Decimal 运算规则全部继续适用。
+
+每个输入和计算都须提供 `evidence_use`：
+
+| 字段 | 输入 | 计算 |
+|---|---|---|
+| `metric` | 非空、UTF-8 最多 256 字节的指标标签，例如 `revenue`；不把不同指标都标成一个通用 `amount` 来消除差别 | 声明本次计算实际产出的指标 |
+| `data_role` | 有来源时只能为 `observed` 或 `forecast`；明确假设只能为 `assumption` | 固定为 `derived`，不会把上游预测或假设升级为已观察事实 |
+| `security` | `null`，或 `{"code":"SYNTHETIC.A","share_class":"A"}` 形状的完整声明；code 为 1—32 位大写字母/数字及非首位的 `._-`，share_class 非空、UTF-8 最多 64 字节 | 同一形状；`null` 表示未声明证券关系，不表示已核实与证券无关 |
+
+`code/share_class` 只核声明格式及已存字段的字面一致性，不查询证券主表，也不核发行人归属或股类合法性。`security=null` 的结果未声明证券身份，不能凭整体 checked 推定已经取得证券用途资格。
+
+有来源的输入可用 `evidence_bindings` 将 `metric/data_role/security_code/share_class` 绑定到原表示的定位器。CSV 仍须与数字在同一行；文本绑定仍仅证明字面匹配。缺少适用绑定保留明确未核限制，结果为 conditional；绑定读不到或不相等只阻止本输入及相依计算。证券为 `null` 时没有证券身份可供核验。输出的 `source_checked_fields` 只列实际核过的字段。标签须来自实际已保管表示，不能在底稿自造“来源元数据”或补列，让它看起来已经过来源核对。明确假设不得带来源绑定；`forecast` 和 `assumption` 即使其他检查通过，也持续 conditional。
+
+计算需要解释用途改变时，使用可选 `evidence_bridge`，仅允许 `metric/security/data_role` 各自的理由。收入减成本、利润除收入、价格乘股本等指标变化须说明；未声明证券关系的公司量用于一个明确证券时，也须说明对应关系。合并的上游数据角色集合不同时须给理由，包括首次混用观察值与预测。桥只保留可审查声明，并使结果 conditional，不认证经济可比性，也不能放宽原币种、单位或 `context_bridge` 的要求。
+
+**不同非空证券或股类不能用桥合并。** 例如 A 股价格与 H 股股本即使同属一个公司、单位兼容，也不能相乘取得 checked/conditional 结果。每级计算自动传递 `basis_roles/basis_securities` 及全部上游限制；先把结果的证券声明写为 `null`，再与另一股类组合，仍会被拒绝。中间结果的 `data_role=derived` 也不会抹去它实际来自预测或假设。
+
+v3 的 `knowledge_cutoff/evaluated_at` 必须同时提供或同时省略。提供时完整沿用 [v2 三钟核验](#time-qualified-v2)；省略时明确为 not-requested，没有声明或取得截止时点/PIT 资格。不能只提供一个时间，或用 v3 的用途核验替代实际时间证据。
+
+### 在原示例上增加 v3 用途
+
+以下仍是合成演示。先在测试库实际保存下列 CSV，并把**这份新表示**返回的 SourceRef 写入 `source-v3-ref.json`；不能复用上例不含这些列的引用后仅在底稿增加绑定。
+
+```csv
+revenue,cost,unit,subject,period,scope,revenue_metric,cost_metric,data_role
+125,80,CNY_100M,synthetic-co,2025,consolidated,revenue,cost,observed
+```
+
+接着在上例 Python 的 `payload` 基础上替换数值部分。这个示例不请求时间资格；如有真实三钟信息，可同时保留上例两项时间。
+
+```python
+payload["schema"] = "research-numbers-v3"
+payload.pop("knowledge_cutoff")
+payload.pop("evaluated_at")
+payload["sources"] = [json.loads(Path("source-v3-ref.json").read_text(encoding="utf-8"))]
+payload["inputs"] = [
+    {
+        "id": metric, "value": value, "unit": "CNY_100M",
+        "subject": "synthetic-co", "period": "2025", "scope": "consolidated",
+        "source": 0, "locator": {"row": 1, "column": metric},
+        "context_bindings": {
+            field: {"row": 1, "column": field}
+            for field in ("unit", "subject", "period", "scope")
+        },
+        "evidence_use": {"metric": metric, "data_role": "observed", "security": None},
+        "evidence_bindings": {
+            "metric": {"row": 1, "column": metric + "_metric"},
+            "data_role": {"row": 1, "column": "data_role"},
+        },
+    }
+    for metric, value in (("revenue", "125"), ("cost", "80"))
+]
+payload["calculations"] = [{
+    "id": "difference", "operation": "difference", "operands": ["revenue", "cost"],
+    "unit": "CNY_100M", "subject": "synthetic-co", "period": "2025",
+    "scope": "consolidated", "places": 2,
+    "evidence_use": {"metric": "revenue_less_cost", "data_role": "derived", "security": None},
+    "evidence_bridge": {"metric": "核同期间同范围的收入减所列成本；不据此认定报表毛利"},
+}]
+payload["template"] = "声明差额：{{number:difference}}。"
+Path("numbers-v3.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+```
+
+运行原命令读取 `numbers-v3.json`，差额为 `45.00`，因指标桥保持 conditional。若要核每股用途，须另给实际证券声明和可绑定的原表示。把两个上游分别声明为 `{"code":"SYNTHETIC.A","share_class":"A"}` 与 `{"code":"SYNTHETIC.H","share_class":"H"}`，不能通过写“同一公司”桥来混用；这项拒绝不受显示值恰好相同影响。
+
 ## 实际命令与保存
 
 ```bash
@@ -100,7 +169,7 @@ decision-os store --binding config/store-binding.json audit-numbers --ref resear
 
 后继 `audit-numbers --ref` 从同一报告附录恢复原数值输入、检查引用确被该研究保留、重算并核对**附录内生成的展示**。后人只把“万元”改成“亿元”、只改显示值而不改依据，将返回 `SAVED_NUMERICAL_DISPLAY_MISMATCH`。附录外全文不在此保证内，附录不存在、删去或格式损坏不能取得通过结果。资料不可读时表示 not-comparable/blocked，不把读取故障说成正文被篡改。
 
-v2 使用独立的 `decision-os-numbers-v2` 附录标记；由原 checkpoint、[完整交付](delivery.md)和新只读 reader 按已存版本恢复。同一正文只接受一份匹配版本的数值附录，不能混放 v1/v2 来选择较宽结果。v1 合法历史附录仍按原语义读回，不补造时间字段，也不因后来增加 v2 而宣称旧版曾核验截止时点。开始保管 v2 前先升级其实际 reader/恢复消费者；保存后回退写入口仍须保留 v2 历史读取。
+v2/v3 分别使用独立的 `decision-os-numbers-v2`、`decision-os-numbers-v3` 附录标记；由原 checkpoint、[完整交付](delivery.md)和新只读 reader 按已存版本恢复。同一正文只接受一份匹配版本的数值附录，不能混放不同版本来选择较宽结果。v1/v2 合法历史附录仍按原字节和原语义读回，不补造时间或用途声明，也不追认新版资格。开始保管新版本前先升级其实际 reader/恢复消费者；保存后回退写入口仍须保留已存版本的历史读取。
 
 CLI 对 blocked/not-declared 返回非零，同时保留 JSON 诊断。宿主这类结果是 `numerical-not-cleared`、退出2，原输入与计算结果仍进入原产物；checked/conditional 仅是声明范围内的机械检查结果。来源真实、口径选取正确、经营解释充分、合格行情/Odds、用户接受和正式 Decision 仍各自证明。
 
@@ -108,4 +177,4 @@ CLI 对 blocked/not-declared 返回非零，同时保留 JSON 诊断。宿主这
 
 责任为 #7 数值证据/展示，用例是 Full 的现金/资本/每股桥与关键主张复算。单源缺失、金额错配或坏计算只阻止其依赖，其他结果继续呈现；部分研究、已保存版本和未决问题不被销毁。保存失败仍由原幂等/CAS/对账合同处理。
 
-专属测试包括货币/每股换算、错币种、负号/截数、单位/主体/期间/口径错配、明确假设与跨期桥、舍入、失效来源隔离、原版本读取和展示篡改；v2 另核时区比较、缺失/仅日期时点、先后矛盾、截止后补存、相依计算隔离和两版附录恢复。同一次 cold-wheel 消费者完成来源→数字→原研究checkpoint→精确重算，模拟宿主验证真实 Git 上只读无写。工程测试不代签新公司 Full 或数值真实性。旧数值附录版本一旦保管，读取/重建支持随实际保留责任维护；将来改变语义必须新版本，不原地把历史机械结果改成新方法。
+专属测试包括货币/每股换算、错币种、负号/截数、单位/主体/期间/口径错配、明确假设与跨期桥、舍入、失效来源隔离、原版本读取和展示篡改；v2 另核时区比较、缺失/仅日期时点、先后矛盾、截止后补存和相依计算隔离；v3 另核同来源行的用途绑定、预测/假设限制传播、指标桥、跨证券/股类拒绝、通过中间结果隐藏上游差异的反例，以及可选时间用途。三个版本均须按各自附录恢复。同一次 cold-wheel 消费者完成来源→数字→原研究checkpoint→精确重算，模拟宿主验证真实 Git 上只读无写。工程测试不代签新公司 Full 或数值真实性。旧数值附录版本一旦保管，读取/重建支持随实际保留责任维护；将来改变语义必须新版本，不原地把历史机械结果改成新方法。

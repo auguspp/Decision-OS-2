@@ -160,9 +160,10 @@ class ResearchWorkflow:
                                         for warning in row.get("warnings", [])}),
                     "coverage": audit.get("coverage"), "unmarked_prose": "not-audited",
                 }
-                if audit.get("schema") == "research-numerical-audit-v2":
+                if audit.get("schema") in ("research-numerical-audit-v2", "research-numerical-audit-v3"):
                     result["numerical_audit"].update({key: audit[key] for key in (
-                        "schema", "knowledge_cutoff", "evaluated_at", "evidence_time_scope")})
+                        "schema", "knowledge_cutoff", "evaluated_at", "evidence_time_scope", "evidence_use_scope")
+                        if key in audit})
             except (RecordError, KeyError, TypeError) as error:
                 result["numerical_audit"] = {"status": "blocked", "error": str(error)
                     if isinstance(error, RecordError) else "NUMERICAL_ASSESSMENT_UNAVAILABLE"}

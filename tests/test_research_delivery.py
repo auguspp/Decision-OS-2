@@ -437,7 +437,7 @@ def test_v2_delivery_bad_envelope_is_rejected_before_intent_or_source_write(stor
     elif change == "reversed":
         numeric["evaluated_at"] = "2026-10-22T08:00:00Z"
     elif change == "unsupported":
-        numeric["schema"] = "research-numbers-v3"
+        numeric["schema"] = "research-numbers-v99"
     elif change == "caller-qualified":
         numeric["qualified"] = True
     else:
@@ -445,4 +445,59 @@ def test_v2_delivery_bad_envelope_is_rejected_before_intent_or_source_write(stor
     head = store.backend.head()
     with pytest.raises(RecordError):
         ResearchDelivery(store).deliver(payload, submission_id="invalid-timed-delivery")
+    assert store.backend.head() == head
+
+
+@pytest.mark.parametrize("timed, metric, expected", [
+    (False, "cash", "conditional"),
+    (True, "cash", "conditional"),
+    (False, "revenue", "blocked"),
+])
+def test_v3_delivery_retains_use_limits_and_exact_saved_result_through_replay(store, monkeypatch, timed, metric, expected):
+    from decision_kernel.application import versioned_store
+    from decision_kernel.application.numerical_audit import NumericalAudit
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2026-10-23T07:00:00Z")
+    payload = timed_delivery_payload()
+    numeric = payload["numerical_workpaper"]
+    numeric["schema"] = "research-numbers-v3"
+    if not timed:
+        numeric.pop("knowledge_cutoff")
+        numeric.pop("evaluated_at")
+    numeric["inputs"][0]["evidence_use"] = dict(metric=metric, data_role="observed", security=None)
+    numeric["inputs"][0]["evidence_bindings"] = {"metric": {"row": 2, "column": "metric"}}
+    numeric["calculations"][0]["evidence_use"] = dict(metric=metric, data_role="derived", security=None)
+    saved = ResearchDelivery(store).deliver(payload, submission_id="evidence-delivery")
+    summary = saved["numerical_audit"]
+    assert summary["schema"] == "research-numerical-audit-v3" and summary["status"] == expected
+    assert summary["evidence_use_scope"] == "declared-source-fields-and-computation-lineage"
+    assert summary["evidence_time_scope"] == ("retained-by-declared-cutoff" if timed else "not-requested")
+    assert ("knowledge_cutoff" in summary) is timed
+    fresh = lambda: VersionedStore(GitStore(store.backend.root))
+    assert verify_fresh(saved, fresh)["readback"] == "fresh-reader-verified"
+    reference = BlobRef(**saved["reference"])
+    body = fresh().read_revision(reference)["body"]
+    assert "decision-os-numbers-v3:start" in body
+    audited = NumericalAudit(fresh()).saved(reference)
+    assert audited["status"] == expected
+    assert ResearchDelivery(fresh()).open(reference)["method"]["id"] == EXTERNAL_METHOD
+    assert saved["research_assessment"] == "not-performed" and saved["human_acceptance"] == "not-confirmed"
+    head = store.backend.head()
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2035-01-01T00:00:00Z")
+    replay = ResearchDelivery(store).deliver(payload, submission_id="evidence-delivery")
+    assert replay["reference"] == saved["reference"]
+    assert replay["numerical_audit"]["status"] == expected
+    assert replay["numerical_audit"]["evidence_use_scope"] == summary["evidence_use_scope"]
+    assert replay["numerical_audit"]["evidence_time_scope"] == summary["evidence_time_scope"]
+    assert ("knowledge_cutoff" in replay["numerical_audit"]) is timed
+    assert store.backend.head() == head and fresh().read_revision(reference)["body"] == body
+
+
+@pytest.mark.parametrize("field", ["knowledge_cutoff", "evaluated_at"])
+def test_v3_delivery_partial_time_declaration_rejected_before_any_write(store, field):
+    payload = timed_delivery_payload()
+    payload["numerical_workpaper"]["schema"] = "research-numbers-v3"
+    payload["numerical_workpaper"].pop(field)
+    head = store.backend.head()
+    with pytest.raises(RecordError):
+        ResearchDelivery(store).deliver(payload, submission_id="partial-v3-times")
     assert store.backend.head() == head

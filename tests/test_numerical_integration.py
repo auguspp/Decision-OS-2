@@ -1,12 +1,13 @@
 """Actual store/host consumers, with Git-backed model transport; never live issuer research."""
 from dataclasses import asdict, replace
+from copy import deepcopy
 import json
 import subprocess
 
 from test_numerical_audit import spec
 
 
-def _public_store(tmp_path, *, timed=False):
+def _public_store(tmp_path, *, timed=False, evidence=False):
     from test_github_store import GitAPI
     from decision_kernel.infrastructure.github_store import GitHubStore
     from decision_kernel.application.versioned_store import VersionedStore
@@ -18,6 +19,9 @@ def _public_store(tmp_path, *, timed=False):
     api.meta["private"] = False
     store = VersionedStore(GitHubStore(replace(api.binding, write_enabled=True), api))
     csv = "subject,period,scope,unit,revenue,cost\nsynthetic-issuer,2025-FY,consolidated,CNY_10K,600,450\n"
+    if evidence:
+        csv = ("subject,period,scope,unit,revenue,cost,revenue_metric,cost_metric,data_role,security_code,share_class\n"
+               "synthetic-issuer,2025-FY,consolidated,CNY_10K,600,450,revenue,cost,observed,SYNTHETIC.A,A\n")
     times = dict(published_at="2026-10-22T09:00:00+08:00",
                  acquired_at="2026-10-23T09:00:00+08:00") if timed else {}
     ref = store.put_source("numeric-source", SourceInput("numbers", "dataset", "Synthetic numbers", "synthetic:numeric", csv, **times))
@@ -29,6 +33,90 @@ def _timed_spec(payload):
     return {**payload, "schema": "research-numbers-v2",
             "knowledge_cutoff": "2026-10-23T08:00:00Z",
             "evaluated_at": "2026-10-24T08:00:00Z"}
+
+
+def _evidence_spec(payload, *, bound=True):
+    """Explicit synthetic source labels, using the existing numerical consumer."""
+    result = deepcopy(payload)
+    result["schema"] = "research-numbers-v3"
+    security = {"code": "SYNTHETIC.A", "share_class": "A"} if bound else None
+    for item in result["inputs"]:
+        metric = "revenue" if item["id"] == "sales" else "cost"
+        item["evidence_use"] = dict(metric=metric, data_role="observed", security=security)
+        if bound:
+            columns = {"metric": metric + "_metric", "data_role": "data_role",
+                       "security_code": "security_code", "share_class": "share_class"}
+            item["evidence_bindings"] = {key: {"row": 1, "column": column} for key, column in columns.items()}
+    for item in result["calculations"]:
+        metric = "gross_profit" if item["id"] == "gross" else "gross_margin"
+        item["evidence_use"] = dict(metric=metric, data_role="derived", security=security)
+        item["evidence_bridge"] = {"metric": "Synthetic revenue less cost, then gross profit divided by revenue"}
+    return result
+
+
+def test_v3_host_checks_stored_share_class_and_keeps_independent_calculation_read_only(tmp_path):
+    from decision_kernel.interfaces.research_runtime import run_command
+    api, store, old, ref = _public_store(tmp_path, evidence=True)
+    payload = _evidence_spec(old)
+    context = {key: payload["inputs"][1][key] for key in ("subject", "period", "scope")}
+    payload["calculations"].append(dict(id="cost-only", operation="identity", operands=["cost"],
+        unit="CNY_10K", evidence_use=dict(metric="cost", data_role="derived",
+        security={"code": "SYNTHETIC.A", "share_class": "A"}), **context))
+    writes, head = api.writes, api.git.head()
+    inputs = dict(operation="audit-numbers", code_sha="a" * 40, payload=json.dumps(payload))
+    good = run_command(api.binding, api=api, inputs=inputs, code_sha="a" * 40,
+                       output=tmp_path / "uses-good", run_id="1", attempt="1")
+    assert good["status"] == "completed" and good["result"]["status"] == "conditional"
+    assert good["result"]["schema"] == "research-numerical-audit-v3"
+    assert good["result"]["evidence_time_scope"] == "not-requested"
+    assert good["result"]["inputs"][0]["status"] == "checked"
+    assert good["result"]["calculations"][1]["evidence_use"]["basis_roles"] == ["observed"]
+    # This changes a declaration, not the stored source; it must fail its binding.
+    payload["inputs"][0]["evidence_use"]["security"] = {"code": "SYNTHETIC.A", "share_class": "H"}
+    inputs["payload"] = json.dumps(payload)
+    bad = run_command(api.binding, api=api, inputs=inputs, code_sha="a" * 40,
+                      output=tmp_path / "uses-bad", run_id="2", attempt="1")
+    assert bad["status"] == "numerical-not-cleared" and bad["write"] == "not-requested"
+    assert bad["result"]["inputs"][0]["status"] == "blocked"
+    assert bad["result"]["calculations"][0]["error"] == "OPERAND_NOT_AVAILABLE"
+    assert bad["result"]["calculations"][-1]["status"] == "checked"
+    assert bad["result"]["calculations"][-1]["display_number"] == "450.00"
+    assert api.writes == writes and api.git.head() == head
+
+
+def test_v3_checkpoint_retains_labels_lineage_and_optional_times_in_fresh_reader(tmp_path, monkeypatch):
+    from decision_kernel.application import versioned_store
+    from decision_kernel.application.numerical_audit import NumericalAudit
+    from decision_kernel.application.research_workflow import ResearchWorkflow
+    from decision_kernel.application.versioned_store import VersionedStore
+    from decision_kernel.domain.records import BlobRef
+    from decision_kernel.domain.research_work import ResearchRequest, ResearchProgress
+    from decision_kernel.infrastructure.github_store import GitHubStore
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2026-10-23T07:00:00Z")
+    api, store, old, ref = _public_store(tmp_path, timed=True, evidence=True)
+    payload = _evidence_spec(_timed_spec(old))
+    audit = NumericalAudit(store).audit(payload)
+    request = ResearchRequest.from_dict(dict(case_id="numeric-use", kind="full", mandate="Synthetic evidence uses",
+        questions=[dict(question_id="q", text="Synthetic cash sensitivity")]))
+    progress = ResearchProgress.from_dict(dict(body="Synthetic narrative" + audit["appendix"],
+        findings=[dict(question_id="q", status="open", finding="Still needs economic analysis",
+                       remaining_kind="acquired-unanalysed", next_action="Review actual economics")],
+        sources=[asdict(ref)], stop="continue", stop_reason="Source label checks do not conclude research"))
+    saved = ResearchWorkflow(store).checkpoint(request, progress, submission_id="uses-save", revision_id="r1")
+    summary = saved["numerical_audit"]
+    assert summary["schema"] == "research-numerical-audit-v3" and summary["status"] == "conditional"
+    assert summary["knowledge_cutoff"] == payload["knowledge_cutoff"]
+    assert summary["evidence_time_scope"] == "retained-by-declared-cutoff"
+    assert summary["evidence_use_scope"] == audit["evidence_use_scope"]
+    head, writes = api.git.head(), api.writes
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2035-01-01T00:00:00Z")
+    fresh = VersionedStore(GitHubStore(api.binding, api))
+    restored = NumericalAudit(fresh).saved(BlobRef(**saved["reference"]))
+    assert restored["saved_render"] == "matches-recalculation"
+    assert restored["appendix"] == audit["appendix"]
+    assert restored["calculations"][1]["evidence_use"] == audit["calculations"][1]["evidence_use"]
+    assert ResearchWorkflow(store).checkpoint(request, progress, submission_id="uses-save", revision_id="r1") == saved
+    assert api.git.head() == head and api.writes == writes
 
 
 def test_v2_native_host_time_failure_is_read_only_and_preserves_independent_calculation(tmp_path, monkeypatch):
@@ -226,3 +314,24 @@ def exercise_installed_numbers(command, outside, python, env, executable, store_
                              cwd=outside, env=env, capture_output=True, text=True)
     assert too_late.returncode == 2 and json.loads(too_late.stdout)["inputs"][0]["status"] == "blocked"
     assert command("current", "--case-id", "numeric")["reference"] == successor["reference"]
+
+    # The same installed consumer can retain v3 without claiming source clocks
+    # or invented source labels. Missing bindings stay visible and conditional.
+    uses = _evidence_spec({**spec(), "sources": [timed_ref]}, bound=False)
+    input_file.write_text(json.dumps(uses), encoding="utf-8")
+    use_audit = command("audit-numbers", "--input", str(input_file))
+    assert use_audit["schema"] == "research-numerical-audit-v3" and use_audit["status"] == "conditional"
+    assert use_audit["evidence_time_scope"] == "not-requested"
+    assert use_audit["calculations"][1]["evidence_use"]["basis_roles"] == ["observed"]
+    request_file.write_text(json.dumps({**request, "predecessor": successor["reference"]}), encoding="utf-8")
+    progress_file.write_text(json.dumps({**progress, "body": "Synthetic evidence successor" + use_audit["appendix"],
+                                         "sources": [ref, timed_ref]}), encoding="utf-8")
+    use_saved = command("checkpoint-research", "--request", str(request_file), "--input", str(progress_file),
+                        "--submission-id", "installed-use-research", "--revision-id", "r3")
+    assert use_saved["numerical_audit"]["status"] == "conditional"
+    assert use_saved["numerical_audit"]["schema"] == "research-numerical-audit-v3"
+    ref_file.write_text(json.dumps(use_saved["reference"]), encoding="utf-8")
+    use_restored = command("audit-numbers", "--ref", str(ref_file))
+    assert use_restored["saved_render"] == "matches-recalculation"
+    assert use_restored["input_sha256"] == use_audit["input_sha256"]
+    assert use_restored["calculations"][1]["evidence_use"] == use_audit["calculations"][1]["evidence_use"]

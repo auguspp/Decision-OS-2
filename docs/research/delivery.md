@@ -91,11 +91,13 @@ decision-os store --binding readonly-binding.json read-artifact --ref artifact-r
 
 Full 首次交付、成功重放和 `reconcile-delivery` 都返回绑定原确切研究版本的 `source_use_acceptance` 待核入口。即使 current 已前进，旧意图回执仍指向原版本；保存与读回不会把来源使用状态升级为通过。Quick 不增加 Full 专属要求。
 
-可选 `numerical_workpaper` 复用 `research-numbers-v1` 或 `research-numbers-v2` 的 `schema/inputs/calculations` 与可选 `template`，不在其中再传 `sources`；取得实际引用后自动接同一 sources 列表，生成对应版本的数值附录并由 checkpoint 返回检查结果。v2 还须原样提供 `knowledge_cutoff/evaluated_at`，确切字段、示例和时点比较见[数值底稿 v2](numerical-audit.md#time-qualified-v2)。来源下标绑定本文已说明的合并顺序，不另建一份数字专用来源列表。
+可选 `numerical_workpaper` 复用 `research-numbers-v1/v2/v3` 的 `schema/inputs/calculations` 与可选 `template`，不在其中再传 `sources`；取得实际引用后自动接同一 sources 列表，生成对应版本的数值附录并由 checkpoint 返回检查结果。v2 须原样提供 `knowledge_cutoff/evaluated_at`；v3 的两项时间成对可选，并须保留每个输入/计算的 `evidence_use` 及实际使用的绑定与桥。确切字段、示例和资格分别见[数值底稿 v2](numerical-audit.md#time-qualified-v2)与 [v3 用途核验](numerical-audit.md#evidence-qualified-v3)。来源下标绑定本文已说明的合并顺序，不另建一份数字专用来源列表。
 
-v2 检查的是所声明截止时点 OS2 已保管的表示。清单中新提供的 `source` 会在本次 deliver 中按真实保管时间记录 `stored_at`；若这个时点晚于底稿的 `knowledge_cutoff`，即使来源原发布日更早、数字一致，该输入及相依计算仍为 blocked。已有 `source_ref` 沿用它的确切原保管时点。交付不回填或提前保管时间，不为了通过而移动 cutoff；需要改变底稿意图时沿原修订/幂等规则接续。
+v2 及显式请求时间用途的 v3，检查所声明截止时点 OS2 已保管的表示。清单中新提供的 `source` 会在本次 deliver 中按真实保管时间记录 `stored_at`；若这个时点晚于底稿的 `knowledge_cutoff`，即使来源原发布日更早、数字一致，该输入及相依计算仍为 blocked。已有 `source_ref` 沿用它的确切原保管时点。交付不回填或提前保管时间，不为了通过而移动 cutoff；需要改变底稿意图时沿原修订/幂等规则接续。v3 未提供两项时间时明确 not-requested，不因保存成功取得截止时点资格。
 
-数值或时点 blocked 不抹去已完成的归档事实，不阻止保存有用的部分研究，也不提升为经济正确。成功重放、只读对账及 fresh-reader 从已存 v1/v2 附录恢复其原输入和截止时点，不能在读回时升级版本或换用当前时钟。v1 历史保持原数值核验语义，未声明数值仍显示 not-declared。实际写入 v2 前先升级相应 reader；已有 v2 成果的回退继续保留它的读取与恢复能力。
+v3 用途声明不改 SourceInput、来源权利或 Odds 资格。来源字段字面绑定、指标变换说明和预测/假设/证券依赖限制沿同一底稿保存与复算；不能给来源补造列，或让 delivery 把 forecast/assumption 改签为 observed。具体来源和经济语义是否真实仍须实际核实。
+
+数值、时点或用途 blocked 不抹去已完成的归档事实，不阻止保存有用的部分研究，也不提升为经济正确。成功重放、只读对账及 fresh-reader 从已存 v1/v2/v3 附录恢复其原输入，不能在读回时升级版本、添加声明或换用当前时钟。v1/v2 历史原字节与原核验语义保持，未声明数值仍显示 not-declared。实际写入新版本前先升级相应 reader；回退写入口继续保留已存各版本的读取与恢复能力。
 
 ## 下一会话怎样打开
 

@@ -1,18 +1,34 @@
-"""Full's default work instructions and bounded, read-only source-use assessment.
+"""Method-specific Full instructions and bounded, read-only source-use assessment.
 
 This is not a research executor, a second ledger, or economic approval. Native
 receipt authentication is injected by the host; user status declarations cannot
-substitute for it. Partial research remains saveable with its original contract.
+substitute for it. Exact external methods use their separate adoption contract;
+partial research remains saveable with its original contract.
 """
 from __future__ import annotations
 
 from dataclasses import asdict
 
+from decision_kernel.application.research_external_use import (
+    EXTERNAL_AUDIT_SCHEMA, EXTERNAL_USE_DEMONSTRATED, audit_external_source_use,
+    external_acceptance_pending, external_execution_contract,
+)
 from decision_kernel.domain.records import BlobRef, RecordError, SourceRef, checked_text, digest, encoded, require
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest, read_workpaper
+from decision_kernel.methods.research import EXTERNAL_METHOD_ID, stored_research_method
 
 
-def execution_contract(request: ResearchRequest, evidence: dict | None = None) -> dict:
+def _external_method(kind: str, method: dict | None) -> dict | None:
+    if not isinstance(method, dict) or not all(isinstance(method.get(key), str) for key in ("id", "sha256")):
+        return None
+    known = stored_research_method(kind, method["id"] + "@sha256:" + method["sha256"])
+    return known if known is not None and known["id"] == EXTERNAL_METHOD_ID else None
+
+
+def execution_contract(request: ResearchRequest, evidence: dict | None = None, *, method: dict | None = None) -> dict:
+    external = _external_method(request.kind, method)
+    if external is not None:
+        return external_execution_contract(request, external)
     evidence = evidence or {}
     queried = evidence.get("schema") == "research-evidence-page-v1"
     interface = evidence.get("interface_sources", {})
@@ -42,10 +58,21 @@ def execution_contract(request: ResearchRequest, evidence: dict | None = None) -
             "instruction": "先实际prepare取材，与Relay并列核验；仅读说明或生成报告不能签系统Full闭环。"}
 
 
-def acceptance_pending(reference: dict) -> dict:
+def acceptance_pending(reference: dict, *, method: dict | None = None) -> dict:
+    external = _external_method("full", method)
+    if external is not None:
+        return external_acceptance_pending(reference, external)
     return {"status": "not-demonstrated", "operation": "audit-source-use", "reference": reference,
             "reason": "saved-research-or-inventory-is-not-proof-of-pool-and-relay-use",
             "partial_research_save_allowed": True}
+
+
+def audit_demonstrated(result: dict) -> bool:
+    """Each audit's success remains bound to its own assessment schema."""
+    return isinstance(result, dict) and (result.get("schema"), result.get("status")) in (
+        ("research-source-use-audit-v1", "usage-demonstrated"),
+        (EXTERNAL_AUDIT_SCHEMA, EXTERNAL_USE_DEMONSTRATED),
+    )
 
 
 def scope(request: ResearchRequest) -> bytes:
@@ -64,10 +91,16 @@ class SourceUseAudit:
         if "reference" in payload:
             require(not ({"request", "progress"} & set(payload)), "SOURCE_USE_ONE_RESEARCH_SELECTOR")
             ref = BlobRef(**payload["reference"])
-            work = read_workpaper(self.store.read_revision(ref))
+            research = self.store.read_revision(ref)
+            work = read_workpaper(research)
             require(work is not None, "SOURCE_USE_WORKPAPER_REQUIRED")
             request, progress = work
             reference = asdict(ref)
+            known = stored_research_method(request.kind, research["record"]["input"]["method"])
+            if known is not None and known["id"] == EXTERNAL_METHOD_ID:
+                require(set(payload) == {"reference"}, "EXTERNAL_SOURCE_USE_REFERENCE_ONLY")
+                return audit_external_source_use(self.store, reference=reference, request=request,
+                                                 progress=progress, method=known)
         else:
             require({"request", "progress"} <= set(payload), "SOURCE_USE_ONE_RESEARCH_SELECTOR")
             request = ResearchRequest.from_dict(payload["request"])

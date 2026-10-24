@@ -46,6 +46,8 @@ def test_restores_same_contract_for_both_research_kinds(store, kind, monkeypatch
     assert item["reference"] == asdict(ref) and item["status"] == "stored-representation"
     assert item["view"]["manifest"]["input"]["published_at"] == "2026-10-14"
     assert result["research_assessment"] == "not-performed"
+    assert result["source_use_acceptance"]["status"] == "not-demonstrated"
+    assert result["source_use_acceptance"].get("method") is None
     assert result["execution_authority"] == "not-granted-by-read"
     assert result["next_cursor"] is None and store.backend.head() == head
 
@@ -85,6 +87,7 @@ def test_no_sources_preserves_unresolved_not_research_completion(store):
                                        end_of_list=True, coverage="this-page-only", items=[])
     assert view["research"]["record"]["input"]["unresolved"]
     assert view["research_assessment"] == "not-performed"
+    assert view["source_use_acceptance"].get("method") is None
 
 
 def test_external_locator_does_not_claim_stored_original(store):

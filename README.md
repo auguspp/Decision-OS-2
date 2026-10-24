@@ -8,7 +8,7 @@
 
 自建重心是同一份可接续的研究、证据与判断资产，信息取得、AI执行和日常交互优先复用 WorkBuddy 等成熟工作台。工作台从[本地只读控制台](docs/delivery/local-console.md)或现役 Actions 读取同一 records；保存沿[研究宿主的现有操作](docs/research/runtime.md#kernel-operations)，不另建研究主库或模型后台。WorkBuddy是优先候选，实际读、写、定时和独立恢复仍分别验收，现役任务在完成切换前保持原责任。
 
-内核保留来源与版本、研究前驱与重要未知、确定性 Odds、Full 后 Watch、人工确认边界和按需 Review。来源、宿主及存储部署可以按合同替换；当前 FTShare、GitHub main/records、单主外部时钟与完整 CI 继续服务现役用途。普通部分研究已经可以保管，默认 Full 的方法核查与保存资格分开；新的外部方法接收需其实际实现与验收。路线和范围见[#221](https://github.com/auguspp/Decision-OS-2/issues/221)及[业务责任表](docs/architecture/workflow-estate.md#business-responsibilities)。
+内核保留来源与版本、研究前驱与重要未知、确定性 Odds、Full 后 Watch、人工确认边界和按需 Review。来源、宿主及存储部署可以按合同替换；当前 FTShare、GitHub main/records、单主外部时钟与完整 CI 继续服务现役用途。普通部分研究可以保管，默认 Full 的方法核查与保存资格分开；[受信外部 Full 合同](docs/research/workflow.md#external-method)沿同一存储接收实际成果，单独核已保留证据的作者采用，不代签真实宿主或研究质量验收。路线和范围见[#221](https://github.com/auguspp/Decision-OS-2/issues/221)及[业务责任表](docs/architecture/workflow-estate.md#business-responsibilities)。
 
 ## 日常阅读
 

@@ -5,6 +5,8 @@ from dataclasses import asdict
 import re
 
 from decision_kernel.application.versioned_store import VersionedStore
+from decision_kernel.application.research_source_use import acceptance_pending
+from decision_kernel.methods.research import EXTERNAL_METHOD_ID, stored_research_method
 from decision_kernel.domain.records import (
     BlobRef, IntegrityError, MissingObject, RecordError, SourceRef,
     StoreUnavailable, encoded, identifier, require,
@@ -82,10 +84,16 @@ class ResearchReader:
             used_bytes += size
             next_offset = index + 1
         at_end = next_offset == len(sources)
+        # Free-form historical RevisionInput methods remain readable. Only an
+        # exact supported external token selects its distinct assessment path.
+        method = stored_research_method(payload["kind"], payload["method"])
+        acceptance = {"status": "not-demonstrated", "operation": "audit-source-use",
+                      "reference": asdict(reference)}
+        if method is not None and method["id"] == EXTERNAL_METHOD_ID:
+            acceptance = acceptance_pending(asdict(reference), method=method)
         return {
             "schema": "research-context-v1", "research": research,
-            "source_use_acceptance": {"status": "not-demonstrated", "operation": "audit-source-use",
-                                      "reference": asdict(reference)},
+            "source_use_acceptance": acceptance,
             "source_page": {"total": len(sources), "offset": offset,
                             "returned": len(items), "remaining": len(sources) - next_offset,
                             "end_of_list": at_end, "coverage": "this-page-only", "items": items},

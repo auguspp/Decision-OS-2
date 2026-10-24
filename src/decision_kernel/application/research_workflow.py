@@ -9,13 +9,16 @@ from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_evidence import ResearchEvidence, guidance as evidence_guidance
 from decision_kernel.application.research_sources import source_use_guidance
 from decision_kernel.application.research_source_use import execution_contract, acceptance_pending
+from decision_kernel.application.research_external_use import external_source_guidance
 from decision_kernel.application.research_continuation import continuation_plan
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, RecordError, RevisionInput, SourceRef, encoded, identifier, require
 from decision_kernel.domain.research_work import (
     ResearchProgress, ResearchRequest, continue_request, read_workpaper, render_workpaper,
 )
-from decision_kernel.methods.research import research_method
+from decision_kernel.methods.research import (
+    EXTERNAL_METHOD_ID, continuation_method, research_method, stored_research_method,
+)
 
 
 class ResearchWorkflow:
@@ -39,10 +42,26 @@ class ResearchWorkflow:
             require(all(questions.get(q.question_id) == q.text for q in work[0].questions),
                     "ORIGINAL_QUESTIONS_MUST_BE_RETAINED")
 
+    @staticmethod
+    def _method_continuity(request: ResearchRequest, previous: dict | None, method: dict) -> None:
+        """Changing the external contract cannot erase the prior method's obligations.
+
+        Preserve the historical default v1-to-v2 upgrade/replay policy. This is a
+        submission check, not a permission grant or a restriction on read-only preparation.
+        """
+        if previous is None:
+            return
+        payload = previous["record"]["input"]
+        old = stored_research_method(payload["kind"], payload["method"])
+        if method["id"] == EXTERNAL_METHOD_ID or (old and old["id"] == EXTERNAL_METHOD_ID):
+            token = method["id"] + "@sha256:" + method["sha256"]
+            require(payload["method"] == token or bool(request.scope_change_reason.strip()),
+                    "EXPLICIT_SCOPE_CHANGE_REQUIRED")
+
     def prepare(self, request: ResearchRequest | None = None, *, case_id: str | None = None,
                 reference: BlobRef | None = None, source_limit: int = 4,
                 evidence_plan: dict | None = None, evidence_cursor: dict | None = None,
-                evidence_limit: int = 4) -> dict:
+                evidence_limit: int = 4, method_id: str | None = None) -> dict:
         require(sum(v is not None for v in (request, case_id, reference)) == 1,
                 "ONE_RESEARCH_SELECTOR_REQUIRED")
         require(type(source_limit) is int and 1 <= source_limit <= 8, "INVALID_SOURCE_PAGE_LIMIT")
@@ -57,8 +76,14 @@ class ResearchWorkflow:
                 previous_context = self.reader.resume(reference=request.predecessor, source_limit=source_limit)
         previous = previous_context["research"] if previous_context is not None else None
         self._continuity(request, previous)
+        method = continuation_method(request.kind,
+            previous["record"]["input"]["method"] if previous else None, method_id=method_id)
         require(evidence_plan is not None or evidence_cursor is None, "EVIDENCE_PLAN_REQUIRED_FOR_CURSOR")
         evidence = evidence_guidance(request)
+        if method["id"] == EXTERNAL_METHOD_ID:
+            evidence.update(status="optional-not-requested", required=False,
+                instruction="信息池是可选来源；需要时使用原 evidence_plan 和固定游标，"
+                            "实际采用的外部资料沿 SourceInput/SourceRef 保管。")
         if evidence_plan is not None:
             linked = tuple(SourceRef.from_dict(ref) for ref in previous["record"]["input"]["sources"]) if previous else ()
             evidence = ResearchEvidence(self.store).page(request, evidence_plan, cursor=evidence_cursor,
@@ -66,12 +91,13 @@ class ResearchWorkflow:
             if evidence["next_cursor"] is not None:
                 evidence["next_prepare_payload"] = {"request": asdict(request), "source_limit": source_limit,
                     "evidence_plan": evidence["plan"], "evidence_cursor": evidence["next_cursor"],
-                    "evidence_limit": evidence_limit}
+                    "evidence_limit": evidence_limit, "method_id": method["id"]}
         return {"schema": "research-preparation-v1", "request": asdict(request),
-                "evidence": evidence, "full_execution": execution_contract(request, evidence),
-                "method": research_method(request.kind), "previous_context": previous_context,
+                "evidence": evidence, "full_execution": execution_contract(request, evidence, method=method),
+                "method": method, "previous_context": previous_context,
                 "continuation": continuation_plan(request, previous_context),
-                "source_use": source_use_guidance(request.kind),
+                "source_use": external_source_guidance() if method["id"] == EXTERNAL_METHOD_ID
+                              else source_use_guidance(request.kind),
                 "research_assessment": "not-performed", "execution_authority": "not-granted-by-preparation",
                 "persistence": "not-written"}
 
@@ -89,9 +115,14 @@ class ResearchWorkflow:
         # predecessors. Otherwise a lost receipt would break legitimate retries.
         previous = self.store.read_revision(request.predecessor) if request.predecessor else None
         self._continuity(request, previous)
+        self._method_continuity(request, previous, method)
         if previous is not None:
             old_work = read_workpaper(previous)
-            if old_work is not None and method["id"] == "decision-os-research-full-v2":
+            old_payload = previous["record"]["input"]
+            old_method = stored_research_method(old_payload["kind"], old_payload["method"])
+            preserve_challenges = method["id"] in ("decision-os-research-full-v2", EXTERNAL_METHOD_ID) or (
+                old_method is not None and old_method["id"] == EXTERNAL_METHOD_ID)
+            if old_work is not None and preserve_challenges:
                 pending = {(c.question_id, c.argument) for c in old_work[1].challenges
                            if c.disposition == "unresolved"}
                 accounted = {(c.question_id, c.argument) for c in progress.challenges}
@@ -113,7 +144,7 @@ class ResearchWorkflow:
                   "research_assessment": "not-performed", "human_acceptance": "not-confirmed",
                   "execution_authority": "not-granted-by-save"}
         if request.kind == "full":
-            result["source_use_acceptance"] = acceptance_pending(asdict(saved))
+            result["source_use_acceptance"] = acceptance_pending(asdict(saved), method=method)
         if NUMBERS_START in progress.body:
             # Preserve the successful store receipt even if a numerical check fails.
             # This is post-save mechanical assessment, not a new persistence intent.

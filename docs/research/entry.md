@@ -10,7 +10,7 @@
 
 研究可由 WorkBuddy 或其他获准宿主执行，沿[同一业务操作](runtime.md#kernel-operations)读取、保存和接续。`RevisionInput`／`VersionedStore` 已支持自由文本和部分成果保管，`checkpoint` 也不以来源使用核查通过作为保存前提；这不授予任务、来源或公开权限。保存资格、指定方法执行、经济充分性、数值用途与人工确认分别报告，不合成一个总 READY。
 
-当前 `prepare`／新宿主 `checkpoint` 仍使用包内默认 Quick v1／Full v2；受信外部方法选择是另一个实现接点，不能仅在载荷自填方法名或“已批准”就启用。采用其他已支持方法时按其确切 id／digest 与原未决工作接续，不能继承默认Full的来源核查通过或消除原责任；方法文件与旧研究字节保持不变。
+当前 `prepare` 默认 Quick v1／Full v2，也可显式选择包内受信 `decision-os-research-external-full-v1`；新的宿主 `checkpoint` / `deliver` 按准备所得的确切摘要接收。选择位于 `prepare.method_id`，不能在 request/progress 自填方法名或“已批准”授予资格。外部合同沿原未决工作接续，单独核已保留证据的作者采用，不能继承默认Full的来源核查通过或消除原责任；详见[方法选择与接续](workflow.md#external-method)。方法文件与旧研究字节保持不变。
 
 ## 1. 先拿到实际方法，再执行研究
 
@@ -54,7 +54,7 @@ python -m decision_kernel.methods.research --kind full
 
 `continuation.actions` 来自既有工作底稿，不另存状态：已取得未分析 → 分析现有证据；已披露未核 → 获取与核验；当前无法识别 → 核查实际搜索边界并约束结论；未来事件 → 等实际证据，不把日期到达当事件发生；中断 → 核真实故障及剩余权限。重大项优先但不伪算信息价值，非重大缺口不全局阻塞。
 
-原已回答/重构的问题留在 `retained_findings`，不会默认重跑。新增问题不伪造历史答案。`unresolved_challenges` 保留待解决挑战；**新 Full v2 修订必须用原 question_id 与 argument 对应回应，或继续标 unresolved**。可以在 response 说明为何证据/范围改变使原挑战不再适用，不能通过删除或改写原质疑消失它。已解决挑战无须每版机械重复，旧版可读。
+原已回答/重构的问题留在 `retained_findings`，不会默认重跑。新增问题不伪造历史答案。`unresolved_challenges` 保留待解决挑战；**新 Full v2、外部 Full，以及从外部合同转出的修订，必须用原 question_id 与 argument 对应回应，或继续标 unresolved**。可以在 response 说明为何证据/范围改变使原挑战不再适用，不能通过删除或改写原质疑消失它。已解决挑战无须每版机械重复，旧版可读。
 
 来源覆盖只对本次 Reader 页负责：原游标、未返回数量、外部定位、缺失/不可用/损坏/摘录等限制照实返回。读完来源列表也不证明分析完成；损坏一项不污染不相关工作。
 
@@ -64,9 +64,9 @@ python -m decision_kernel.methods.research --kind full
 
 ## 4. 保存、历史和真正验收
 
-部分成果继续沿原 `checkpoint-research` 保存，不强迫填出虚假答案。原问题/来源/前驱合同不变。新 Full 使用 v2 方法与新增挑战连续性；v1 的已保管正文、规范化字节、方法摘要保留，绝不事后重写旧报告为 v2。
+部分成果继续沿原 `checkpoint-research` 保存，不强迫填出虚假答案。原问题/来源/前驱合同不变。新 Full 默认 v2，也可明确采用受信外部合同，二者均保留挑战连续性；v1 的已保管正文、规范化字节、方法摘要保留，绝不事后重写旧报告为 v2。
 
-方法升级时，新宿主 `checkpoint` 使用当前方法；找回旧意图用 `reconcile-checkpoint`，携带**原 payload、method_sha256、submission_id**，代码 SHA 则是本次实际核过并运行的 main。归档 v1 方法只用于精确重建；只读 job/后端禁止无回执时新写。不能把“重新准备方法”当作旧回执恢复，更不能换键制造第二份成果。细节见[宿主入口](runtime.md)。
+方法升级时，新宿主 `checkpoint` 使用现役受信方法；找回旧意图用 `reconcile-checkpoint`，携带**原 payload、method_sha256、submission_id**，代码 SHA 则是本次实际核过并运行的 main。归档 Full v1 方法只用于精确重建；只读 job/后端禁止无回执时新写。不能把“重新准备方法”当作旧回执恢复，更不能换键制造第二份成果。细节见[宿主入口](runtime.md)。
 
 `research_assessment=not-performed` 始终真实：本程序检查引用/格式、列工作及阻止已登记挑战静默丢失，不理解经济真相。`concluded` 还需审阅实际工作成果，`DECLARED_CONCLUSION_REQUIRES_SUBSTANTIVE_REVIEW` 不签PASS。真实Full的研究深度由实际取证/计算/挑战/收口及用户反馈验收；用过方法、安装成功或CI通过均不能代替。
 

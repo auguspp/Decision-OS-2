@@ -21,7 +21,7 @@ from decision_kernel.domain.records import (
 from decision_kernel.domain.research_artifacts import ArtifactInput, artifact_reference
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest, read_workpaper, continue_request
 from decision_kernel.application.research_continuation import continuation_plan
-from decision_kernel.methods.research import research_method
+from decision_kernel.methods.research import continuation_method, research_method, stored_research_method
 
 SCHEMA = "research-delivery-v1"
 MANIFEST_SCHEMA = "research-delivery-manifest-v1"
@@ -152,6 +152,8 @@ class ResearchDelivery:
         identifier(submission_id)
         previous = self.store.read_revision(request.predecessor) if request.predecessor else None
         ResearchWorkflow._continuity(request, previous)
+        ResearchWorkflow._method_continuity(request, previous,
+            research_method(request.kind, sha256=payload["method_sha256"]))
         previous_manifest = delivery_manifest(previous["body"]) if previous else None
         if previous_manifest:
             require({i["id"] for i in previous_manifest["items"]} <= {i["id"] for i in items},
@@ -250,7 +252,9 @@ class ResearchDelivery:
                     "delivery_manifest_sha256": digest(encoded(manifest)),
                     "readback": "requires-fresh-reader", "multi_commit": True}
             if saved["record"]["input"]["kind"] == "full":
-                result["source_use_acceptance"] = acceptance_pending(asdict(ref))
+                stored = saved["record"]["input"]
+                method = stored_research_method(stored["kind"], stored["method"])
+                result["source_use_acceptance"] = acceptance_pending(asdict(ref), method=method)
             return result
         except (KeyError, TypeError, ValueError, UnicodeError, RecursionError) as exc:
             if isinstance(exc, RecordError):
@@ -371,7 +375,8 @@ class ResearchDelivery:
         request = continue_request(context["research"], reference) if work is not None else None
         return {"context": context, "delivery": self.verify(reference), "history": history,
                 "request": asdict(request) if request is not None else None,
-                "method": research_method(request.kind) if request is not None else None,
+                "method": continuation_method(request.kind, context["research"]["record"]["input"]["method"])
+                          if request is not None else None,
                 "continuation": continuation_plan(request, context) if request is not None else None,
                 "next_history_reference": next_ref, "history_coverage": "this-page-only",
                 "history_semantics": "predecessors-not-automatically-current-conclusions",

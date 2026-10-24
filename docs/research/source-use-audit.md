@@ -1,10 +1,33 @@
-# Full默认执行与来源使用核查
+# 研究方法的来源使用核查
 
-本页由#7维护，整改“读了方法/接口说明，但没有实际使用信息池和Relay，仍交付系统Full”的缺口。复用原prepare、ResearchEvidence、Relay Registry/capture、SourceRef和研究底稿，不建立第二研究账本、模型、搜索或调度。**研究者执行取材；程序验证实际回执及作者引用。两者都不能替代经济质量验收。**
+本页由#7维护。默认 Full 核查信息池与 Relay 的真实执行；受信外部 Full 合同单独核已保留来源表示与作者采用。两者复用原 prepare、SourceRef、研究底稿和版本保管，不建立第二研究账本、模型、搜索或调度。**研究者执行取材；程序验证各合同对应的机械证据。两者都不能替代经济质量验收。**
 
-## 正常Full的必做流程
+<a id="external-evidence-use"></a>
 
-新Full或接续Full都从原委托恢复公司、问题、已有授权，不要求用户重复指定每个接口。读取当前方法之后，必须实际执行现役prepare/evidence_plan，按公司、代码、可靠别名及相关主题取材；继续需要的分页，未读大对象用原read-source。查询为空、拒绝和未查询分别保留，检索命中不自动成为有用证据。不要把整段委托当精确短语，零命中后就声称查遍信息池。
+## 外部合同：核已保留证据的作者采用
+
+`decision-os-research-external-full-v1` 通过[方法入口](workflow.md#external-method)选择，保存沿原 checkpoint / deliver。`audit-source-use` 读取一次已保存 revision，经工作底稿一致性与受信方法表精确核 `id@sha256:摘要` 后才分派；不能在审计载荷写 method、approved 或状态选择外部通路。该分派不会新增另一遍 revision 读取。
+
+外部 payload **只能包含 `reference`**，即原保存回执中的完整 BlobRef；CLI 用 `audit-source-use --input audit.json`，宿主用同名 operation。这里不接受未保存 request/progress、receipts、exceptions 或 reuse_run_ids；也不访问来源 URL、原生 Pool/Relay 回执或 Relay Registry，不产生来源请求和 records 写入。
+
+| 实际保留表示 | 核验范围与采用结果 |
+|---|---|
+| `provided` | 原 store 核确切表示与 selection 可读；findings/challenges 的 evidence 下标采用时可计入 |
+| `excerpt` | 核确切摘录及其 selection，保留限制；作者采用时可计入，不提升为全文或上游原件 |
+| `external` | 只核定位记录，继续标 `external-only`；不计为已保留的可读正文证据 |
+| 缺失、损坏或拒绝读取 | 返回安全错误码与来源缺口，不回显服务异常或伪造成功 |
+
+通过的最小事实是：至少一条可读 `provided/excerpt` 表示被作者采用，且所声明来源中没有无法核验的引用。每条来源保留 `adopted_by_author`，未采用的辅助来源不会被强制改为已采用；一个可读引用也不代表全部问题都充分。`original_verified=false` 始终表明本检查没有认证上游真实性。没有来源、整体未采用、没有可读采用表示、来源不可核分别留下 `NO_SOURCE_REFERENCES`、`NO_SOURCE_ADOPTED`、`NO_READABLE_ADOPTED_SOURCE`、`SOURCE_REFERENCE_UNAVAILABLE`；全为定位或无权保留正文时，仍可保存获准定位或不含该正文的部分成果，并保留限制。
+
+外部报告使用 `schema=research-external-source-use-audit-v1`，成功为 `external-evidence-use-demonstrated`，不足为 `needs-action`。成功只说明确切保留表示和作者声明采用这两个事实；`default_full_acceptance=not-assessed`、`research_assessment=not-performed`、`full_product_acceptance=not-performed`、`human_acceptance=not-confirmed`。来源权利和公开权不由审计授予，包装 JSON/卡片/摘录也不因此成为供应商原始响应。重要数字与行情/概率用途继续单独核验。
+
+CLI 与宿主仅按对应 schema/status 的**确切组合**判断机械核验通过：外部成功可正常返回 CLI 0 / 宿主 completed，默认审计仍只认自己的 `usage-demonstrated`；两种状态不得互换。外部 `needs-action` 返回 CLI 2 / 宿主 `source-use-not-demonstrated` 并保留报告。保存、resume、交付回放的外部 pending 回执携带确切方法，仍为 `not-demonstrated`；保存或读取不会代替本次审计。
+
+外部方法跨入/跨出须解释变化，原问题、未解挑战和旧默认执行缺口保留；本报告不能把它们自动销账。新增代码由原研究应用层维护，专属反例在 `test_research_external_use.py`，同安装/宿主/连续性消费者沿现有测试。停止支持时先处理真实已存方法的读取与原意图恢复责任，不删除历史字节求简化。
+
+## 默认 Full 的必做流程
+
+采用默认 Full 的新研究或接续都从原委托恢复公司、问题、已有授权，不要求用户重复指定每个接口。读取当前方法之后，必须实际执行现役prepare/evidence_plan，按公司、代码、可靠别名及相关主题取材；继续需要的分页，未读大对象用原read-source。查询为空、拒绝和未查询分别保留，检索命中不自动成为有用证据。不要把整段委托当精确短语，零命中后就声称查遍信息池。
 
 接口与池从开局并列选择。通过可信Registry构造有关的来源计划，沿原relay-source-runtime的research入口实际capture，或核验并复用已有有效capture。plan成功不是capture成功，不能以读过目录或本地Shell/DNS失败代替已连接GitHub工具的实际调用。连接器先按当前暴露schema发现并调用适用动作；真实拒绝不绕过，不为凑回执重新抓取已经可用的数据。
 
@@ -14,11 +37,11 @@
 
 ## 默认入口的行为
 
-原prepare新增full_execution：未带材料计划时直接列execute-pool-plan及原request；池分页未完时列后继payload；Relay检查完成后给capture-or-justify-reuse，而不是executed=true；末项为audit-source-use。它是本仓Full研究者必须落实的执行合同，不是后台模型或自动取数器，也不能强制一个绕过本仓入口的独立聊天。
+默认方法的prepare返回full_execution：未带材料计划时直接列execute-pool-plan及原request；池分页未完时列后继payload；Relay检查完成后给capture-or-justify-reuse，而不是executed=true；末项为audit-source-use。它是采用本默认方法的Full研究者必须落实的执行合同，不是后台模型或自动取数器，也不能强制一个绕过本仓入口的独立聊天。
 
 checkpoint、resume的source_use_acceptance明确为not-demonstrated，并返回精确研究引用/核查操作。这个字段表示该保存/读取动作没有核查来源执行，不否定别处已核过的历史证据。原保存字节、研究方法摘要、旧意图重放、部分保存和Odds均不改变。源资料或作者自行写的“已通过”不会代替核查。
 
-## 只读audit-source-use
+## 默认方法的只读 audit-source-use
 
 使用同一个research-runtime.yml，operation=audit-source-use，ref=main，code_sha为本次已读的主线；它只读，不提供submission_id或expected_head。payload两种选择互斥：
 

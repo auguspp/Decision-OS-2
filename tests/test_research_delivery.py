@@ -23,6 +23,8 @@ from decision_kernel.domain.research_work import ResearchProgress, ResearchReque
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.methods.research import research_method
 
+EXTERNAL_METHOD = "decision-os-research-external-full-v1"
+
 
 def workbook_bytes():
     """A minimal zipped OOXML workbook with a formula, preserved rather than evaluated."""
@@ -41,7 +43,7 @@ def workbook_bytes():
     return output.getvalue()
 
 
-def delivery_payload():
+def delivery_payload(*, method_id=None):
     html = ('<!doctype html>\r\n<style>body{margin:2em}</style><nav>原导航</nav>' + '<p>合成原文与格式</p>' * 3000).encode()
     return {"schema": "research-delivery-v1", "rights_confirmed": True,
         "rights_basis": "Synthetic engineering originals authorized for this test only.",
@@ -56,7 +58,7 @@ def delivery_payload():
                  "next_action": "重算估值"}],
             "challenges": [{"question_id": "cash", "argument": "现金不足可能来自扩张", "disposition": "unresolved",
                             "response": "保留待核", "evidence": [0]}]},
-        "revision_id": "r1", "method_sha256": research_method("full")["sha256"], "body_mode": "snapshot",
+        "revision_id": "r1", "method_sha256": research_method("full", method_id=method_id)["sha256"], "body_mode": "snapshot",
         "items": [
             {"id": "html", "role": "report-original", "status": "include", "required": True, "reason": "",
              "artifact": asdict(ArtifactInput.from_bytes("html-original", "完整原文.HTML", "text/html", html))},
@@ -118,8 +120,9 @@ def test_artifact_shape_and_bytes_never_silently_normalized(change):
         ArtifactInput.from_dict({**item, **change})
 
 
-def test_complete_delivery_originals_source_refs_and_new_reader(store):
-    payload = delivery_payload()
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_complete_delivery_originals_source_refs_and_new_reader(store, method_id):
+    payload = delivery_payload(method_id=method_id)
     original = deepcopy(payload)
     saved = ResearchDelivery(store).deliver(payload, submission_id="full-one")
     fresh = lambda: VersionedStore(GitStore(store.backend.root))
@@ -133,19 +136,24 @@ def test_complete_delivery_originals_source_refs_and_new_reader(store):
         assert view["data_base64"] == expected["artifact"]["data_base64"]
         assert view["metadata"]["name"] == expected["artifact"]["name"]
     record = fresh().read_revision(BlobRef(**saved["reference"]))["record"]["input"]
+    method = research_method("full", method_id=method_id)
+    assert record["method"] == method["id"] + "@sha256:" + method["sha256"]
+    assert ResearchDelivery(fresh()).open(BlobRef(**saved["reference"]))["method"] == method
     assert record["sources"] == [manifest["items"][2]["reference"]]
     assert fresh().read_source(SourceRef.from_dict(record["sources"][0]))["data"][0]["value"] == "3"
     assert ResearchDelivery(store).deliver(payload, submission_id="full-one")["reference"] == saved["reference"]
     assert audit_store(fresh(), store.backend.head())["artifact_versions"] == 3  # two originals and intent
 
 
-def test_complete_full_then_delta_restores_original_and_pending_reframed_work(store):
-    payload = delivery_payload()
+@pytest.mark.parametrize("method_id", [None, EXTERNAL_METHOD])
+def test_complete_full_then_delta_restores_original_and_pending_reframed_work(store, method_id):
+    payload = delivery_payload(method_id=method_id)
     first = ResearchDelivery(store).deliver(payload, submission_id="one")
     next_payload = continued(store, payload, first)
     second = ResearchDelivery(store).deliver(next_payload, submission_id="two")
     head = store.backend.head()
     opened = ResearchDelivery(store).open(BlobRef(**second["reference"]))
+    assert opened["method"] == research_method("full", method_id=method_id)
     assert opened["delivery"]["body_mode"] == "delta"
     assert opened["history"][0]["research"]["reference"] == first["reference"]
     assert payload["progress"]["body"] in opened["history"][0]["research"]["body"]
@@ -158,6 +166,28 @@ def test_complete_full_then_delta_restores_original_and_pending_reframed_work(st
     assert opened["request"]["predecessor"] == second["reference"]
     # Old intent still reconstructs its original exact revision after current moves.
     assert ResearchDelivery(store).deliver(payload, submission_id="one")["reference"] == first["reference"]
+
+
+@pytest.mark.parametrize("before_id,after_id", [
+    ("decision-os-research-full-v2", EXTERNAL_METHOD),
+    (EXTERNAL_METHOD, "decision-os-research-full-v2"),
+])
+def test_delivery_method_change_requires_reason_before_intent_or_material_staging(store, before_id, after_id):
+    payload = delivery_payload(method_id=before_id)
+    first = ResearchDelivery(store).deliver(payload, submission_id="one")
+    successor = continued(store, payload, first)
+    method = research_method("full", method_id=after_id)
+    successor["method_sha256"] = method["sha256"]
+    head = store.backend.head()
+    with pytest.raises(RecordError, match="EXPLICIT_SCOPE_CHANGE"):
+        ResearchDelivery(store).deliver(successor, submission_id="two")
+    assert store.backend.head() == head
+    assert store.current(payload["request"]["case_id"]) == BlobRef(**first["reference"])
+    successor["request"]["scope_change_reason"] = "显式选择另一研究方法，继续保留原问题与未解挑战"
+    second = ResearchDelivery(store).deliver(successor, submission_id="two")
+    opened = ResearchDelivery(VersionedStore(GitStore(store.backend.root))).open(BlobRef(**second["reference"]))
+    assert opened["method"] == method and opened["history"][0]["research"]["reference"] == first["reference"]
+    assert opened["continuation"]["unresolved_challenges"][0]["argument"] == payload["progress"]["challenges"][0]["argument"]
 
 
 @pytest.mark.parametrize("status", ["missing", "unsupported", "rights-excluded"])
@@ -194,6 +224,10 @@ def test_not_applicable_is_accounted_but_not_misrepresented_as_saved_file(store)
     lambda p: p["progress"]["findings"][0].update(evidence=[[0]]),
     lambda p: p["progress"]["findings"][0].update(evidence=[9]),
     lambda p: p["progress"].update(body="injected" + START),
+    lambda p: p.update(method_id=EXTERNAL_METHOD),
+    lambda p: p.update(method_sha256="0" * 64),
+    lambda p: p["request"].update(method_id=EXTERNAL_METHOD),
+    lambda p: p["progress"].update(method_id=EXTERNAL_METHOD),
 ])
 def test_invalid_delivery_fails_before_creating_any_store_effect(store, change):
     payload = delivery_payload(); change(payload)
@@ -211,7 +245,8 @@ def test_declared_followup_cannot_be_signed_concluded_through_delivery(store):
         ResearchDelivery(store).deliver(payload, submission_id="concluded")
 
 
-def test_original_intent_reservation_prevents_mixing_changed_partial_payload(store, monkeypatch):
+@pytest.mark.parametrize("changed_field", ["body", "method"])
+def test_original_intent_reservation_prevents_mixing_changed_partial_payload(store, monkeypatch, changed_field):
     payload = delivery_payload()
     original = store.backend.commit
     commits = []
@@ -226,7 +261,11 @@ def test_original_intent_reservation_prevents_mixing_changed_partial_payload(sto
         ResearchDelivery(store).deliver(payload, submission_id="same-intent")
     monkeypatch.setattr(store.backend, "commit", original)
     current = store.backend.head()
-    changed = deepcopy(payload); changed["progress"]["body"] += " changed"
+    changed = deepcopy(payload)
+    if changed_field == "body":
+        changed["progress"]["body"] += " changed"
+    else:
+        changed["method_sha256"] = research_method("full", method_id=EXTERNAL_METHOD)["sha256"]
     with pytest.raises(Conflict, match="SUBMISSION_CONTENT_CONFLICT"):
         ResearchDelivery(store).deliver(changed, submission_id="same-intent")
     assert store.backend.head() == current

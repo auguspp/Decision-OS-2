@@ -13,6 +13,7 @@ from decision_kernel.interfaces import odds_commands, agenda_commands, reading_c
 from decision_kernel.interfaces import decision_preparation_commands
 from decision_kernel.application import hosted_handoff
 from decision_kernel.interfaces.research_use_commands import audit_source_use
+from decision_kernel.application.research_source_use import audit_demonstrated
 
 from decision_kernel.application.numerical_audit import NumericalAudit
 from decision_kernel.application.research_artifacts import ResearchArtifacts
@@ -32,7 +33,7 @@ from decision_kernel.infrastructure.runtime_publication import (
     checked_handoff_visibility, checked_odds_book_visibility, checked_output_visibility,
     publication_basis, publication_payload, publication_scope,
 )
-from decision_kernel.methods.research import research_method
+from decision_kernel.methods.research import research_method, writable_research_method
 from decision_kernel.interfaces.research_payload import (
     MAX_PAYLOAD_BYTES, decode_payload, json_object as _object,
 )
@@ -97,8 +98,7 @@ def _perform(store: VersionedStore, command: dict, *, room_public=True) -> dict:
         return odds_commands.perform(store, operation, payload, command["submission_id"])
     if operation in ("deliver", "reconcile-delivery"):
         if operation == "deliver":
-            require(payload["method_sha256"] == research_method(payload["request"]["kind"])["sha256"],
-                    "RESEARCH_METHOD_CHANGED_REPREPARE")
+            writable_research_method(payload["request"]["kind"], payload["method_sha256"])
         return ResearchDelivery(store).deliver(payload, submission_id=command["submission_id"])
     if operation in ("verify-delivery", "open-delivery"):
         require(set(payload) <= {"reference", "history_limit"} and "reference" in payload,
@@ -127,8 +127,7 @@ def _perform(store: VersionedStore, command: dict, *, room_public=True) -> dict:
                 "INVALID_CHECKPOINT_PAYLOAD")
         request = ResearchRequest.from_dict(payload["request"])
         if operation == "checkpoint":
-            require(payload["method_sha256"] == research_method(request.kind)["sha256"],
-                    "RESEARCH_METHOD_CHANGED_REPREPARE")
+            writable_research_method(request.kind, payload["method_sha256"])
         else:
             # Rebuild the original method, not today's method. _CommandStore and
             # the read-only job still forbid a missing intent from publishing.
@@ -140,7 +139,8 @@ def _perform(store: VersionedStore, command: dict, *, room_public=True) -> dict:
     if operation == "read-source":
         return store.read_source(SourceRef.from_dict(payload))
     selectors = {"request", "case_id", "reference"} if operation == "prepare" else {"case_id", "reference", "cursor"}
-    extras = {"source_limit"} | ({"evidence_plan", "evidence_cursor", "evidence_limit"} if operation == "prepare" else set())
+    extras = {"source_limit"} | ({"evidence_plan", "evidence_cursor", "evidence_limit", "method_id"}
+                               if operation == "prepare" else set())
     require(set(payload) <= selectors | extras and len(set(payload) & selectors) == 1,
             "ONE_RESEARCH_SELECTOR_REQUIRED")
     args = dict(payload)
@@ -334,7 +334,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
         report.update(result=result, status="completed")
         if operation == industry_commands.OPERATION and result["status"] == "partial":
             report["status"] = "industry-reading-partial"  # Keep good branches, but exit nonzero.
-        if operation == "audit-source-use" and result["status"] != "usage-demonstrated":
+        if operation == "audit-source-use" and not audit_demonstrated(result):
             report["status"] = "source-use-not-demonstrated"
         if operation in odds_commands.WRITE_COMMANDS + odds_commands.RECONCILE_COMMANDS and result["readback"]["status"] != "verified":
             report["status"] = "odds-readback-failed"

@@ -17,7 +17,7 @@
 | operation | payload（作为 JSON 字符串） | 效果 |
 |---|---|---|
 | `catalogue` | 可选 `cursor`、`limit` | 固定快照分页浏览已存研究、未决工作及精确打开入口；详见[研究目录](../delivery/research-catalogue.md) |
-| `prepare` | 恰好一个 `request`、`case_id` 或 `reference`；可附 `source_limit`、`evidence_plan/evidence_cursor/evidence_limit` | [实际从信息池装配材料](evidence.md)，并返回完整方法、原问题/来源上下文及从已有底稿派生的未完成工作/挑战；不执行或保存 |
+| `prepare` | 恰好一个 `request`、`case_id` 或 `reference`；可附 `method_id`、`source_limit`、`evidence_plan/evidence_cursor/evidence_limit` | 选择受信方法，按显式计划[从信息池装配材料](evidence.md)，并返回原问题/来源上下文及未完成工作/挑战；不执行或保存 |
 | `resume` | 恰好一个 `case_id`、`reference` 或 `cursor`；可附 `source_limit` | 读取固定研究版本；后继游标不跳到较新 current |
 | `read-source` | 已保存的完整 `SourceRef` | 精确读回，保管等级与限制不升级 |
 | `put-source` | 原 `SourceInput` 字段 | 一次来源保存，返回 `SourceRef` |
@@ -27,7 +27,7 @@
 
 所有调用必须携带 `code_sha`：发出前读取并检查的当前 main 确切 SHA。触发时 main 已变就失败，不自动改代码。保存与对账携带原始稳定 `submission_id`；新保存还须 `expected_head`（写前 records 的确切 SHA，不能填 main 或 latest）。纯读取不接受提交键或预期写 head。
 
-新 `checkpoint.method_sha256` 来自本次 `prepare` 的 `result.method.sha256`，过期方法拒绝新宿主写入。只读对账则接受包内已知旧方法摘要，精确恢复原正文和提交意图；未知摘要明确拒绝，绝不替换为最新。方法文本版本存于安装包，不执行历史代码或下载脚本。新 Full 采用 v2；Quick 仍保留自己的 v1，原 Full v1 的可读/对账支持未退出。
+新 `checkpoint.method_sha256` 来自本次 `prepare` 的 `result.method.sha256`，过期方法拒绝新宿主写入。只读对账则接受包内已知旧方法摘要，精确恢复原正文和提交意图；未知摘要明确拒绝，绝不替换为最新。方法文本版本存于安装包，不执行历史代码或下载脚本。Full 默认 v2，可明确选择 `decision-os-research-external-full-v1`；Quick 仍保留自己的 v1，原 Full v1 的可读/对账支持未退出。`method_id` 仅是 prepare 顶层选择项，不进入 request/progress 或 checkpoint/deliver 顶层；保存继续钉住原 method_sha256。
 
 普通重复提交由原保管层按同意图恢复回执；原方法过期后应使用只读对账，而非更换提交键。新的保存由原生 CAS 仲裁，计划 head 必须匹配；没有第二存储引擎、锁或任务队列。
 
@@ -45,7 +45,7 @@
 | 保存部分研究或自由正文修订 | `submit-revision` | 无对应任意修订上传 operation | 原 `RevisionInput` 的正文、委托、方法声明、来源、前驱及未决事项；由同一 `VersionedStore` 保存，不自动认证方法执行或经济充分性 |
 | 保存当前方法工作底稿 | `checkpoint-research` | `checkpoint` | 原 request、progress、revision ID；宿主另核准备方法摘要。保存实质进展及未解决问题，不要求先把整份研究做完 |
 | 交付研究与文件、独立重开 | `deliver-research`、`verify-delivery`、`open-delivery`、`put-artifact`、`read-artifact` | `deliver`、`verify-delivery`、`open-delivery`、`put-artifact`、`read-artifact` | 明示研究、获准来源及文件，沿[交付合同](delivery.md)保存并另用 reader 核确切字节；附件读回不执行文件 |
-| 核数字、默认方法来源采用与引用固定 | `audit-numbers`、`audit-source-use`、`verify-reference-fixing` | `audit-numbers`、`audit-source-use`；引用固定核验尚无独立宿主 operation | 原数字附录、默认方法的原生来源回执或确切研究引用；分别验证可重算、原回执采用和所引切片，不评价经济结论 |
+| 核数字、方法来源采用与引用固定 | `audit-numbers`、`audit-source-use`、`verify-reference-fixing` | `audit-numbers`、`audit-source-use`；引用固定核验尚无独立宿主 operation | 原数字附录、默认方法原生来源回执或外部方法确切研究引用；分别验证可重算、指定方法的采用证据和所引切片，不评价经济结论 |
 | 条件估值与赔率 | `freeze-valuation`、`read-valuation`、`calculate-odds`、`save-odds`、`read-odds`、`read-odds-book` | 同名 | 原研究/估值/市场引用及评价时间，沿[条件 Odds](conditional-odds.md)；冻结判断、计算、保存及行情资格分别成立 |
 | 概率判断与概率赔率 | `freeze-odds-assessment`、`read-odds-assessment`、`calculate-probability-odds`、`save-probability-odds`、`read-probability-odds` | 同名 | 原 assessment 与确切价格依据，沿[概率 Odds](probability-odds.md)；不从缺失概率补等权或推导买卖授权 |
 | Full 的价格与重大问题 Watch | `freeze-odds-watch`、`check-odds-watch`、`save-odds-watch-check`、`read-odds-watch`、`read-odds-watch-check`，以及原 activity / execution 命令 | 同名 | 确切 Full、Odds、问题和有限检查材料，沿[Full Watch](full-watch.md)、[活动](watch-activity.md)及[执行](watch-execution.md)；定义、登记、启用与实际检查分开，缺资料不改成 false |
@@ -54,7 +54,9 @@
 | 决策准备与人工裁定边界 | `prepare-decision`、`save-decision-preparation`、`read-decision-preparation` | 同名 | 确切研究、备选行动、人工待裁定项及原判断历史，沿[准备合同](decision-preparation.md)与当前原生可见性/保管权利门；没有正式 Human Decision 的确认或交易入口 |
 | Review 与原预测兑现复核 | `research-outcome-review`；相邻研究版本 Review 在 `research-room` 中读取 | `reading-room` 的可选 `review` / `outcome` 计划，无独立 `outcome-review` operation | 确切前后研究、原预测、实际来源与指定市场窗口，沿[兑现复核](../delivery/outcome-review.md)；不改原预测、不把事后保存时间改成事前可用性 |
 
-普通 `RevisionInput` 接收和内置方法工作底稿是已存在的两条用例，均进入同一保管层。`ResearchWorkflow.checkpoint()` 当前也不以 Pool/Relay 审计通过作为保存前提；有待解决事项的进展可以保存。当前 `prepare`、新的宿主 `checkpoint` / `deliver` 仍选择内置 Quick v1 / Full v2，`audit-source-use` 仍承担默认 Full 方法的 Pool/Relay 来源责任。受信外部方法合同的选择、限制与接收反馈属于 #221 后续实现；本表不把任意 `method` 字符串宣称为已执行的受支持方法，也不允许换标签擦掉前驱尚未完成的责任。
+普通 `RevisionInput` 接收和受信方法工作底稿均进入同一保管层。`ResearchWorkflow.checkpoint()` 不以来源审计通过作为保存前提，有待解决事项的进展可以保存。`prepare`、新的宿主 `checkpoint` / `deliver` 支持默认 Quick v1 / Full v2 和一个受信外部 Full 合同；`audit-source-use` 按已存确切方法身份分派，默认 Pool/Relay 与外部保留证据采用分别返回自己的 schema/status。任意自由 `method` 字符串仍可历史读回，但不因此取得受信方法资格；换方法也不能擦掉前驱尚未完成的责任。选择与后继规则见[外部合同](workflow.md#external-method)。
+
+外部方法首次准备或显式切换时提供 `method_id`；从已存外部研究继续而未指定时保留原合同，分页 payload 同样保留选择。外部无取材计划时 `evidence.status=optional-not-requested`，仍可主动调用原资料池。CLI 的 checkpoint 需通过 `--method-sha256` 携带准备结果，省略只选默认方法；宿主原必填摘要不变。跨外部方法边界的新提交须 `scope_change_reason`，delivery 在保管意图/附件之前检查该理由。旧 Full v1 的重建和默认升级不新增此理由门。
 
 接入方分别呈现**保存资格、方法合规、经济充分性、行情/概率资格、人工确认**。写入成功只证明该意图已由保管层接受；方法/数字核验、引用可读、研究充分、用户采用仍各需对应证据，不能合并为统一 `READY`。来源查询可以临时使用；实际支持结论的材料再按权利固定必要表示。机械扫描另外保留分母、覆盖时间、缺失和规则版本，不能以一次研究保存替代扫描完整性。
 

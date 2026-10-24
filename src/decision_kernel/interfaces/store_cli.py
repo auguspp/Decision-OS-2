@@ -15,6 +15,7 @@ from decision_kernel.interfaces import close_structure_commands
 from decision_kernel.interfaces import auction_commands
 from decision_kernel.interfaces import auction_next_session_commands
 from decision_kernel.application.research_reader import ResearchReader
+from decision_kernel.application.research_source_use import audit_demonstrated
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef
 from decision_kernel.infrastructure.git_store import GitStore
@@ -149,7 +150,7 @@ def execute(args: argparse.Namespace, *, ancestry=None) -> int:
             status = result.get("delivery_verification", result).get("status")
             return 0 if status == "verified-declared-inventory" else 2
         if args.store_command == "audit-source-use":
-            return 0 if result["status"] == "usage-demonstrated" else 2
+            return 0 if audit_demonstrated(result) else 2
         return 2 if args.store_command == "audit-numbers" and result["status"] not in ("checked", "conditional") else 0
     except RecordError as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)

@@ -9,7 +9,9 @@ from dataclasses import asdict
 import json
 import base64
 
-from decision_kernel.application.numerical_audit import NumericalAudit, START as NUMBERS_START
+from decision_kernel.application.numerical_audit import (
+    NumericalAudit, has_numerical_appendix, validate_numerical_workpaper,
+)
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_source_use import acceptance_pending
@@ -77,9 +79,11 @@ def validate_delivery(payload: dict) -> tuple[ResearchRequest, list[dict]]:
     require(START.strip() not in body and END.strip() not in body, "RESERVED_DELIVERY_MARKER")
     if "numerical_workpaper" in payload:
         numeric = payload["numerical_workpaper"]
-        _shape(numeric, {"schema", "inputs", "calculations"}, {"template"})
-        require(numeric["schema"] == "research-numbers-v1" and NUMBERS_START not in body,
+        require(not has_numerical_appendix(body),
                 "INVALID_DELIVERY_NUMERICAL_WORKPAPER")
+        # Version/timing validation precedes the intent reservation and all
+        # material writes. Source availability remains a per-input assessment.
+        validate_numerical_workpaper(numeric, with_sources=False)
     items = payload["items"]
     require(isinstance(items, list) and 1 <= len(items) <= 32, "DELIVERY_ITEM_LIMIT")
     seen, roles = set(), set()
@@ -239,10 +243,13 @@ class ResearchDelivery:
                     and manifest["intent_reference"] == asdict(intent_ref), "DELIVERY_RECEIPT_MISMATCH")
             work = read_workpaper(saved)
             numerical = {"status": "not-declared"}
-            if NUMBERS_START in saved["body"]:
+            if has_numerical_appendix(saved["body"]):
                 try:
                     audited = NumericalAudit(self.store).saved(ref)
                     numerical = {"status": audited["status"], "saved_render": audited.get("saved_render")}
+                    if audited.get("schema") == "research-numerical-audit-v2":
+                        numerical.update({key: audited[key] for key in (
+                            "schema", "knowledge_cutoff", "evaluated_at", "evidence_time_scope")})
                 except RecordError:
                     numerical = {"status": "blocked", "error": "NUMERICAL_ASSESSMENT_UNAVAILABLE"}
             result = {"reference": asdict(ref), "declared_stop": work[1].stop if work else None,

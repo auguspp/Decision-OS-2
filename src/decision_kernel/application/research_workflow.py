@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from decision_kernel.application import reference_fixing
-from decision_kernel.application.numerical_audit import START as NUMBERS_START, NumericalAudit
+from decision_kernel.application.numerical_audit import NumericalAudit, has_numerical_appendix
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_evidence import ResearchEvidence, guidance as evidence_guidance
 from decision_kernel.application.research_sources import source_use_guidance
@@ -145,7 +145,7 @@ class ResearchWorkflow:
                   "execution_authority": "not-granted-by-save"}
         if request.kind == "full":
             result["source_use_acceptance"] = acceptance_pending(asdict(saved), method=method)
-        if NUMBERS_START in progress.body:
+        if has_numerical_appendix(progress.body):
             # Preserve the successful store receipt even if a numerical check fails.
             # This is post-save mechanical assessment, not a new persistence intent.
             try:
@@ -160,6 +160,9 @@ class ResearchWorkflow:
                                         for warning in row.get("warnings", [])}),
                     "coverage": audit.get("coverage"), "unmarked_prose": "not-audited",
                 }
+                if audit.get("schema") == "research-numerical-audit-v2":
+                    result["numerical_audit"].update({key: audit[key] for key in (
+                        "schema", "knowledge_cutoff", "evaluated_at", "evidence_time_scope")})
             except (RecordError, KeyError, TypeError) as error:
                 result["numerical_audit"] = {"status": "blocked", "error": str(error)
                     if isinstance(error, RecordError) else "NUMERICAL_ASSESSMENT_UNAVAILABLE"}

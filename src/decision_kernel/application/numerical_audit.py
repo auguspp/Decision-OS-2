@@ -13,6 +13,9 @@ import re
 import unicodedata
 from typing import TYPE_CHECKING
 
+from decision_kernel.application.numerical_evidence_time import (
+    EVIDENCE_TIME_SCOPE, VERSION as TIME_VERSION, assess_source_time, time_bounds,
+)
 from decision_kernel.domain.records import (
     BlobRef, IntegrityError, MAX_BYTES, MissingObject, RecordError, SourceRef,
     StoreUnavailable, checked_text, digest, encoded, identifier, require,
@@ -27,6 +30,15 @@ if TYPE_CHECKING:
 START = "\n\n<!-- decision-os-numbers-v1:start -->\n"
 INPUT = "\n<!-- decision-os-numbers-v1:input -->\n```json\n"
 END = "```\n<!-- decision-os-numbers-v1:end -->\n"
+NUMERICAL_SCHEMAS = (VERSION, TIME_VERSION)
+_MARKERS = {
+    VERSION: (START, INPUT, END),
+    TIME_VERSION: ("\n\n<!-- decision-os-numbers-v2:start -->\n",
+                   "\n<!-- decision-os-numbers-v2:input -->\n```json\n",
+                   "```\n<!-- decision-os-numbers-v2:end -->\n"),
+}
+_MARKER_PREFIX = re.compile(r"<!--\s*decision-os-numbers-")
+_STRUCTURAL_MARKER = re.compile(r"^[ \t]*<!--\s*decision-os-numbers-", re.MULTILINE)
 PLACEHOLDER = re.compile(r"\{\{number:([a-z0-9][a-z0-9_-]{0,95})\}\}")
 NOTICE = ("Declared numerical scope only; stored-value consistency is not source authenticity, "
           "economic sufficiency, qualified Market/Odds or human acceptance. Unmarked prose is not audited.")
@@ -35,6 +47,34 @@ NOTICE = ("Declared numerical scope only; stored-value consistency is not source
 def _shape(value: dict, required: set[str], optional: set[str] = frozenset()) -> None:
     require(isinstance(value, dict) and required <= set(value) <= required | optional,
             "INVALID_NUMERICAL_SHAPE")
+
+
+def has_numerical_appendix(body: str) -> bool:
+    """Recognize reserved numerical markers, including damaged/partial markers.
+
+    This is detection, not validation. ``saved`` rejects incomplete, mixed and
+    unsupported markers instead of presenting them as an absent workpaper.
+    """
+    return _MARKER_PREFIX.search(body) is not None
+
+
+def validate_numerical_workpaper(payload: dict, *, with_sources: bool = False) -> None:
+    """Validate the version envelope before delivery has source references.
+
+    This function performs no source reads and grants no time-use qualification.
+    Individual inputs and their retained source clocks are assessed by ``audit``.
+    """
+    require(isinstance(payload, dict), "INVALID_NUMERICAL_SHAPE")
+    required = {"schema", "inputs", "calculations"}
+    if with_sources:
+        required.add("sources")
+    if payload.get("schema") == TIME_VERSION:
+        required.update(("knowledge_cutoff", "evaluated_at"))
+    _shape(payload, required, {"template"})
+    require(payload["schema"] in NUMERICAL_SCHEMAS and len(encoded(payload)) <= MAX_BYTES,
+            "NUMERICAL_SCHEMA_OR_SIZE_LIMIT")
+    if payload["schema"] == TIME_VERSION:
+        time_bounds(payload)
 
 
 def _context(item: dict) -> tuple[str, str, str]:
@@ -112,9 +152,10 @@ class NumericalAudit:
         self.store = store
 
     def audit(self, payload: dict) -> dict:
-        _shape(payload, {"schema", "sources", "inputs", "calculations"}, {"template"})
-        require(payload["schema"] == VERSION and len(encoded(payload)) <= MAX_BYTES,
-                "NUMERICAL_SCHEMA_OR_SIZE_LIMIT")
+        validate_numerical_workpaper(payload, with_sources=True)
+        timed = payload["schema"] == TIME_VERSION
+        bounds = time_bounds(payload) if timed else None
+        markers = _MARKERS[payload["schema"]]
         require(isinstance(payload["sources"], list) and len(payload["sources"]) <= 64,
                 "NUMERICAL_SOURCE_LIMIT")
         sources = [SourceRef.from_dict(s) for s in payload["sources"]]
@@ -127,6 +168,8 @@ class NumericalAudit:
         require(len(ids) == len(set(ids)), "DUPLICATE_NUMERICAL_ID")
         template = checked_text(payload.get("template", ""), empty=True)
         require(not any(mark.strip() in template for mark in (START, INPUT, END)), "RESERVED_NUMERICAL_MARKER")
+        if timed:
+            require(not has_numerical_appendix(template), "RESERVED_NUMERICAL_MARKER")
         require("{{number:" not in PLACEHOLDER.sub("", template), "INVALID_NUMERICAL_PLACEHOLDER")
         calc_ids = {item["id"] for item in payload["calculations"]}
         require(all(match in calc_ids for match in PLACEHOLDER.findall(template)), "UNKNOWN_NUMERICAL_PLACEHOLDER")
@@ -151,6 +194,9 @@ class NumericalAudit:
                                            "report_period": meta.get("report_period"),
                                            "original_verified": False,
                                            "limitations": view["limitations"]}
+                    if timed:
+                        time_use = assess_source_time(view["manifest"], *bounds)
+                        source_notes[index].update(stored_at=time_use["stored_at"], evidence_time=time_use)
                 except (RecordError, KeyError, TypeError) as error:
                     code = ("SOURCE_MISSING" if isinstance(error, MissingObject) else
                             "SOURCE_UNAVAILABLE" if isinstance(error, StoreUnavailable) else
@@ -172,9 +218,16 @@ class NumericalAudit:
                     checked_text(item["assumption"], limit=4096)
                     warnings = ["EXPLICIT_ASSUMPTION"]
                     row["assumption"] = item["assumption"]
+                    if timed:
+                        row["evidence_time"] = {"status": "not-applicable",
+                                                "reason": "explicit-assumption-is-not-source-evidence"}
                 else:
                     _shape(item, common | {"source", "locator"}, {"context_bindings"})
                     view = read(item["source"])
+                    if timed:
+                        row["evidence_time"] = source_notes[item["source"]]["evidence_time"]
+                        require(row["evidence_time"]["status"] == "checked",
+                                row["evidence_time"].get("error", "NUMERICAL_TIME_UNAVAILABLE"))
                     raw = _extract(view["data"], item["locator"], numeric=True)
                     row["source_value"] = raw
                     require(number(raw) == number(item["value"]), "SOURCE_VALUE_MISMATCH")
@@ -252,30 +305,52 @@ class NumericalAudit:
         lines = ["| ID | Computed display | Status |", "|---|---|---|"]
         lines += [f"| {row['id']} | {_escape(display(row['id']))} | {row['status']} |" for row in calculations]
         table = "\n".join(lines) + "\n"
-        appendix = START + NOTICE + "\n\n" + table + ("\n" + rendered + "\n" if template else "") + INPUT + encoded(payload).decode() + END
+        start_marker, input_marker, end_marker = markers
+        appendix = start_marker + NOTICE + "\n\n" + table + ("\n" + rendered + "\n" if template else "") + input_marker + encoded(payload).decode() + end_marker
         require(len(appendix.encode("utf-8")) <= MAX_BYTES, "NUMERICAL_APPENDIX_TOO_LARGE")
-        return {"schema": "research-numerical-audit-v1", "status": status,
+        result = {"schema": "research-numerical-audit-v2" if timed else "research-numerical-audit-v1", "status": status,
                 "input_sha256": digest(encoded(payload)), "arithmetic": "Decimal-80-ROUND_HALF_EVEN",
                 "sources": [source_notes[i] for i in sorted(source_notes)], "inputs": inputs,
                 "calculations": calculations, "table_markdown": table, "rendered_excerpt": rendered,
                 "appendix": appendix, "coverage": "declared-inputs-calculations-and-number-placeholders-only",
                 "unmarked_prose": "not-audited", "research_assessment": "not-performed",
                 "source_authenticity": "not-certified", "persistence": "not-written"}
+        if timed:
+            result.update(knowledge_cutoff=payload["knowledge_cutoff"], evaluated_at=payload["evaluated_at"],
+                          evidence_time_scope=EVIDENCE_TIME_SCOPE)
+        return result
 
     def saved(self, reference: BlobRef) -> dict:
         """Recompute an exact saved revision; never follow current or change old text."""
         research = self.store.read_revision(reference)
         body = research["body"]
-        if START not in body:
+        if not has_numerical_appendix(body):
             return {"status": "not-declared", "reference": asdict(reference), "research_assessment": "not-performed"}
-        require(body.count(START) == body.count(INPUT) == body.count(END) == 1, "INVALID_NUMERICAL_APPENDIX")
-        start, split, end = body.index(START), body.index(INPUT), body.index(END)
+        positions = [(body.index(markers[0]), version) for version, markers in _MARKERS.items()
+                     if markers[0] in body]
+        require(bool(positions), "INVALID_NUMERICAL_APPENDIX")
+        # A historical v1 template may legitimately quote the then-unreserved v2
+        # marker. The outer workpaper starts first; its rendered content and
+        # canonical input are data, not another structural appendix.
+        _, version = min(positions)
+        start_marker, input_marker, end_marker = _MARKERS[version]
+        require(body.count(start_marker) == body.count(input_marker) == body.count(end_marker) == 1,
+                "INVALID_NUMERICAL_APPENDIX")
+        start, split, end = body.index(start_marker), body.index(input_marker), body.index(end_marker)
         require(start < split < end, "INVALID_NUMERICAL_APPENDIX")
-        raw = body[split + len(INPUT):end].encode("utf-8")
+        outside = body[:start] + body[end + len(end_marker):]
+        require(_STRUCTURAL_MARKER.search(outside) is None, "INVALID_NUMERICAL_APPENDIX")
+        if version == TIME_VERSION:
+            # Exclude JSON string values from structural detection. V2 reserves
+            # markers in its rendered template; v1 keeps its original semantics.
+            rendered_section = body[start:split + len(input_marker)] + body[end:end + len(end_marker)]
+            require(len(_STRUCTURAL_MARKER.findall(rendered_section)) == 3, "INVALID_NUMERICAL_APPENDIX")
+        raw = body[split + len(input_marker):end].encode("utf-8")
         require(len(raw) <= MAX_BYTES, "NUMERICAL_SCHEMA_OR_SIZE_LIMIT")
         try:
             payload = json.loads(raw)
             require(encoded(payload) == raw, "NONCANONICAL_NUMERICAL_APPENDIX")
+            require(payload["schema"] == version, "INVALID_NUMERICAL_APPENDIX")
             sources = [SourceRef.from_dict(s) for s in payload["sources"]]
         except (TypeError, KeyError, ValueError, RecursionError):
             raise RecordError("INVALID_NUMERICAL_APPENDIX") from None
@@ -285,7 +360,7 @@ class NumericalAudit:
         result["reference"] = asdict(reference)
         if result["status"] == "blocked":
             result["saved_render"] = "not-comparable-until-inputs-and-calculations-resolved"
-        elif result["appendix"] != body[start:end + len(END)]:
+        elif result["appendix"] != body[start:end + len(end_marker)]:
             result.update(status="blocked", saved_render="mismatch", error="SAVED_NUMERICAL_DISPLAY_MISMATCH")
         else:
             result["saved_render"] = "matches-recalculation"

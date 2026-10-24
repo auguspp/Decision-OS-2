@@ -143,12 +143,13 @@ def _checkpoint_manifest(reference, registry, store):
 
 @timed("checkpoint.save")
 def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_reader, predecessor=None,
-                             custody_authorized=False, public_rights_confirmed=False):
+                             custody_authorized=False, public_rights_confirmed=False, expected_head=None):
     """Save accepted pages once, then synchronously save and read back control.
 
     An unknown write or failed readback raises and therefore prevents the source
     caller from issuing its next request. No automatic retry or alternate key is
     introduced; stable SourceInputs retain the existing journal reconciliation.
+    expected_head 仅用于已有完整 page 前缀的 control CAS，不新增 page。
     """
     authorize_market_custody(store, custody_authorized=custody_authorized,
                             public_rights_confirmed=public_rights_confirmed)
@@ -196,6 +197,8 @@ def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_rea
         "control": deepcopy(checked["control"]), "pages": [], "state_sha256": digest(encoded(checked))}
     # Validate the generated control SourceInput before any page is written.
     _source(content)
+    require(expected_head is None or previous is not None and len(previous["pages"]) == len(sources),
+            "MARKET_CHECKPOINT_CONTROL_ONLY_REQUIRED")
     for index, (source, page) in enumerate(zip(sources, checked["capture"]["pages"])):
         if previous is not None and index < len(previous["pages"]):
             reference = previous["pages"][index]["reference"]
@@ -205,7 +208,12 @@ def retain_market_checkpoint(state, registry, store, *, checkpoint_id, fresh_rea
         content["pages"].append({"reference": reference,
             "source_sha256": digest(encoded(asdict(source))), "attempts": deepcopy(page["attempts"])})
     with measure_phase("checkpoint.control_save"):
-        reference = _put(store, _source(content))
+        source = _source(content)
+        if expected_head is None:
+            reference = _put(store, source)
+        else:
+            reference = store.put_source("market-custody-" + digest(encoded(asdict(source))), source,
+                expected_head=expected_head)
     with measure_phase("checkpoint.readback"):
         restored = restore_market_checkpoint(reference, registry, reader)
     require(encoded(restored["state"]) == encoded(checked), "MARKET_CHECKPOINT_READBACK_CHANGED")

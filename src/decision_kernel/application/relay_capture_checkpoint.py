@@ -13,9 +13,13 @@ from decision_kernel.domain.records import RecordError, encoded, require
 from decision_kernel.infrastructure.relay_failure import KNOWN_ERRORS
 
 CHECKPOINT_SCHEMA = 'relay-capture-checkpoint-v1'
+RECONCILED_SCHEMA = 'relay-capture-checkpoint-v2'
+CHECKPOINT_SCHEMAS = frozenset({CHECKPOINT_SCHEMA, RECONCILED_SCHEMA})
+UNKNOWN_ATTEMPT = 'unconfirmed-request'
 POLICY = {'max_attempts': 4, 'max_wait_seconds': 180}
 DECISIONS = frozenset({'response', 'retry', 'not-retryable', 'retry-after-unusable',
-    'attempt-limit', 'wait-budget', 'run-deadline', 'work-unit-complete'})
+    'attempt-limit', 'wait-budget', 'run-deadline', 'work-unit-complete', 'released-unconfirmed'})
+RELEASE_DECISION = {'reason': 'released-unconfirmed', 'required_wait_seconds': None}
 PHASES = frozenset({'ready', 'in-flight', 'waiting', 'response', 'paused', 'failed'})
 STOP_CLASSES = frozenset({'auth-or-entitlement', 'rate-limit', 'source-unavailable'})
 FAILURE_CLASSES = frozenset({'auth-or-entitlement', 'rate-limit', 'source-unavailable',
@@ -123,7 +127,7 @@ def _failure(value):
                 and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', value[field]), 'RELAY_CHECKPOINT_FAILURE')
 
 
-def validate_attempts(attempts, *, complete=False):
+def validate_attempts(attempts, *, complete=False, allow_unknown=True):
     """Check original execution records, including allocated cross-session waits."""
     from decision_kernel.infrastructure.relay_retry import business_retry_delay
     require(isinstance(attempts, list) and len(attempts) <= 4 and len(encoded(attempts)) <= 65536,
@@ -134,6 +138,22 @@ def validate_attempts(attempts, *, complete=False):
     for index, item in enumerate(attempts, 1):
         require(isinstance(item, dict) and type(item.get('attempt')) is int and item['attempt'] == index,
                 'RELAY_CHECKPOINT_ATTEMPTS')
+        if item.get('outcome') == UNKNOWN_ATTEMPT:
+            require(allow_unknown and set(item) == {'attempt', 'outcome', 'error', 'reconciled_at', 'retry_decision',
+                'checkpoint_wait_seconds', 'completed_wait_seconds', 'checkpoint_not_before'}
+                and item['error'] == 'RELAY_REQUEST_UNCONFIRMED'
+                and item['retry_decision'] == RELEASE_DECISION
+                and type(item['checkpoint_wait_seconds']) is int
+                and type(item['completed_wait_seconds']) is int
+                and item['checkpoint_wait_seconds'] == item['completed_wait_seconds'] == 0
+                and item['checkpoint_not_before'] is None, 'RELAY_CHECKPOINT_UNKNOWN_ATTEMPT')
+            reconciled = checkpoint_time(item['reconciled_at'])
+            require(previous is None or previous <= reconciled, 'RELAY_CHECKPOINT_CLOCK')
+            if index > 1 and attempts[index - 2]['checkpoint_not_before'] is not None:
+                require(reconciled >= checkpoint_time(attempts[index - 2]['checkpoint_not_before']),
+                        'RELAY_CHECKPOINT_RETRY_AFTER')
+            previous = reconciled
+            continue
         success = item.get('error') is None
         expected = common | ({'transport'} if success else {'failure', 'wait_before_next_attempt'})
         require(set(item) == expected, 'RELAY_CHECKPOINT_ATTEMPTS')
@@ -174,7 +194,10 @@ def validate_attempts(attempts, *, complete=False):
             if index < len(attempts):
                 require(used >= 30 and reason in ('retry', 'run-deadline'), 'RELAY_CHECKPOINT_ATTEMPTS')
                 if slept < used:
-                    require(checkpoint_time(attempts[index]['requested_at']) >= checkpoint_time(item['checkpoint_not_before']),
+                    following = attempts[index]
+                    next_clock = (following.get('reconciled_at') if following.get('outcome') == UNKNOWN_ATTEMPT
+                                  else following.get('requested_at'))
+                    require(checkpoint_time(next_clock) >= checkpoint_time(item['checkpoint_not_before']),
                             'RELAY_CHECKPOINT_RETRY_AFTER')
         budget += used
         require(budget <= 180, 'RELAY_CHECKPOINT_BUDGET')
@@ -187,6 +210,55 @@ def new_retry_state():
             'pending_wait_seconds': None, 'not_before': None, 'decision': None}
 
 
+def release_in_flight(value, *, reconciled_at):
+    """Charge an unanswered request once; never invent a provider response.
+
+    The reservation consumes its original attempt number. Its request/response
+    timestamps remain unknown; reconciled_at is the operator's actual clock.
+    A fourth unanswered attempt is terminal, not a fresh allowance.
+    """
+    checkpoint_time(reconciled_at)
+    require(isinstance(value, dict) and isinstance(value.get('control'), dict), 'RELAY_CHECKPOINT_RELEASE')
+    state = deepcopy(value)
+    control = state['control']
+    retry = control.get('retry')
+    require(isinstance(state.get('schema'), str) and state['schema'] in CHECKPOINT_SCHEMAS,
+            'RELAY_CHECKPOINT_SCHEMA')
+    require(isinstance(retry, dict), 'RELAY_CHECKPOINT_NOT_INFLIGHT')
+    validate_retry_state(retry)
+    if state['schema'] == CHECKPOINT_SCHEMA:
+        validate_attempts(retry['attempts'], allow_unknown=False)
+    if retry['phase'] in ('ready', 'failed') and retry['attempts'] \
+            and retry['attempts'][-1].get('outcome') == UNKNOWN_ATTEMPT \
+            and retry['decision'] == RELEASE_DECISION \
+            and state['schema'] == RECONCILED_SCHEMA \
+            and control.get('state') == ('terminal' if retry['phase'] == 'failed' else 'executing'):
+        return state
+    require(control.get('state') == 'executing' and retry['phase'] == 'in-flight',
+            'RELAY_CHECKPOINT_NOT_INFLIGHT')
+    earlier = [p['captured_at'] for p in state['capture']['pages']]
+    earlier += [a.get('reconciled_at', a.get('received_at')) for a in retry['attempts']]
+    require(all(checkpoint_time(reconciled_at) >= checkpoint_time(t) for t in earlier),
+            'RELAY_CHECKPOINT_CLOCK')
+    require(all(a['checkpoint_not_before'] is None
+                or checkpoint_time(reconciled_at) >= checkpoint_time(a['checkpoint_not_before'])
+                for a in retry['attempts']), 'RELAY_CHECKPOINT_RETRY_AFTER')
+    attempt = {'attempt': retry['reserved_attempt'], 'outcome': UNKNOWN_ATTEMPT,
+        'error': 'RELAY_REQUEST_UNCONFIRMED', 'reconciled_at': reconciled_at,
+        'retry_decision': deepcopy(RELEASE_DECISION), 'checkpoint_wait_seconds': 0,
+        'completed_wait_seconds': 0, 'checkpoint_not_before': None}
+    exhausted = retry['reserved_attempt'] == POLICY['max_attempts']
+    control['retry'] = {**retry, 'phase': 'failed' if exhausted else 'ready',
+        'attempts': [*retry['attempts'], attempt], 'reserved_attempt': None,
+        'decision': deepcopy(RELEASE_DECISION)}
+    if exhausted:
+        control.update(state='terminal', pause_reason=None)
+        state['capture']['error'] = 'RELAY_REQUEST_UNCONFIRMED'
+    state['schema'] = RECONCILED_SCHEMA
+    validate_retry_state(control['retry'])
+    return state
+
+
 def validate_retry_state(value):
     require(isinstance(value, dict) and set(value) == set(new_retry_state())
             and isinstance(value['phase'], str) and value['phase'] in PHASES,
@@ -195,8 +267,14 @@ def validate_retry_state(value):
     require(type(value['wait_budget_seconds']) is int and value['wait_budget_seconds'] == budget,
             'RELAY_CHECKPOINT_BUDGET')
     phase, attempts = value['phase'], value['attempts']
+    unknown = bool(attempts) and attempts[-1].get('outcome') == UNKNOWN_ATTEMPT
     if value['decision'] is not None:
         _decision(value['decision'])
+        if value['decision']['reason'] == 'released-unconfirmed':
+            require(unknown and value['decision'] == RELEASE_DECISION, 'RELAY_CHECKPOINT_DECISION')
+    if unknown:
+        require(phase == 'failed' if len(attempts) == POLICY['max_attempts'] else phase != 'failed',
+                'RELAY_CHECKPOINT_RETRY_STATE')
     if phase == 'in-flight':
         require(type(value['reserved_attempt']) is int and value['reserved_attempt'] == len(attempts) + 1
                 and value['reserved_attempt'] <= 4, 'RELAY_CHECKPOINT_RESERVATION')
@@ -220,11 +298,11 @@ def validate_retry_state(value):
         require(value['decision'] is not None and value['decision']['reason'] in ('run-deadline', 'work-unit-complete'),
                 'RELAY_CHECKPOINT_RETRY_STATE')
         require(not attempts or len(attempts) < 4 and attempts[-1]['error'] is not None
-                and attempts[-1]['retry_decision']['reason'] in ('retry', 'run-deadline'),
+                and attempts[-1]['retry_decision']['reason'] in ('retry', 'run-deadline', 'released-unconfirmed'),
                 'RELAY_CHECKPOINT_RETRY_STATE')
     else:
         require(not attempts or attempts[-1]['error'] is not None
-                and attempts[-1]['retry_decision']['reason'] in ('retry', 'run-deadline')
+                and attempts[-1]['retry_decision']['reason'] in ('retry', 'run-deadline', 'released-unconfirmed')
                 and len(attempts) < 4, 'RELAY_CHECKPOINT_RETRY_STATE')
     return deepcopy(value)
 
@@ -234,7 +312,8 @@ def _check_capture_checkpoint(value, request, registry, *, max_pages, policy=Non
     from decision_kernel.application.research_sources import _inspect_result
     require(policy is None or vars(policy) == POLICY, 'RELAY_CHECKPOINT_POLICY_CHANGED')
     require(isinstance(value, dict) and set(value) == {'schema', 'capture', 'control'}
-            and value['schema'] == CHECKPOINT_SCHEMA, 'RELAY_CHECKPOINT_SCHEMA')
+            and isinstance(value['schema'], str) and value['schema'] in CHECKPOINT_SCHEMAS,
+            'RELAY_CHECKPOINT_SCHEMA')
     control, capture = value['control'], value['capture']
     require(isinstance(control, dict) and set(control) == {'request', 'max_pages', 'policy', 'state',
                 'page_number', 'retry', 'pause_reason'} and len(encoded(control)) <= 131072,
@@ -276,8 +355,9 @@ def _check_capture_checkpoint(value, request, registry, *, max_pages, policy=Non
     pages = capture['pages']
     require(len(pages) <= max_pages and sum(len(encoded(p['table'])) for p in pages) <= 8 * 1024 * 1024,
             'RELAY_CHECKPOINT_CAPTURE_BOUND')
+    allow_unknown = value['schema'] == RECONCILED_SCHEMA
     for page in pages:
-        validate_attempts(page['attempts'], complete=True)
+        validate_attempts(page['attempts'], complete=True, allow_unknown=allow_unknown)
         # This execution owner validates the original attempts before binding
         # the finite projection. Ordinary source readers discard diagnostics.
         transport = {k: v for k, v in page['transport'].items() if k != 'request_clock'}
@@ -289,6 +369,13 @@ def _check_capture_checkpoint(value, request, registry, *, max_pages, policy=Non
     number = control['page_number']
     require(type(number) is int and 1 <= number <= max_pages + 1, 'RELAY_CHECKPOINT_PAGE')
     retry = validate_retry_state(control['retry']) if control['retry'] is not None else None
+    if retry is not None:
+        validate_attempts(retry['attempts'], allow_unknown=allow_unknown)
+        if not allow_unknown:
+            require(retry['decision'] != RELEASE_DECISION, 'RELAY_CHECKPOINT_DECISION')
+        if retry['attempts'] and retry['attempts'][-1].get('outcome') == UNKNOWN_ATTEMPT:
+            require((control['state'] == 'terminal') == (retry['phase'] == 'failed'),
+                    'RELAY_CHECKPOINT_CONTROL')
     state = control['state']
     if state == 'complete':
         require(view['complete'] and number == len(pages) and retry is not None and retry['phase'] == 'response'
@@ -349,11 +436,18 @@ def _check_capture_transition(old, new):
         return new
     a, b = old['control'], new['control']
     require(a['state'] not in ('complete', 'terminal'), 'RELAY_CHECKPOINT_TERMINAL_RESTART')
+    before, after = a['retry'], b['retry']
+    if before is not None and before['phase'] == 'in-flight' and after is not None \
+            and len(after['attempts']) == len(before['attempts']) + 1 \
+            and after['attempts'][-1].get('outcome') == UNKNOWN_ATTEMPT:
+        require(new == release_in_flight(old, reconciled_at=after['attempts'][-1]['reconciled_at']),
+                'RELAY_CHECKPOINT_RESERVATION_UNSETTLED')
+        return new
+    require(old['schema'] == new['schema'], 'RELAY_CHECKPOINT_SCHEMA')
     old_pages, new_pages = old['capture']['pages'], new['capture']['pages']
     count = len(old_pages)
     require(count <= len(new_pages) <= count + 1 and new_pages[:count] == old_pages,
             'RELAY_CHECKPOINT_PAGES_CHANGED')
-    before, after = a['retry'], b['retry']
     if len(new_pages) == count + 1:
         require(before is not None and before['phase'] == 'in-flight', 'RELAY_CHECKPOINT_RESERVATION_REQUIRED')
         attempts = new_pages[-1]['attempts']
@@ -415,9 +509,11 @@ class CaptureCheckpoint:
             'state': 'ready', 'page_number': 1, 'retry': None, 'pause_reason': None}
         self.capture = capture
         self.previous = None
+        self.schema = CHECKPOINT_SCHEMA
         if value is not None:
             checked = validate_capture_checkpoint(value, request, registry, max_pages=max_pages, policy=session.policy)
             self.previous = deepcopy(checked)
+            self.schema = checked['schema']
             self.capture, self.control = checked['capture'], checked['control']
             retry = self.control['retry']
             require(self.control['state'] in ('complete', 'terminal') or not retry
@@ -428,11 +524,12 @@ class CaptureCheckpoint:
             elif self.control['state'] != 'terminal':
                 require(self.control['state'] in ('ready', 'paused') or retry and retry['phase'] in ('waiting', 'ready'),
                         'RELAY_CHECKPOINT_NOT_RESUMABLE')
-                require(not retry or not retry['attempts'] or
-                        (retry['attempts'][-1].get('failure') or {}).get('classification') not in STOP_CLASSES,
+                last_known = next((a for a in reversed(retry['attempts'])
+                    if a.get('outcome') != UNKNOWN_ATTEMPT), {}) if retry else {}
+                require((last_known.get('failure') or {}).get('classification') not in STOP_CLASSES,
                         'RELAY_CHECKPOINT_GLOBAL_STOP')
                 previous = ([self.capture['pages'][-1]['captured_at']] if self.capture['pages'] else [])
-                previous += [retry['attempts'][-1]['received_at']] if retry and retry['attempts'] else []
+                previous += [a.get('reconciled_at', a.get('received_at')) for a in retry['attempts']] if retry else []
                 require(not previous or checkpoint_time(session.clock()) >= max(checkpoint_time(p) for p in previous),
                         'RELAY_CHECKPOINT_CLOCK')
                 if retry and retry['attempts'] and retry['pending_wait_seconds'] is None:
@@ -448,7 +545,7 @@ class CaptureCheckpoint:
         require(self.control['state'] in ('complete', 'terminal') or callable(writer), 'RELAY_CHECKPOINT_WRITER_REQUIRED')
 
     def persist(self):
-        value = {'schema': CHECKPOINT_SCHEMA, 'capture': deepcopy(self.capture), 'control': deepcopy(self.control)}
+        value = {'schema': self.schema, 'capture': deepcopy(self.capture), 'control': deepcopy(self.control)}
         try:
             if self.previous is None:
                 validate_capture_checkpoint(value, self.request, self.registry,

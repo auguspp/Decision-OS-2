@@ -5,10 +5,10 @@ on:
     inputs:
       operation:
         type: choice
-        options: [status, update, recover-late, repair-calendar, reconcile-write, external-clock, clock-probe]
+        options: [status, update, recover-late, repair-calendar, reconcile-write, release-master, external-clock, clock-probe]
         default: status
         required: true
-        description: 'Read or update the bounded daily cycle; external-clock requires the selected clock policy, clock-probe reads metadata only, and explicit repairs keep their fixed grants'
+        description: 'Read or update the bounded daily cycle; external-clock requires the selected clock policy, clock-probe reads metadata only, explicit repairs keep their fixed grants, and release-master names an unconfirmed master reservation without spending a request'
       code_sha:
         type: string
         required: true
@@ -87,7 +87,7 @@ jobs:
           retention-days: 30
   daily:
     needs: visibility
-    if: needs.visibility.outputs.runtime_authorized == 'true' && needs.visibility.outputs.admitted == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late' || inputs.operation == 'repair-calendar' || inputs.operation == 'reconcile-write' || inputs.operation == 'external-clock')))
+    if: needs.visibility.outputs.runtime_authorized == 'true' && needs.visibility.outputs.admitted == 'true' && github.repository == 'auguspp/Decision-OS-2' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.operation == 'update' || inputs.operation == 'recover-late' || inputs.operation == 'repair-calendar' || inputs.operation == 'reconcile-write' || inputs.operation == 'release-master' || inputs.operation == 'external-clock')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:

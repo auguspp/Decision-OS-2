@@ -150,18 +150,24 @@ class RetryingRelay:
 
     def _run_checkpointed(self, call, *, continuation, checkpoint, pause_requested):
         from decision_kernel.application.relay_capture_checkpoint import (
-            POLICY, STOP_CLASSES, CheckpointStateError, checkpoint_time, new_retry_state, not_before,
+            POLICY, STOP_CLASSES, UNKNOWN_ATTEMPT, CheckpointStateError, checkpoint_time, new_retry_state, not_before,
             pause_reason, validate_retry_state,
         )
         require(vars(self.policy) == POLICY and callable(checkpoint), 'RELAY_CHECKPOINT_POLICY_CHANGED')
         saved = validate_retry_state(continuation if continuation is not None else new_retry_state())
         require(saved['phase'] in ('ready', 'paused', 'waiting'), 'RELAY_CHECKPOINT_NOT_RESUMABLE')
-        require(not saved['attempts'] or (saved['attempts'][-1].get('failure') or {}).get('classification')
-                not in STOP_CLASSES, 'RELAY_CHECKPOINT_GLOBAL_STOP')
+        last_known = next((a for a in reversed(saved['attempts'])
+            if a.get('outcome') != UNKNOWN_ATTEMPT), {})
+        require((last_known.get('failure') or {}).get('classification') not in STOP_CLASSES,
+                'RELAY_CHECKPOINT_GLOBAL_STOP')
         self.last_attempts, self.pending_retry = deepcopy(saved['attempts']), None
         self.last_retry_decision = deepcopy(saved['decision'])
         waited = saved['wait_budget_seconds']
         pending, earliest = saved['pending_wait_seconds'], saved['not_before']
+        if self.last_attempts:
+            last = self.last_attempts[-1]
+            previous_clock = last['reconciled_at'] if last.get('outcome') == UNKNOWN_ATTEMPT else last['received_at']
+            require(checkpoint_time(self.clock()) >= checkpoint_time(previous_clock), 'RELAY_CHECKPOINT_CLOCK')
         if self.last_attempts and pending is None:
             last = self.last_attempts[-1]
             require(last['completed_wait_seconds'] >= last['checkpoint_wait_seconds']

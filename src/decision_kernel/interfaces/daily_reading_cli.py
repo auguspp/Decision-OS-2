@@ -37,6 +37,7 @@ UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code"
     "write_reconciliation", "write_reconciliation_native_proof", "write_last_failure",
     "master_source_requests", "master_refresh", "master_reserved_queries", "master_query_budget",
     "master_page_budget", "master_source_budget", "master_execution", "master_interruption",
+    "master_releases",
     "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
     "no-new-session": "没有新增交易日", "paused": "更新已暂停", "not-due": "尚未到约定更新时间",
@@ -44,7 +45,8 @@ STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新
     "reading-unavailable": "行情读回尚未完成", "started": "本轮尚未完成", "in-progress": "本轮正在进行",
     "partial": "本轮部分完成", "failed": "本轮更新失败", "exhausted": "本轮额度已耗尽",
     "calendar-pending": "交易日历更新尚未完成", "master-pending": "证券主表更新尚未完成",
-    "market-pending": "价格更新尚未完成"}
+    "market-pending": "价格更新尚未完成",
+    "released": "已判定一次未确认请求并解除阻塞", "nothing-to-release": "没有待判定的未确认请求"}
 
 
 def _error(exc, token=None):

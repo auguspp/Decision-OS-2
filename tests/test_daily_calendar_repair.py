@@ -284,11 +284,11 @@ def test_workflow_uses_the_existing_serial_writer_and_no_new_source_secret_route
     root = Path(__file__).resolve().parents[1]
     flow = yaml.load((root / '.github/workflows/daily-market.yml').read_text(), Loader=yaml.BaseLoader)
     options = flow['on']['workflow_dispatch']['inputs']['operation']['options']
-    # Every recovery entry the settings gate actually admits must stay reachable
-    # from the dispatch menu; the menu may gain entries but may not lose them.
-    assert {'status', 'update', 'recover-late', 'repair-calendar', 'reconcile-write',
-            'release-master', 'external-clock', 'clock-probe'} <= set(options)
-    assert len(options) == len(set(options)) and 'status' in options
+    # 菜单必须与 settings 门禁实际接受的入口完全一致：多一个入口等于给出
+    # 一条无人认可的路径，少一个入口等于让已有恢复手段无法触达。
+    from decision_kernel.application import daily_clock as clock_policy
+    assert set(options) == clock_policy.DISPATCH_OPERATIONS
+    assert len(options) == len(set(options))
     assert set(flow['jobs']) == {'visibility', 'status', 'daily', 'clock-probe'} and flow['permissions'] == {}
     assert flow['concurrency'] == {'group': 'decision-os-relay-source', 'cancel-in-progress': 'false'}
     assert "inputs.operation == 'repair-calendar'" in flow['jobs']['daily']['if']

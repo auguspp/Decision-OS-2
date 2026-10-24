@@ -37,7 +37,7 @@ from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.relay_http import RelayHTTP, SECRET_ENV
 from decision_kernel.infrastructure.relay_retry import RetryingRelay, RetryPolicy
 from decision_kernel.infrastructure.source_collection_guard import (
-    MAX_PAGES as PEER_MAX_PAGES, SourceCollectionGuardStore, require_no_peer_collection,
+    MAX_PAGES as PEER_MAX_PAGES, require_no_peer_collection,
 )
 from decision_kernel.interfaces.ftshare_check_cli import REPO, PREFIX, _regular, _safe_error, check_private
 from decision_kernel.interfaces.ftshare_collection_cli import _source_instruction, run_collection
@@ -50,7 +50,8 @@ POLICY_FILE = Path("config/daily-market.json")
 MASTER_POLICY_FILE = Path("config/daily-master-refresh.json")
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 ADMISSION_REQUESTS = 240
-# peer 最多12 GET；原资格核验最多3 GET（含main比较），不缓存可变证据。
+# 一次并发核验：本运行首尾复核 + 至多十页在途列表，共 12 GET；加原资格核验 3 GET。
+# 只在上游请求前一刻付这笔钱，成本与实际来源请求数同阶。
 GUARD_REQUESTS = PEER_MAX_PAGES + 2 + 3
 # 一条保管边：writer最多44次，加独立快照入口/出口各18次。
 STORE_REQUESTS = 44 + 2 * 18
@@ -242,18 +243,14 @@ def remote_units(token, selected, *, clock=time.time, monotonic=time.monotonic, 
         api.rate_limits = limits
         native_ready(api, selected)
         if write:
-            require(quota.wait(api, CONTROL_REQUESTS + GUARD_REQUESTS + 2 * 18),
-                "DAILY_MARKET_STORE_RATE_LIMIT")
+            # 预留必须与下面 _admit 的实际要求一致（整个硬上限）：留得比准入检查
+            # 少，单元会在开工第一步被自己的准入规则拒绝，而窗口里其实还有余额。
+            require(quota.wait(api, MAX_REQUESTS), "DAILY_MARKET_STORE_RATE_LIMIT")
         binding = _records_runtime_binding("sync" if write else "status")
         readonly = replace(binding, write_enabled=False)
-        backend = GitHubStore(binding, api)
-        if write:
-            def commit_guard():
-                _settle(api, CUSTODY_REQUESTS)
-                collection_guard(api, selected)
-                _settle(api, STORE_REQUESTS)
-            backend = SourceCollectionGuardStore(backend, commit_guard)
-        store = VersionedStore(backend)
+        # 提交级并发保护仍是原条件更新：guard 只在真正发出上游请求前核验，
+        # 每次提交都探测会把合法开销变成配额耗尽，把保护本身变成故障源。
+        store = VersionedStore(GitHubStore(binding, api))
         return store, lambda: VersionedStore(GitMarketReader(readonly, api)), api
     open_unit.quota_wait = quota.wait
     open_unit.quota_receipt = quota.receipt
@@ -278,10 +275,15 @@ def _settle(api, reserve=1):
         "DAILY_MARKET_STORE_SETTLEMENT_BUDGET")
 
 
-def _source_admit(api, guard, reserve):
+def _source_admit(api, guard, reserve, probe=None):
+    """新来源准入。``probe`` 是并发核验：只在马上要发上游请求时传入。
+
+    其余位置的 ``guard`` 只是权限核验，不再探测在途运行——每次提交都探测
+    会把正常采集的合法开销算成配额耗尽。
+    """
     _admit(api)
     _settle(api, GUARD_REQUESTS + reserve)
-    guard(api)
+    (probe or guard)(api)
     _admit(api)
     _settle(api, reserve)
 
@@ -348,7 +350,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
               sleep=time.sleep, execute_prices=run_collection, admission_at=None, allow_late=False,
               calendar_repair=None, write_reconciliation=None, reconciliation_verifier=None,
               master_refresh=None, master_client_factory=None, execute_master_unit=None,
-              release_master=None):
+              probe=None, release_master=None):
     """Advance at most one retained daily cycle, then use the normal exact reader."""
     approved = policy(approved)
     require(operation in {"status", "update"}, "DAILY_MARKET_OPERATION")
@@ -365,6 +367,9 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
     clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
     guard = guard or (lambda api: None)
     read_guard = read_guard or guard
+    # ``probe`` 是并发核验，由宿主在构造阶段绑定到该次原生运行；
+    # 未绑定时退回 ``guard``（离线合成调用者没有在途列表可查）。
+    probe = probe or guard
     report = {"schema": "daily-market-runtime-v1", "operation": operation, "status": "started",
         "reason_code": None, "source_requests": 0, "calendar_source_requests": 0,
         "price_source_requests": 0, "master_source_requests": 0, "calendar_source_budget": 2,
@@ -456,7 +461,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                     require(phase in {"reservation", "http"}, "DAILY_MASTER_ADMISSION_PHASE")
                     reserve = (MASTER_RESERVATION_REQUESTS if phase == "reservation"
                         else MASTER_SETTLEMENT_REQUESTS)
-                    _source_admit(api, guard, reserve)
+                    # 只在真正发页请求前核在途；reservation 只是控制写。
+                    _source_admit(api, guard, reserve, probe=probe if phase == "http" else None)
                     if phase == "reservation" and api is not None:
                         require(api._requests + CUSTODY_REQUESTS + GUARD_REQUESTS < ADMISSION_REQUESTS,
                             "DAILY_MARKET_STORE_ADMISSION")
@@ -610,7 +616,7 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                             state = next_state(item, at=clock(), calendars=calendars)
                         save(state, store, fresh)
                         calendars = deepcopy(item["cycle"]["calendars"])
-                        _source_admit(api, guard, CALENDAR_SETTLEMENT_REQUESTS)
+                        _source_admit(api, guard, CALENDAR_SETTLEMENT_REQUESTS, probe=probe)
                         request_started = None
                         try:
                             if calendar_client is None:
@@ -698,7 +704,8 @@ def run_daily(*, approved, registry, open_unit, operation="update", clock=None,
                             from decision_kernel.infrastructure.ftshare_http import FTShareHTTP
                             factory = FTShareHTTP
                         return _SourceClient(factory(), lambda: _source_admit(
-                            price_api[0], guard, PRICE_SETTLEMENT_REQUESTS), method="candlesticks")
+                            price_api[0], guard, PRICE_SETTLEMENT_REQUESTS, probe=probe),
+                            method="candlesticks")
                     with measure_phase("daily.ft"):
                         executed = execute_prices(operation="ftshare-sync", config=config, registry=registry,
                             open_unit=price_unit, max_work_units=approved["max_price_requests"],
@@ -835,8 +842,9 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
         _save_receipt(out / "control.json", control)
     executed = execute(approved=approved, registry=RelayRegistry(REGISTRY),
         open_unit=open_unit or remote_units(env[TOKEN_ENV], selected), operation=selected["operation"],
-        guard=lambda current: collection_guard(current, selected),
-        read_guard=lambda current: check_private(current, selected), progress=progress,
+        guard=lambda current: check_private(current, selected),
+        read_guard=lambda current: check_private(current, selected),
+        probe=lambda current: collection_guard(current, selected), progress=progress,
         calendar_client_factory=lambda: RelayHTTP(credential=env.get(SECRET_ENV, ""), request_timeout_seconds=90),
         admission_at=created.isoformat(),
         allow_late=selected["invocation"] in {"schedule", "recover-late", EXTERNAL_CLOCK}, **repair_options)

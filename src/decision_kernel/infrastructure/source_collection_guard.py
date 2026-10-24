@@ -1,4 +1,8 @@
-"""有界核验原生来源采集冲突；不是分布式锁，也不替代原有提交条件。"""
+"""有界核验原生来源采集冲突；不是分布式锁，也不替代原有提交条件。
+
+提交级冲突仍由原条件更新（CAS）承担；本模块只在真正发出上游请求前核验，
+避免把合法采集开销变成配额耗尽。
+"""
 from __future__ import annotations
 
 import re
@@ -99,28 +103,11 @@ def detect_peer_collections(api, *, run_id, code_sha, workflow_path, max_pages=M
 
 
 def require_no_peer_collection(api, *, run_id, code_sha, workflow_path, max_pages=MAX_PAGES):
-    """每次调用重新核验；来源 peer 存在则拒绝后续采集或写入。"""
+    """每次调用重新核验；来源 peer 存在则拒绝即将发出的上游请求。
+
+    控制写不经过这里：它们的冲突由原条件更新（CAS）拒绝。
+    """
     peers = detect_peer_collections(api, run_id=run_id, code_sha=code_sha,
                                     workflow_path=workflow_path, max_pages=max_pages)
     if peers:
         raise Conflict("SOURCE_COLLECTION_PEER_CONFLICT")
-
-
-class SourceCollectionGuardStore:
-    """提交前调用无参 guard；原样透传 expected，不刷新 head 或重试 CAS。
-
-    guard 必须以抛异常拒绝；返回值不作为授权信号。其他能力（包括读 scope）
-    保持原委托，故 scope 返回的 reader 不会被包装成新的受保护 writer。
-    """
-
-    def __init__(self, backend, guard):
-        require(callable(guard), "SOURCE_COLLECTION_GUARD_INVALID")
-        self._backend = backend
-        self._guard = guard
-
-    def commit(self, files, *, expected):
-        self._guard()
-        return self._backend.commit(files, expected=expected)
-
-    def __getattr__(self, name):
-        return getattr(self._backend, name)

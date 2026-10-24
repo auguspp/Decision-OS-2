@@ -115,7 +115,14 @@ def test_calendar_real_store_ten_pages_settles_beyond_240(monkeypatch, settlemen
     result = host.run(**options(host, selected, opened), calendar_client_factory=client,
         execute_prices=stop_prices)
     assert result["receipt"]["calendar_source_requests"] == 2, result["receipt"]
-    assert result["receipt"]["status"] == "partial", result
+    if settlement_remaining is None:
+        assert result["receipt"]["status"] == "partial", result
+    else:
+        # 已发出请求的落盘结算不再被 <240 新来源窗口卡住；但下一个单元确实
+        # 开不起来（原生额度不足整个硬上限），于是按原规则停在配额门禁。
+        assert result["receipt"]["status"] == "blocked", result
+        assert result["receipt"]["reason_code"] == "DAILY_MARKET_STORE_RATE_LIMIT"
+        assert result["receipt"]["price_source_requests"] == 0
     from test_market_relay_inputs import REGISTRY
     current = daily.latest_cycle(host.fixture["fresh"](), registry=REGISTRY,
         protected_symbols=host.approved["symbols"])
@@ -155,22 +162,37 @@ def test_settlement_uses_real_remaining_not_source_window(monkeypatch):
         cli._source_admit(api, lambda api: cli.collection_guard(api, selected), 1)
 
 
-@pytest.mark.parametrize("case", ["peer", "cas", "quota"])
-def test_settlement_keeps_live_peer_native_quota_and_original_cas(monkeypatch, case):
+@pytest.mark.parametrize("case", ["peer", "quota"])
+def test_source_admission_keeps_live_peer_and_native_hard_quota(monkeypatch, case):
     model, selected, apis, opened = native_daily(monkeypatch)
     store, fresh, api = opened(True)
-    before = model.git.head()
-    api._requests = 260
+    api._requests = 100
     if case == "peer":
         model.native.peers = [{"id": 9001, "status": "in_progress",
             "path": ".github/workflows/ashare-data.yml"}]
-    elif case == "cas":
-        model.git.commit({"submissions/concurrent.json": b"{}"}, expected=before)
     else:
-        api.rate_limits.observe(quota_headers(remaining=20, limit=5000, reset=2000000000))
+        api.rate_limits.observe(quota_headers(remaining=5, limit=5000, reset=2000000000))
+    writes = model.writes
+    with pytest.raises(RecordError):
+        cli._source_admit(api, lambda current: None, 1,
+            probe=lambda current: cli.collection_guard(current, selected))
+    assert model.writes == writes
+
+
+def test_commit_keeps_original_cas_and_does_not_probe_peers(monkeypatch):
+    """控制写不再逐次探测：在途 peer 不阻断提交，陈旧 expected 仍被原条件更新拒绝。"""
+    model, selected, apis, opened = native_daily(monkeypatch)
+    store, fresh, api = opened(True)
+    before = model.git.head()
+    model.native.peers = [{"id": 9001, "status": "in_progress",
+        "path": ".github/workflows/ashare-data.yml"}]
+    model.git.commit({"submissions/concurrent.json": b"{}"}, expected=before)
+    writes = model.writes
+    assert not any("?status=in_progress&" in path for _, path, _ in model.requests)
     with pytest.raises(RecordError):
         store.backend.commit({"submissions/synthetic-denied.json": b"{}"}, expected=before)
-    assert model.writes == 0
+    assert model.writes == writes
+    assert not any("?status=in_progress&" in path for _, path, _ in model.requests)
 
 
 @pytest.mark.parametrize("response_remaining,master_rows", [(None, 3), (None, 501), (230, 3)])
@@ -230,8 +252,12 @@ def test_master_real_store_ten_pages_checkpoint_then_zero_http_promotion(monkeyp
         assert len(units) == 1 and units[0][0]["status"] == "partial"
         assert units[0][0]["source_requests"] == 1
     assert all(value["checkpoint_reference"] is not None for value, _ in units)
+    # 每次上游请求都落在新来源准入窗口内；单元结算没有被同一阈值卡住，
+    # 也没有任何单元越过硬上限。探测成本降低后，master 单元不再被迫越过 240。
     assert all(count < 240 for count in http_counts)
-    assert any(count > 240 for _, count in units)
+    assert not any(value.get("reason_code") in {"DAILY_MARKET_STORE_ADMISSION",
+        "DAILY_MARKET_STORE_SETTLEMENT_BUDGET"} for value, _ in units)
+    assert all(count <= cli.MAX_REQUESTS for _, count in units)
     assert all(api._requests <= 512 for api in apis)
 
 

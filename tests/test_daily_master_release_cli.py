@@ -10,7 +10,6 @@ from decision_kernel.application import daily_market as daily
 from decision_kernel.application import daily_master_refresh as masters
 from decision_kernel.domain.records import Conflict, RecordError, StoreUnavailable, UnknownWrite, encoded
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
-from decision_kernel.infrastructure.source_collection_guard import SourceCollectionGuardStore
 from decision_kernel.interfaces import daily_market_cli as cli
 from test_daily_market import quota_headers
 from test_daily_master_cycle import MasterHost
@@ -307,7 +306,7 @@ def test_maximum_twelve_get_peer_check_keeps_original_admission_threshold(monkey
     assert checks == [(api, selected)]
 
 
-def test_remote_units_wraps_real_github_commit_and_preserves_expected(native, monkeypatch):
+def test_remote_units_keeps_plain_store_and_passes_expected_through(native, monkeypatch):
     model, _ = native
     api, selected, calls, checks = peer_api(monkeypatch)
     peer_wire = api._opener
@@ -327,22 +326,21 @@ def test_remote_units_wraps_real_github_commit_and_preserves_expected(native, mo
         replace(model.binding, write_enabled=operation == "sync"))
     opened = cli.remote_units("synthetic-proxy-only", selected)
     store, fresh, actual = opened(True)
-    assert actual is api and isinstance(store.backend, SourceCollectionGuardStore)
-    assert isinstance(store.backend._backend, GitHubStore)
+    # 提交级保护是原条件更新；探测只在来源请求前，开单元与提交都不发在途列表。
+    assert actual is api and type(store.backend) is GitHubStore
+    assert calls == []
     expected = model.git.head()
     files = {"synthetic": b"body"}
     commits = []
     def commit(backend, actual_files, *, expected):
-        assert checks and calls[-1][1].endswith("/8001")
         commits.append((backend, actual_files, expected))
         return "synthetic-result"
     monkeypatch.setattr(GitHubStore, "commit", commit)
     assert store.backend.commit(files, expected=expected) == "synthetic-result"
-    assert commits == [(store.backend._backend, files, expected)]
-    assert commits[0][1] is files and len(calls) == 3
-    calls.clear()
+    assert commits == [(store.backend, files, expected)]
+    assert commits[0][1] is files and calls == []
     readonly, _, _ = opened(False)
-    assert isinstance(readonly.backend, GitHubStore) and calls == []
+    assert type(readonly.backend) is GitHubStore and calls == []
     assert not fresh().backend.binding.write_enabled
 
 
@@ -361,15 +359,18 @@ def test_runtime_wires_separate_read_guard_and_release_options(tmp_path, monkeyp
         assert not seen
         if operation == "release-master":
             assert options["release_master"] is True and options["master_refresh"] == masters.POLICY
+            # 单元与只读回执都不探测在途；探测只绑在发上游请求前一刻。
+            options["guard"](api)
+            assert not seen
             with pytest.raises(Conflict, match="PEER_CONFLICT"):
-                options["guard"](api)
+                options["probe"](api)
         return {"receipt": {"status": "read", "source_requests": 0}, "control": {}}
     assert cli.run_runtime(event, env, tmp_path / "runtime", api=api, execute=execute,
         open_unit=host.open) == 0
     assert bool(seen) is (operation == "release-master")
 
 
-def test_remote_proxy_executes_real_commit_and_conflict_blocks_next_write(native, monkeypatch):
+def test_remote_units_commit_keeps_cas_and_peer_blocks_source_admission(native, monkeypatch):
     model, _ = native
     api, selected, calls, checks = peer_api(monkeypatch)
     own = {"id": 8001, "status": "in_progress", "run_attempt": 1,
@@ -394,15 +395,19 @@ def test_remote_proxy_executes_real_commit_and_conflict_blocks_next_write(native
     store, _, _ = cli.remote_units("synthetic-real-commit-only", selected)(True)
     before = model.git.head()
     files = {"submissions/synthetic-guard.json": b"{}"}
+    # 普通提交不做在途探测：成本与提交数脱钩，提交级冲突仍由原条件更新承担。
     after = store.backend.commit(files, expected=before)
     assert after == model.git.head() != before and model.writes == 1
     posts = [payload for method, _, payload in model.requests if method == "POST"]
     assert posts[0]["variables"]["input"]["expectedHeadOid"] == before
-    assert checks == [(api, selected)]
+    assert calls == [] and checks == []
+    # 在途运行只在真正要发上游请求前一刻阻断，且不产生写入。
     conflict[0] = True
     with pytest.raises(Conflict, match="PEER_CONFLICT"):
-        store.backend.commit({"submissions/synthetic-again.json": b"{}"}, expected=after)
+        cli._source_admit(api, lambda current: None, 1,
+            probe=lambda current: cli.collection_guard(current, selected))
     assert model.writes == 1 and model.git.head() == after
+    assert checks == [(api, selected)]
 
 
 @pytest.mark.parametrize("stage", ["calendar", "master", "price"])

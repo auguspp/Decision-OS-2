@@ -132,8 +132,10 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
         if not progress or row != progress[-1]:
             progress.append(row)
     options = dict(open_unit=opened, clock=lambda: host.now, admission_at=admitted,
-        guard=lambda api: cli.collection_guard(api, selected),
-        read_guard=lambda api: cli.check_private(api, selected), capacity=cli.market_capacity,
+        # 与生产装配一致：单元与只读只核权限，并发核验只在发上游请求前一刻。
+        guard=lambda api: cli.check_private(api, selected),
+        read_guard=lambda api: cli.check_private(api, selected),
+        probe=lambda api: cli.collection_guard(api, selected), capacity=cli.market_capacity,
         monotonic=lambda: clock.elapsed, sleep=sleep, progress=report)
     first = host.run(**options)
     # Match the runtime's final native release check, which has its own API

@@ -10,6 +10,7 @@ from decision_kernel.application import daily_market as daily
 from decision_kernel.application import daily_master_refresh as masters
 from decision_kernel.domain.records import Conflict, RecordError, StoreUnavailable, UnknownWrite, encoded
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
+from decision_kernel.infrastructure.source_collection_guard import SourceCollectionGuardStore
 from decision_kernel.interfaces import daily_market_cli as cli
 from test_daily_market import quota_headers
 from test_daily_master_cycle import MasterHost
@@ -209,6 +210,16 @@ def test_paused_release_is_read_only_and_never_opens_collection(monkeypatch):
     assert result["control"]["cycle_reference"] is not None
 
 
+def test_status_reader_never_calls_collection_guard_with_peer_present():
+    host = MasterHost()
+    def peer(*args, **kwargs):
+        raise Conflict("SOURCE_COLLECTION_PEER_CONFLICT")
+    result = host.run(operation="status", guard=peer, read_guard=lambda api: None)
+    assert result["receipt"]["status"] == "read" and result["receipt"]["health"]
+    assert host.openings == [False, False]
+    assert result["control"]["market_reference"] == host.approved["seed_reference"]
+
+
 @pytest.mark.parametrize("empty", [False, True])
 def test_release_reader_failure_is_not_success_with_empty_control(monkeypatch, empty):
     host, original = pending(monkeypatch)
@@ -247,6 +258,179 @@ def peer_api(monkeypatch, *, peer=False, queued=False, failure=False, requests=0
     checks = []
     monkeypatch.setattr(cli, "check_private", lambda current, actual: checks.append((current, actual)))
     return api, selected, calls, checks
+
+
+@pytest.mark.parametrize("case", ["allowed", "peer", "queued", "failed", "budget"])
+def test_combined_guard_retains_private_check_and_post_peer_admission(monkeypatch, case):
+    api, selected, calls, checks = peer_api(monkeypatch, peer=case in {"peer", "queued"},
+        queued=case == "queued", failure=case == "failed", requests=237 if case == "budget" else 0)
+    if case in {"peer", "failed", "budget"}:
+        reason = {"peer": "PEER_CONFLICT", "failed": "API_UNAVAILABLE", "budget": "STORE_ADMISSION"}[case]
+        with pytest.raises(RecordError, match=reason):
+            (cli._source_admit(api, lambda api: cli.collection_guard(api, selected), 1)
+                if case == "budget" else cli.collection_guard(api, selected))
+    else:
+        cli.collection_guard(api, selected)
+    assert checks == [(api, selected)]
+    assert 1 <= len(calls) <= 12 and all(method == "GET" for method, _ in calls)
+    assert all("queued" not in path for _, path in calls)
+    if case == "budget":
+        assert api._requests == cli.ADMISSION_REQUESTS
+
+
+@pytest.mark.parametrize("before,allowed", [(227, True), (228, False)])
+def test_maximum_twelve_get_peer_check_keeps_original_admission_threshold(monkeypatch, before, allowed):
+    api, selected, calls, checks = peer_api(monkeypatch, requests=before)
+    own = {"id": 8001, "status": "in_progress", "run_attempt": 1,
+        "head_sha": selected["code_sha"], "path": cli.WORKFLOW}
+    rows = [own] + [{"id": i, "status": "in_progress", "path": ".github/workflows/ci.yml"}
+        for i in range(10000, 10999)]
+    class Wire:
+        def open(self, request, timeout):
+            path = request.full_url.removeprefix("https://api.github.com")
+            calls.append((request.method, path))
+            assert request.method == "GET"
+            if "?" in path:
+                page = int(path.rsplit("=", 1)[1])
+                value = {"total_count": 1000, "workflow_runs": rows[(page - 1) * 100:page * 100]}
+            else:
+                value = own
+            return Response(encoded(value), request.full_url,
+                headers=quota_headers(remaining=5000, reset=2000000000, limit=5000))
+    api._opener = Wire()
+    if allowed:
+        cli._source_admit(api, lambda api: cli.collection_guard(api, selected), 1)
+    else:
+        with pytest.raises(RecordError, match="DAILY_MARKET_STORE_ADMISSION"):
+            cli._source_admit(api, lambda api: cli.collection_guard(api, selected), 1)
+    assert len(calls) == 12 and api._requests == before + 12
+    assert checks == [(api, selected)]
+
+
+def test_remote_units_wraps_real_github_commit_and_preserves_expected(native, monkeypatch):
+    model, _ = native
+    api, selected, calls, checks = peer_api(monkeypatch)
+    peer_wire = api._opener
+    class Wire:
+        def open(self, request, timeout):
+            path = request.full_url.removeprefix("https://api.github.com")
+            if path.startswith(cli.PREFIX + "/actions/runs"):
+                return peer_wire.open(request, timeout)
+            value = model.request(request.method, path, json.loads(request.data) if request.data else None)
+            return Response(encoded(value), request.full_url,
+                headers=quota_headers(remaining=5000, reset=2000000000, limit=5000))
+    api._opener = Wire()
+    monkeypatch.setattr(cli, "GitHubAPI", lambda token: api)
+    monkeypatch.setattr(cli, "native_ready", lambda *a: None)
+    monkeypatch.setattr(cli.DailyQuotaWindows, "wait", lambda *a: True)
+    monkeypatch.setattr(cli, "_records_runtime_binding", lambda operation:
+        replace(model.binding, write_enabled=operation == "sync"))
+    opened = cli.remote_units("synthetic-proxy-only", selected)
+    store, fresh, actual = opened(True)
+    assert actual is api and isinstance(store.backend, SourceCollectionGuardStore)
+    assert isinstance(store.backend._backend, GitHubStore)
+    expected = model.git.head()
+    files = {"synthetic": b"body"}
+    commits = []
+    def commit(backend, actual_files, *, expected):
+        assert checks and calls[-1][1].endswith("/8001")
+        commits.append((backend, actual_files, expected))
+        return "synthetic-result"
+    monkeypatch.setattr(GitHubStore, "commit", commit)
+    assert store.backend.commit(files, expected=expected) == "synthetic-result"
+    assert commits == [(store.backend._backend, files, expected)]
+    assert commits[0][1] is files and len(calls) == 3
+    calls.clear()
+    readonly, _, _ = opened(False)
+    assert isinstance(readonly.backend, GitHubStore) and calls == []
+    assert not fresh().backend.binding.write_enabled
+
+
+@pytest.mark.parametrize("operation", ["status", "release-master"])
+def test_runtime_wires_separate_read_guard_and_release_options(tmp_path, monkeypatch, operation):
+    host = MasterHost()
+    event, env, api = native_runtime(tmp_path, monkeypatch, host.approved,
+        invocation=operation, admitted_at=host.now, actual_at=host.now)
+    seen = []
+    def peers(current, **context):
+        seen.append((current, context))
+        raise Conflict("SOURCE_COLLECTION_PEER_CONFLICT")
+    monkeypatch.setattr(cli, "require_no_peer_collection", peers)
+    def execute(**options):
+        options["read_guard"](api)
+        assert not seen
+        if operation == "release-master":
+            assert options["release_master"] is True and options["master_refresh"] == masters.POLICY
+            with pytest.raises(Conflict, match="PEER_CONFLICT"):
+                options["guard"](api)
+        return {"receipt": {"status": "read", "source_requests": 0}, "control": {}}
+    assert cli.run_runtime(event, env, tmp_path / "runtime", api=api, execute=execute,
+        open_unit=host.open) == 0
+    assert bool(seen) is (operation == "release-master")
+
+
+def test_remote_proxy_executes_real_commit_and_conflict_blocks_next_write(native, monkeypatch):
+    model, _ = native
+    api, selected, calls, checks = peer_api(monkeypatch)
+    own = {"id": 8001, "status": "in_progress", "run_attempt": 1,
+        "head_sha": selected["code_sha"], "path": cli.WORKFLOW}
+    conflict = [False]
+    class Wire:
+        def open(self, request, timeout):
+            path = request.full_url.removeprefix("https://api.github.com")
+            if path.startswith(cli.PREFIX + "/actions/runs"):
+                rows = [own] + ([{**own, "id": 8002}] if conflict[0] else [])
+                value = {"total_count": len(rows), "workflow_runs": rows} if "?" in path else own
+            else:
+                value = model.request(request.method, path, json.loads(request.data) if request.data else None)
+            return Response(encoded(value), request.full_url,
+                headers=quota_headers(remaining=5000, reset=2000000000, limit=5000))
+    api._opener = Wire()
+    monkeypatch.setattr(cli, "GitHubAPI", lambda token: api)
+    monkeypatch.setattr(cli, "native_ready", lambda *a: None)
+    monkeypatch.setattr(cli.DailyQuotaWindows, "wait", lambda *a: True)
+    monkeypatch.setattr(cli, "_records_runtime_binding", lambda operation:
+        replace(model.binding, write_enabled=operation == "sync"))
+    store, _, _ = cli.remote_units("synthetic-real-commit-only", selected)(True)
+    before = model.git.head()
+    files = {"submissions/synthetic-guard.json": b"{}"}
+    after = store.backend.commit(files, expected=before)
+    assert after == model.git.head() != before and model.writes == 1
+    posts = [payload for method, _, payload in model.requests if method == "POST"]
+    assert posts[0]["variables"]["input"]["expectedHeadOid"] == before
+    assert checks == [(api, selected)]
+    conflict[0] = True
+    with pytest.raises(Conflict, match="PEER_CONFLICT"):
+        store.backend.commit({"submissions/synthetic-again.json": b"{}"}, expected=after)
+    assert model.writes == 1 and model.git.head() == after
+
+
+@pytest.mark.parametrize("stage", ["calendar", "master", "price"])
+def test_daily_existing_http_boundaries_use_combined_guard_without_transport_changes(monkeypatch, stage):
+    host = MasterHost()
+    selected = {"operation": "update", "run_id": 8001, "code_sha": "a" * 40}
+    checks = []
+    monkeypatch.setattr(cli, "check_private", lambda api, actual: None)
+    def peer(api, **context):
+        checks.append(context)
+        if stage == "calendar":
+            current = daily.latest_cycle(host.fixture["fresh"]())
+            blocked = current is not None and any(row["status"] == "in-flight"
+                for row in current["cycle"]["calendars"].values())
+        elif stage == "master":
+            current = host.cycle()
+            blocked = current is not None and current["cycle"]["status"] == "master-pending"
+        else:
+            blocked = bool(host.price_clients)
+        if blocked:
+            raise Conflict("SOURCE_COLLECTION_PEER_CONFLICT")
+    monkeypatch.setattr(cli, "require_no_peer_collection", peer)
+    result = host.run(guard=lambda api: cli.collection_guard(api, selected), read_guard=lambda api: None)
+    assert result["receipt"]["reason_code"] == "SOURCE_COLLECTION_PEER_CONFLICT", result
+    assert result["receipt"]["calendar_source_requests"] == (0 if stage == "calendar" else 2)
+    assert result["receipt"]["master_source_requests"] == (2 if stage == "price" else 0)
+    assert result["receipt"]["price_source_requests"] == 0
+    assert checks and result["control"]["market_reference"] == host.approved["seed_reference"]
 
 
 def test_publication_adds_only_exact_daily_release_master(grant):

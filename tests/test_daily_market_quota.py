@@ -72,6 +72,8 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
                 value = deepcopy(native_model.main)
             elif path.endswith("/actions/runs/8001"):
                 value = deepcopy(native_model.run)
+            elif "/actions/runs?status=in_progress&" in path:
+                value = {"total_count": 1, "workflow_runs": [deepcopy(native_model.run)]}
             elif "/actions/workflows/ci.yml/runs?" in path:
                 value = deepcopy(native_model.ci)
             elif cacheable and path.startswith(cli.PREFIX + "/git/trees/"):
@@ -130,7 +132,8 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
         if not progress or row != progress[-1]:
             progress.append(row)
     options = dict(open_unit=opened, clock=lambda: host.now, admission_at=admitted,
-        guard=lambda api: cli.check_private(api, selected), capacity=cli.market_capacity,
+        guard=lambda api: cli.collection_guard(api, selected),
+        read_guard=lambda api: cli.check_private(api, selected), capacity=cli.market_capacity,
         monotonic=lambda: clock.elapsed, sleep=sleep, progress=report)
     first = host.run(**options)
     # Match the runtime's final native release check, which has its own API

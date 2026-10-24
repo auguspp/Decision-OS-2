@@ -286,6 +286,10 @@ class _CheckedReads:
                 raise Conflict("HEAD_CHANGED")
 
 
+class _UnitComplete(BaseException):
+    """原 checkpoint 已落盘；越过捕获层的Exception包装，由本单元边界收回。"""
+
+
 class _AdmissionStopped(RuntimeError):
     def __init__(self, error):
         super().__init__("DAILY_MASTER_ADMISSION_STOPPED")
@@ -316,10 +320,27 @@ class _GuardedClient:
 
 @timed("master.unit")
 def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory, clock,
-                    monotonic, sleep, guard=None, preflight=None):
-    """Continue one original page/attempt, or promote a complete saved checkpoint."""
+                    monotonic, sleep, guard=None, preflight=None, source_guard=None,
+                    settlement_guard=None):
+    """推进原页/尝试。source_guard启用分阶段：reservation/http来源准入，
+    accepted或retry响应落盘即返回；wait/promotion经settlement_guard独立预算。
+    未传新回调的应用调用方保留原guard与同单元promotion行为。
+    """
     guard = guard or (lambda: None)
-    require(callable(guard) and (preflight is None or callable(preflight)), "DAILY_MASTER_PREFLIGHT")
+    require(callable(guard) and (preflight is None or callable(preflight))
+        and (source_guard is None or callable(source_guard))
+        and (settlement_guard is None or callable(settlement_guard)), "DAILY_MASTER_PREFLIGHT")
+    phased = source_guard is not None
+    def settle(phase):
+        if settlement_guard is not None:
+            settlement_guard(phase)
+        else:
+            guard()
+    def source(phase):
+        if phased:
+            source_guard(phase)
+        else:
+            guard()
     report = {"status": "failed", "reason_code": None, "reference": None,
         "checkpoint_reference": None, "source_requests": 0, "page_count": 0,
         "cumulative_source_requests": 0}
@@ -345,11 +366,19 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
         try:
             with measure_phase("master.validate"):
                 _check_state(value, cycle, use, registry)
-            guard()
+            retry = value["control"]["retry"]
+            if phased and retry and retry["phase"] == "in-flight":
+                source("reservation")
+            else:
+                guard()
             saved = retain_market_checkpoint(value, registry, store, checkpoint_id=owner,
                 predecessor=report["checkpoint_reference"], fresh_reader=fresh,
                 custody_authorized=True, public_rights_confirmed=False)
             report["checkpoint_reference"], state = saved["reference"], saved["restored"]["state"]
+            if phased and (client is not None and client.requests >= 1
+                    and not (retry and retry["phase"] == "in-flight")
+                    or retry and retry["phase"] == "ready"):
+                raise _UnitComplete()
         except Exception as error:
             persistence_error = error
             raise
@@ -381,15 +410,24 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
         if stopped is not None:
             return emit(*stopped)
         if state is None or state["control"]["state"] != "complete":
-            guard()
-            client = (client_factory or (lambda: RelayHTTP(request_timeout_seconds=90)))()
-            client.validate_credential()
-            require(type(client.requests) is int and client.requests == 0, "DAILY_MASTER_FRESH_CLIENT")
-            session = RetryingRelay(_GuardedClient(client, guard), RETRY, sleep=wait,
+            retry = None if state is None else state["control"]["retry"]
+            waiting = phased and retry and retry["pending_wait_seconds"] is not None
+            if waiting:
+                settle("wait")
+                # 原 retry owner 只推进 waiting/ready；ready 落盘的 _UnitComplete
+                # 必须先于下一次 reservation/HTTP，故本单元不获取来源凭据。
+                session_client = None
+            else:
+                guard()
+                client = (client_factory or (lambda: RelayHTTP(request_timeout_seconds=90)))()
+                client.validate_credential()
+                require(type(client.requests) is int and client.requests == 0, "DAILY_MASTER_FRESH_CLIENT")
+                session_client = _GuardedClient(client, lambda: source("http"))
+            session = RetryingRelay(session_client, RETRY, sleep=wait,
                 clock=clock, monotonic=monotonic, deadline=monotonic() + 600)
             capture_registered(use, registry, session, max_pages=20, checkpoint=state,
                 checkpoint_writer=save_checkpoint,
-                pause_requested=lambda: "WORK_UNIT_COMPLETE" if client.requests >= 1 else None)
+                pause_requested=lambda: "WORK_UNIT_COMPLETE" if client is not None and client.requests >= 1 else None)
         require(state is not None, "DAILY_MASTER_CHECKPOINT_REQUIRED")
         stopped = _stop(state)
         if stopped is not None:
@@ -399,9 +437,10 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
         result = _result(cycle, use, state["capture"])
         inspect_security_master({"L": result}, registry=registry, exchange=venue)
         try:
-            guard()
+            settle("promotion")
         except RecordError as error:
-            if error.args == ("DAILY_MARKET_STORE_ADMISSION",):
+            if error.args in {("DAILY_MARKET_STORE_ADMISSION",),
+                    ("DAILY_MARKET_STORE_SETTLEMENT_BUDGET",)}:
                 # No promotion write was attempted. The complete checkpoint is
                 # already independently retained; the next unit needs no source.
                 return emit("partial", "RELAY_STORAGE_BUDGET")
@@ -416,6 +455,10 @@ def run_master_unit(cycle, venue, registry, store, fresh_reader, client_factory,
             raise
         report["reference"] = saved["reference"]
         return emit("complete")
+    except _UnitComplete:
+        report["checkpoint_advanced"] = True
+        stopped = _stop(state)
+        return emit(*stopped) if stopped is not None else emit("partial", "RELAY_WORK_UNIT_COMPLETE")
     except Exception as error:
         uncertain = persistence_error is not None or isinstance(error,
             (UnknownWrite, CheckpointWriteError, CheckpointStateError, _AdmissionStopped))

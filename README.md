@@ -4,6 +4,12 @@
 
 这是 `auguspp/Decision-OS-2` 的代码与工程规范入口。产品帮助用户主动发现现实/产业变化、开展 Quick 与 Full Research、持续检验判断，并支持独立人工 Decision；不推断持仓、不自动交易。
 
+## 工作台与内核
+
+自建重心是同一份可接续的研究、证据与判断资产，信息取得、AI执行和日常交互优先复用 WorkBuddy 等成熟工作台。工作台从[本地只读控制台](docs/delivery/local-console.md)或现役 Actions 读取同一 records；保存沿[研究宿主的现有操作](docs/research/runtime.md#kernel-operations)，不另建研究主库或模型后台。WorkBuddy是优先候选，实际读、写、定时和独立恢复仍分别验收，现役任务在完成切换前保持原责任。
+
+内核保留来源与版本、研究前驱与重要未知、确定性 Odds、Full 后 Watch、人工确认边界和按需 Review。来源、宿主及存储部署可以按合同替换；当前 FTShare、GitHub main/records、单主外部时钟与完整 CI 继续服务现役用途。普通部分研究已经可以保管，默认 Full 的方法核查与保存资格分开；新的外部方法接收需其实际实现与验收。路线和范围见[#221](https://github.com/auguspp/Decision-OS-2/issues/221)及[业务责任表](docs/architecture/workflow-estate.md#business-responsibilities)。
+
 ## 日常阅读
 
 打开 [每日阅读与行情更新](https://github.com/auguspp/Decision-OS-2/actions/workflows/daily-market.yml)，手动选择 `status` 并填写当前 `main` 的确切代码版本。现仓已按用户明确确认配置[公开运行授权](config/public-runtime.json)：通过原生准入后正常读取已存行情、研究、发现状态和最新已存 Brief，在本次运行的 Summary 看内容日期，下载产物中的 `reading-room.html` 阅读全文。新生成页面不等于今天有新行情或 Brief。
@@ -26,6 +32,7 @@
 |---|---|
 | 新对话接手施工 | [AGENTS.md](AGENTS.md) → [当前阶段 #3](https://github.com/auguspp/Decision-OS-2/issues/3) → 具体任务/PR |
 | 看完整产品与目标架构 | [最终目标设计 v1.2-final](docs/decision-os-2.0-design.md) |
+| 用 WorkBuddy 等宿主接续同一研究 | [本地只读控制台](docs/delivery/local-console.md) · [现有业务操作映射](docs/research/runtime.md#kernel-operations) |
 | 看实施顺序、依赖和收口 | [实施基线 v0.2](docs/implementation-baseline.md) |
 | 看雷达、资料、研究与交付的完整施工落点 | [36项能力地图](docs/implementation-baseline.md#coverage) · [工作组与依赖](docs/implementation-baseline.md#work-packages) |
 | 查询Relay功能、接口参数说明和已有证据 | [共享功能登记与只读查询](docs/sources/relay-registry.md) |

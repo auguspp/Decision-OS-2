@@ -34,7 +34,7 @@
       "disposition": "keep-core",
       "responsibility": "Ready/main gate: partitions, contracts and the merge-eligible receipt",
       "consumers": "every pull request; docs/engineering/ci-contract.md",
-      "exit": "not retired: the pull_request event itself only exists on GitHub, so the receipt cannot be produced anywhere else"
+      "exit": "retained in the current GitHub deployment with full CI; any platform replacement must independently verify equivalent native events, protections and reviewable receipts"
     },
     {
       "file": "research-runtime.yml",
@@ -50,9 +50,9 @@
         "decision_kernel.interfaces.research_runtime"
       ],
       "disposition": "keep-core",
-      "responsibility": "The only business writer for research, hosted handoff, odds and decision preparation",
+      "responsibility": "Current hosted receiver for research, hosted handoff, odds and decision preparation through the existing store and single-writer/CAS contract",
       "consumers": "the single remote writer; 54 test modules reference research_runtime",
-      "exit": "not retired: write operations need the single GitHub writer with CAS; its read operations are separately eligible for the local console",
+      "exit": "retained in the current deployment until an authorized replacement proves the same write, exact readback and unknown-write reconciliation contract; eligible read operations already have a local console",
       "note": "39 of the last 51 dispatches were read-only jobs; those reads do not need a runner"
     },
     {
@@ -69,9 +69,9 @@
         "decision_kernel.interfaces.store_runtime"
       ],
       "disposition": "keep-core",
-      "responsibility": "Records backup, integrity and health operations that must run beside the store",
+      "responsibility": "Current execution adapter for records backup, integrity and health; independent recovery is required, execution beside the store is not a permanent constraint",
       "consumers": "docs/architecture/versioned-store.md, docs/architecture/github-store.md",
-      "exit": "not retired: a backup that runs on the reader's laptop is not a backup"
+      "exit": "retained until a replacement proves authority, integrity, independent recovery and rollback; a local mirror or reader cache alone does not establish a backup"
     },
     {
       "file": "daily-market.yml",
@@ -111,7 +111,7 @@
       "disposition": "keep-ops",
       "responsibility": "Bounded public announcement-directory metadata capture into authorized records",
       "consumers": "tests/test_announcement_discovery.py; hosted handoff announcements",
-      "exit": "not retired: it is one of only two self-starting workflows and holds the daily capture mandate"
+      "exit": "retained for the current daily capture mandate; it is the only present file with a native schedule, while daily-market is dispatched by the external clock; replacement needs equivalent scope, timing, rights and consumer adoption"
     },
     {
       "file": "market-custody.yml",
@@ -293,7 +293,7 @@
       "disposition": "retire-candidate",
       "responsibility": "Explicit fixed RSS capture or exact stored read",
       "consumers": "docs/sources/rss-intake.md, docs/delivery/news-desk.md; 3 test modules",
-      "exit": "retire only after proving news-intake covers the same RSS range and the news desk reads no retained RSS slice; until then it stays and no file is removed",
+      "exit": "retire new capture only after a mature replacement proves the same feed scope, timing, rights and failure semantics with actual consumer adoption and rollback; historical RSS references and failure receipts remain readable",
       "note": "last run 2026-10-16: no new duty since, but zero recent use is not the same as no consumer"
     },
     {

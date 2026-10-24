@@ -22,7 +22,7 @@ def configure(actions) -> None:
     usage.add_argument("--input", type=Path, required=True, help="external: exact saved reference only; default: native receipts and research selector")
     audit = actions.add_parser("audit-numbers", help="recompute declared source-bound numbers; read only, not economic approval")
     select_numbers = audit.add_mutually_exclusive_group(required=True)
-    select_numbers.add_argument("--input", type=Path, help="research-numbers-v1 JSON")
+    select_numbers.add_argument("--input", type=Path, help="research-numbers-v1 or v2 JSON; v2 checks retained-by-cutoff times")
     select_numbers.add_argument("--ref", type=Path, help="exact saved research BlobRef; recompute its numerical appendix")
     prepare = actions.add_parser("prepare-research", help="prepare researcher guidance and exact context; no execution")
     select = prepare.add_mutually_exclusive_group(required=True)

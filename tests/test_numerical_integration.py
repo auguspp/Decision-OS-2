@@ -6,7 +6,7 @@ import subprocess
 from test_numerical_audit import spec
 
 
-def _public_store(tmp_path):
+def _public_store(tmp_path, *, timed=False):
     from test_github_store import GitAPI
     from decision_kernel.infrastructure.github_store import GitHubStore
     from decision_kernel.application.versioned_store import VersionedStore
@@ -18,9 +18,81 @@ def _public_store(tmp_path):
     api.meta["private"] = False
     store = VersionedStore(GitHubStore(replace(api.binding, write_enabled=True), api))
     csv = "subject,period,scope,unit,revenue,cost\nsynthetic-issuer,2025-FY,consolidated,CNY_10K,600,450\n"
-    ref = store.put_source("numeric-source", SourceInput("numbers", "dataset", "Synthetic numbers", "synthetic:numeric", csv))
+    times = dict(published_at="2026-10-22T09:00:00+08:00",
+                 acquired_at="2026-10-23T09:00:00+08:00") if timed else {}
+    ref = store.put_source("numeric-source", SourceInput("numbers", "dataset", "Synthetic numbers", "synthetic:numeric", csv, **times))
     payload = spec(); payload["sources"] = [asdict(ref)]
     return api, store, payload, ref
+
+
+def _timed_spec(payload):
+    return {**payload, "schema": "research-numbers-v2",
+            "knowledge_cutoff": "2026-10-23T08:00:00Z",
+            "evaluated_at": "2026-10-24T08:00:00Z"}
+
+
+def test_v2_native_host_time_failure_is_read_only_and_preserves_independent_calculation(tmp_path, monkeypatch):
+    from decision_kernel.application import versioned_store
+    from decision_kernel.interfaces.research_runtime import run_command
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2026-10-23T07:00:00Z")
+    api, store, old, ref = _public_store(tmp_path, timed=True)
+    payload = _timed_spec(old)
+    writes, head = api.writes, api.git.head()
+    inputs = dict(operation="audit-numbers", code_sha="a" * 40, payload=json.dumps(payload))
+    good = run_command(api.binding, api=api, inputs=inputs, code_sha="a" * 40,
+                       output=tmp_path / "timed-good", run_id="1", attempt="1")
+    assert good["status"] == "completed" and good["result"]["status"] == "checked"
+    assert good["result"]["schema"] == "research-numerical-audit-v2"
+    assert good["result"]["knowledge_cutoff"] == payload["knowledge_cutoff"]
+    payload["knowledge_cutoff"] = "2026-10-23T06:00:00Z"
+    context = {key: payload["inputs"][0][key] for key in ("subject", "period", "scope")}
+    payload["inputs"].append(dict(id="independent-assumption", value="2", unit="ratio",
+        assumption="Synthetic sensitivity assumption; not an observed source", **context))
+    payload["calculations"].append(dict(id="independent-result", operation="identity",
+        operands=["independent-assumption"], unit="ratio", **context))
+    inputs["payload"] = json.dumps(payload)
+    bad = run_command(api.binding, api=api, inputs=inputs, code_sha="a" * 40,
+                      output=tmp_path / "timed-bad", run_id="2", attempt="1")
+    assert bad["status"] == "numerical-not-cleared" and bad["write"] == "not-requested"
+    assert bad["result"]["inputs"][0]["status"] == "blocked"
+    assert bad["result"]["calculations"][0]["status"] == "blocked"
+    assert bad["result"]["calculations"][-1]["display_number"] == "2.00"
+    assert bad["result"]["calculations"][-1]["status"] == "conditional"
+    assert api.writes == writes and api.git.head() == head
+
+
+def test_v2_checkpoint_is_recovered_by_fresh_reader_and_does_not_retime_old_evidence(tmp_path, monkeypatch):
+    from decision_kernel.application import versioned_store
+    from decision_kernel.application.numerical_audit import NumericalAudit
+    from decision_kernel.application.research_workflow import ResearchWorkflow
+    from decision_kernel.application.versioned_store import VersionedStore
+    from decision_kernel.domain.records import BlobRef
+    from decision_kernel.domain.research_work import ResearchRequest, ResearchProgress
+    from decision_kernel.infrastructure.github_store import GitHubStore
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2026-10-23T07:00:00Z")
+    api, store, old, ref = _public_store(tmp_path, timed=True)
+    payload = _timed_spec(old)
+    audit = NumericalAudit(store).audit(payload)
+    request = ResearchRequest.from_dict(dict(case_id="numeric-time", kind="full", mandate="Synthetic time boundary",
+        questions=[dict(question_id="q", text="Synthetic cash sensitivity")]))
+    progress = ResearchProgress.from_dict(dict(body="Synthetic narrative" + audit["appendix"],
+        findings=[dict(question_id="q", status="open", finding="Still needs analysis",
+                       remaining_kind="acquired-unanalysed", next_action="Continue substantive analysis")],
+        sources=[asdict(ref)], stop="continue", stop_reason="Time checks do not conclude research"))
+    saved = ResearchWorkflow(store).checkpoint(request, progress, submission_id="timed-save", revision_id="r1")
+    assert saved["numerical_audit"]["schema"] == "research-numerical-audit-v2"
+    assert saved["numerical_audit"]["knowledge_cutoff"] == payload["knowledge_cutoff"]
+    assert saved["numerical_audit"]["status"] == "checked"
+    head, writes = api.git.head(), api.writes
+    monkeypatch.setattr(versioned_store, "_now", lambda: "2035-01-01T00:00:00Z")
+    fresh = VersionedStore(GitHubStore(api.binding, api))
+    restored = NumericalAudit(fresh).saved(BlobRef(**saved["reference"]))
+    assert restored["saved_render"] == "matches-recalculation"
+    assert restored["appendix"] == audit["appendix"]
+    assert restored["input_sha256"] == audit["input_sha256"]
+    assert restored["evaluated_at"] == payload["evaluated_at"]
+    assert ResearchWorkflow(store).checkpoint(request, progress, submission_id="timed-save", revision_id="r1") == saved
+    assert api.git.head() == head and api.writes == writes
 
 
 def test_host_audit_is_read_only_and_keeps_failed_numeric_diagnostics(tmp_path):
@@ -122,3 +194,35 @@ def exercise_installed_numbers(command, outside, python, env, executable, store_
     assert failed.returncode == 2
     assert json.loads(failed.stdout)["calculations"][0]["error"] == "CLAIMED_DISPLAY_MISMATCH"
     assert command("current", "--case-id", "numeric")["reference"] == saved["reference"]
+
+    # The same cold installation receives a time-aware successor. Derive the
+    # cutoff from its actual retained manifest, never from a fabricated receipt.
+    timed_source = {**source, "source_id": "numeric-timed",
+                    "published_at": "2020-01-01T00:00:00Z", "acquired_at": "2020-01-02T00:00:00Z"}
+    input_file.write_text(json.dumps(timed_source), encoding="utf-8")
+    timed_ref = command("put-source", "--submission-id", "installed-timed-source", "--input", str(input_file))
+    source_ref_file = outside / "numeric-timed-source-ref.json"
+    source_ref_file.write_text(json.dumps(timed_ref), encoding="utf-8")
+    retained_at = command("read-source", "--ref", str(source_ref_file))["manifest"]["stored_at"]
+    timed = {**spec(), "schema": "research-numbers-v2", "sources": [timed_ref],
+             "knowledge_cutoff": retained_at, "evaluated_at": retained_at}
+    input_file.write_text(json.dumps(timed), encoding="utf-8")
+    checked = command("audit-numbers", "--input", str(input_file))
+    assert checked["status"] == "checked" and checked["schema"] == "research-numerical-audit-v2"
+    request_file.write_text(json.dumps({**request, "predecessor": saved["reference"]}), encoding="utf-8")
+    progress_file.write_text(json.dumps({**progress, "body": "Synthetic successor" + checked["appendix"],
+                                         "sources": [ref, timed_ref]}), encoding="utf-8")
+    successor = command("checkpoint-research", "--request", str(request_file), "--input", str(progress_file),
+                        "--submission-id", "installed-timed-research", "--revision-id", "r2")
+    assert successor["numerical_audit"]["status"] == "checked"
+    assert successor["numerical_audit"]["knowledge_cutoff"] == retained_at
+    ref_file.write_text(json.dumps(successor["reference"]), encoding="utf-8")
+    recovered = command("audit-numbers", "--ref", str(ref_file))
+    assert recovered["saved_render"] == "matches-recalculation"
+    assert recovered["input_sha256"] == checked["input_sha256"]
+    timed["knowledge_cutoff"] = "2020-01-03T00:00:00Z"
+    input_file.write_text(json.dumps(timed), encoding="utf-8")
+    too_late = subprocess.run([str(executable), "store", "--path", str(store_path), "audit-numbers", "--input", str(input_file)],
+                             cwd=outside, env=env, capture_output=True, text=True)
+    assert too_late.returncode == 2 and json.loads(too_late.stdout)["inputs"][0]["status"] == "blocked"
+    assert command("current", "--case-id", "numeric")["reference"] == successor["reference"]

@@ -19,7 +19,7 @@
 | 失败码 | 含义 |
 |---|---|
 | `LOCAL_READ_REFUSES_WRITE_COMMAND` | 不在只读白名单里（写、reconcile 一律不在） |
-| `LOCAL_READ_PRIVATE_CUSTODY_REQUIRES_GITHUB` | `prepare-decision` / `read-decision-preparation`：私有决策准备不落笔记本 |
+| `LOCAL_READ_PRIVATE_CUSTODY_REQUIRES_GITHUB` | `prepare-decision` / `read-decision-preparation` / `review-decision-preparation`：本地白名单尚不支持其准备稿出口适配与部署资格；错误码保留历史名称 |
 | `LOCAL_READ_REQUIRES_A_BINDING` | 必须给 `--binding`；语法完整地选择 `--path` 也不能接入本地合成 store |
 | `LOCAL_READ_TOKEN_REQUIRED` | 必须先设 `DECISION_OS_READ_TOKEN` |
 | `LOCAL_READ_REFUSES_STORE_TOKEN` | 环境里出现 `DECISION_OS_STORE_TOKEN` 就拒绝，避免误用可写令牌 |
@@ -38,7 +38,7 @@ binding 先通过共享结构与策略校验。`visibility=private` 且 `private
 - 交付：`verify-delivery`、`open-delivery`、`read-artifact`
 - Odds：`odds_commands.READ_COMMANDS` 全部
 
-不在白名单：所有 `*WRITE*`、所有 `reconcile-*`、`put-source`、`submit-revision`、私有决策准备两条。
+不在白名单：所有 `*WRITE*`、所有 `reconcile-*`、`put-source`、`submit-revision`，以及上表的三条决策准备命令。
 
 ## 回执
 
@@ -61,11 +61,15 @@ binding 先通过共享结构与策略校验。`visibility=private` 且 `private
                      "answered": 1, "declined": 0},
   "blob_content": {"schema": "local-git-blob-v1", "mirror": "local-git-graph",
                    "answered": 1, "declined": 0},
+  "git_process": {"schema": "local-git-process-v1", "mirror": "local-git-graph",
+                  "processes": 6, "batch_processes": 1, "batch_requests": 4, "mode": "batch"},
   "started_at": "…", "finished_at": "…", "duration_ms": 820, "exit_code": 0
 }
 ```
 
 `ancestry` 保留原有祖先证明计数；`tree_inventory` 单独记录完整树目录尝试，`blob_content` 单独记录确切正文字节尝试。各项 `answered` 是本地对象图答上的次数，`declined` 是本地尝试拒绝、交回原远端路径的次数；`mirror=absent` 表示未提供镜像，启用时为 `local-git-graph`。本地完整输出仍须通过原 Store 与应用层校验，计数不证明整个读取成功，也不记录提交 id、路径、正文或凭据。镜像落后或对象缺失可以导致回落；目录超限、正文损坏或不支持的仓库配置也会导致回落，不能把所有 `declined` 都诊断为需要 fetch。
+
+`git_process` 是附加进程诊断。`processes` 统计本次共享镜像 owner 成功创建的 Git 子进程，包含镜像可用性、partial 配置、能力探测、`ls-tree`、`merge-base` 以及 batch 子进程；`batch_processes` 是其中 batch 子进程数，`batch_requests` 是已尝试发送的对象协议请求数。它们不统计整个 CLI 或宿主的全部进程，也不统计 HTTP 请求或给出宿主耗时估计。`mode=batch` 表示本次已采用现代 Git 的批量对象通道，`legacy` 表示回退到原逐次进程路径，`unprobed` 表示尚未完成能力选择；无镜像时 `mirror=absent`、三项计数为 0、`mode=unprobed`。以上字段不包含 Git 参数或对象内容。
 
 回执说明的是**这次读所声明的身份与执行情况**，不是「已验证」。`identity.token=read-only-required` 表示凭据要求，不证明 token 的实际权限已被核验；只读权限资格须由宿主提供原生权限依据。回执不能替代 Ready/Gate 原件，也不能替任何研究提交或 Human Decision 签字。
 
@@ -155,7 +159,7 @@ python -m decision_kernel.interfaces.local_read \
 这条加速有以下边界：
 
 - **远端身份与权限仍是前提。** 仓库 public 核验、live ref、确切 commit→tree 关系，以及原有 marker、blob、正文与摘要校验，继续走原路径。镜像分支头不能充当远端当前 head，任意本地 tree id 也不能取得目录读取资格。
-- **只回答确切对象，不更新镜像。** `LocalGitTree` 不读取本地 refs 或工作区内容，不 fetch、不写入；它拒绝 partial clone / promisor 仓库，并在自己的 Git 调用中禁用协议与替换对象。这些限制用于新树目录读取，不扩大为旧祖先适配器的环境隔离保证。
+- **只回答确切对象，不更新镜像。** 目录与正文读取只取已核对象 id，不用本地 refs 或工作区确定远端当前状态，不 fetch、不写入；共享 reader 拒绝 partial clone / promisor 仓库，并在自己的 Git 调用中禁用协议与替换对象。本地控制台的祖先查询也使用这一受限 runner；直接构造的独立 `LocalGitAncestry(path)` 保留原路径，不把此接线扩大为所有祖先适配器的环境隔离保证。
 - **完整回答或回落。** 对象缺失、目录不完整、超限或仓库配置不支持时，本地不返回部分树冒充完整目录，只交回原有的一次树目录 GET；不新增重试或请求预算。远端仍可能失败，不能把回落记成读取成功。
 - **执行机器与 Git 对象库仍须可信。** 使用本地 Git 对象不等于审计整个 object store，也不代替远端可见性及原有记录校验。
 
@@ -175,6 +179,14 @@ python -m decision_kernel.interfaces.local_read \
 
 `tests/test_git_blob.py`、`tests/test_local_blob_mirror.py` 与 `tests/test_local_read.py` 保护上述字节、回落、同快照消费者及撤权边界。合成测试可以证明请求减少与结果相同；Windows 上的实际耗时仍须按 #249 的原机回执验收。回退本组时同时回退接线、正文回执与 Catalogue 作用域；既有 records、历史 blob 与引用格式没有迁移，原远端 reader 保持可读。
 
+## 一次命令内复用 Git 对象进程
+
+启用镜像后，一次本地命令只构造一个共享对象 reader，供祖先、目录与正文读取使用。首个对象问题先核镜像配置，再实际探测 Git 是否支持 `--no-lazy-fetch`。支持时，一次命令内复用 `git cat-file --batch-command` 的对象类型与原始正文通道，并在所有后续 Git 进程上显式禁止懒取；目录仍用有界 `ls-tree`，祖先关系仍执行真实 `merge-base --is-ancestor`。这不建立提交、祖先关系或正文缓存，也不缓存实时权限。
+
+不支持该原生开关的旧 Git 继续使用逐次进程读取，每个对象或实际图查询仍先核 partial/promisor 配置。现代路径的配置预检只属于当前命令；下一次 CLI 调用重新构造 reader、重新预检。镜像配置变化不继承上次资格。对象缺失、协议损坏或限制失败仍按原范围回到 native API，不重启损坏的 batch 通道、不新建客户端，也不增加原请求预算。
+
+原字节、行数、缓冲和时限上限保持。命令正常完成、执行失败、`KeyboardInterrupt` / `SystemExit` 或回执写入失败时，都关闭本次 reader 的通道并收尾子进程；关闭不能遮蔽原错误或妨碍令牌清理。进程只服务当前命令，没有跨命令常驻进程、持久缓存或自动 fetch。单个 Git 进程减少是否改善原机端到端耗时，仍由同语料、同镜像的原机回执证明。
+
 ## 稳定边界：为什么工作台可以直接调它
 
 本控制台对上层暴露**退出码、stdout 上的 JSON 结果，以及 stderr 上的错误或执行回执**；回执的生成阶段见上文。任何宿主——WorkBuddy 技能、连接器、MCP 工具、一个 shell 脚本——按这个契约调用即可，不需要知道 Python 内部结构。反过来说，换宿主也不改本仓的读实现，这正是「只保留核心与连接性」的落点。
@@ -185,7 +197,7 @@ python -m decision_kernel.interfaces.local_read \
 - **reconcile**：它能重放既有意图，不是读。
 - **定时**：`announcement-discovery` 的 `schedule` 与 `daily-market` 的外部单主时钟。
 - **Ready/Gate 原件**：`pull_request` 事件只发生在 GitHub。
-- **私有决策准备**：内容属私有保管，必须走核过可见性的私有适配器。
+- **决策准备的三条操作**：继续走其已核准备稿出口适配器与部署资格，本地白名单尚未接入；不把历史 `PRIVATE_ONLY` 名称当成当前内容一律私有的声明。
 
 GitHub 上的对应 workflow **全部保留**：本地优先不等于停用入口，回退随时可用。
 
@@ -193,5 +205,8 @@ GitHub 上的对应 workflow **全部保留**：本地优先不等于停用入�
 
 ```bash
 python -m pytest tests/test_local_read.py -q      # 白名单、预检与实际可见性、正常读取和导出、回执
+python -m pytest tests/test_local_read_batch.py -q # 共享图与对象读取、命令结束收尾、下一次配置预检
 python -m pytest tests/test_workflow_estate.py -q # 入口清单与仓库一致
 ```
+
+进程复用的维护范围是 `git_batch.py`、`LocalGitTree` 的可选通道，以及本地控制台与祖先适配器的共享接线；独立调用默认不启用。退役该复用时同步退出其专属协议测试、收尾测试与 `git_process` 诊断接线，保留原目录/正文资格、远端回落、读取作用域及其共享保护，不改写 records 或历史引用。

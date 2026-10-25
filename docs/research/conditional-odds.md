@@ -1,6 +1,6 @@
 # Odds：冻结研究、条件估值与价格重算
 
-责任 [#60](https://github.com/auguspp/Decision-OS-2/issues/60)，落实[设计第14章](../decision-os-2.0-design.md#chapter-14)及[实施基线§7.1](../implementation-baseline.md#contracts)。本入口负责无概率条件计算及其明确价格输入，包含后文FTShare留存收盘接线；[概率Odds](probability-odds.md)、[Watch](odds-watch.md)各有独立合同，不代签Decision。原Full、SourceRef、原字节附件、提交日志及Git备份继续承担各自责任；不建立新数据库、研究current或行情提供方。
+责任 [#60](https://github.com/auguspp/Decision-OS-2/issues/60)，落实[设计第14章](../decision-os-2.0-design.md#chapter-14)及[实施基线§7.1](../implementation-baseline.md#contracts)。本入口负责无概率条件计算及其明确价格输入，包含后文FTShare与Relay留存收盘接线；[概率Odds](probability-odds.md)、[Watch](odds-watch.md)各有独立合同，不代签Decision。原Full、SourceRef、原字节附件、提交日志及Git备份继续承担各自责任；不建立新数据库、研究current或行情提供方。
 
 ## 能做什么，不能做什么
 
@@ -11,7 +11,7 @@
 
 两者都不自动年化、不折现、不换币、不计算费用/税费、现金再投资、期望收益或胜率。当前价值载荷不得有未来目标日和另加分配现金，不能把Full已经贴现的每股估值塞进未来收益。目标日是退出价值日期，不是盈利预测年份的任意简称。
 
-`probability_status=not-established`，只允许明确声明世界，不默认等权；加权输出为null。`odds-price-v1`不接受显式概率、所谓qualified-market或未知方法；FTShare合格留存价必须沿后文市场输入恢复真实来源。**这不阻止无概率条件分析。** 概率Odds沿独立入口建立真实概率/风险/行情资格，不把无概率限制当作产品取消，也不能从机构预测数或后来涨幅补概率。
+`probability_status=not-established`，只允许明确声明世界，不默认等权；加权输出为null。`odds-price-v1`不接受显式概率、所谓qualified-market或未知方法；合格留存价必须沿后文市场输入恢复真实来源。**这不阻止无概率条件分析。** 概率Odds沿独立入口建立真实概率/风险/行情资格，不把无概率限制当作产品取消，也不能从机构预测数或后来涨幅补概率。
 
 ## 有限输入与精确绑定
 
@@ -60,6 +60,25 @@ CLI原命令可给`--registry docs/sources/relay-registry.json`，因为FTShare�
 
 原生GitHub宿主在恢复FTShare集合时复用现役MarketRadar的`GitMarketReader`，研究规格和结果仍走原Store。来源快照只读、沿同一绑定和同一个GitHub API预算，退出前重查可见性和可达性；保存后的独立reader重新取得原始字节，不继承写入者的来源快照。Watch的操作内引用缓存只透传这项原底层能力，不放宽512请求上限。
 
+### 已留存 Relay 原始收盘价与同一条件计算
+
+同一组 `calculate-odds/save-odds/read-odds` 也接收既有 `odds-retained-close-v1` 市场输入，复用概率Odds已经使用的原Relay适配器。外层仍为 `{spec_ref,market,market_policy,evaluated_at}`，政策与评价时点沿上节；`market` 必须提供 `schema/price_id/calendar_ref/daily_ref/master_ref/exchange/start/end`。三个引用是原日历、原始日线和证券主表的完整SourceRef，`start/end`为原查询的八位日期，明确使用`end`当天收盘；不接受调用者直接填收盘数值或资格布尔值。
+
+两种已支持来源的边界分别保留：
+
+| 市场输入 | 恢复的价格类型 | 原时点资格 |
+|---|---|---|
+| `odds-ftshare-close-v1` | `retained-ftshare-raw-close` | 报价日北京时间18:35以后实际取得并评价；18:35是观察政策截止，不是供应商tick |
+| `odds-retained-close-v1` | `retained-relay-raw-close` | 原日线捕获和评价均在报价日结束后的本地日期；输出23:59:59是保守日期边界，不是供应商tick |
+
+Relay路径逐一恢复并校验原查询、登记快照、日历、证券、CNY普通A股、上市状态、实际捕获时刻及明确的报价/主表/资本结构年龄政策。错期、缺失或损坏原件直接失败；不换日期、来源或提交键重试。两条适配均为已保管的沪深原始日收盘用途，`source_requests=0`；不能据此认证最新价、实时可交易价、前复权完整历史或历史PIT，也不改变现役FTShare主源和采集预算。
+
+同一冻结规格、同一有效价格数值通过同一80位Decimal算术，逐世界结果相同；原来源、引用、捕获时刻和两种截止语义仍分别保留。相同数值不证明两个独立上游，不更新经营判断、概率或人工接受。新增Relay结果沿现有`conditional-odds-retained-close-v1`保管，保存、未知写对账、独立读回、Odds Book和Room使用同一原Store。Book核市场schema与价格kind/price_id的对应，只呈现已存声明；打开`read-odds`才按原输入重新恢复和重算。
+
+本项加性接线不改变已冻结Watch的来源政策：条件Watch的合格留存政策仍为`retained-ftshare-raw-close`，传入Relay市场输入继续拒绝，不自动换源或启用暂停Watch。概率Watch已有的Relay支持沿其原合同。真实连接器取证、来源公开权利、研究采用和生产迁移仍各自验收。
+
+旧FTShare、`odds-price-v1`声明价和Relay观察结果保持原重演。新reader与writer同组交付；一旦保存Relay条件结果，回退时先停止新增该类写入，并保留支持该类型的reader，不能只退回旧二进制使新档案失读。没有第二套存储、自动回退来源或新的后台运行。
+
 ## 保存与真正的价格刷新
 
 先提交原研究，再冻结其受支持估值产出；一份规格绑定一个真实研究版本和其正文摘要，不模拟旧ResearchSnapshot。冻结对象与各价格结果沿原ResearchArtifacts保存为application/json，路径仍是`research/artifacts/.../manifest.json + content.bin`。结果内含确切规格引用、规格摘要、研究引用、价格时钟与证据、原未解问题、方法版本及逐世界计算。没有第二current、删除接口或后台行情请求。
@@ -101,6 +120,8 @@ FTShare合格收盘也可作为第二个价格输入：保存包装仍是`{calcu
 测试覆盖原两价格正例、无概率边界、当前价值非回报、股类币种/股本/时点/分红/来源定位、真Git保存读回、旧研究变化提示、同意图冲突/未知写只读对账、宿主权限和原同一次cold-wheel安装。自查不是独立批准；CI不是经济研究。没有为工程构造真实公司判断或补概率。
 
 FTShare接线继续直接用现役集合、单股原始响应恢复与Decimal，不引入新的市场reader或第三方计算包。专属回归`tests/test_ftshare_odds.py`用真实Store保管合成的两个原始查询，实际进入条件/概率Odds和两类Watch、独立Git读回及原命令；检查同日18:35截止前拒绝、截止后消费、次日原输入重演、陈旧、错期、来源hold、未保管、伪装复权、损坏和不匹配Registry。合成工程验证不代签真实研究概率或全市场可靠性。退出FTShare采用时退该窄适配、对应输入/消费者与专属回归，继续保留旧结果和原资料的历史读取义务。
+
+Relay条件接线直接复用原`qualify_close`和两个有限适配，无新依赖。`tests/test_retained_conditional_odds.py`保护两个已保管输入的同规格数值一致、确切恢复与正常Book/Room消费，并保留错源/时点限制和Watch拒绝换源；现役宿主与同一次包外安装消费覆盖原保存、独立读取及未知写对账。该组测试随此加性能力维护，退出新增写入时仍须保留已存结果的reader及其恢复验证，不为测试重新调用真实来源。
 
 退出本能力时同步处理独立domain/application/odds_commands、CLI/宿主路由和专属测试；原artifact/store及历史方法/引用继续可读，不清理用户资料。普通反向PR回退工程，数据副作用不随代码回退消失。
 

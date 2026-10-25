@@ -152,10 +152,11 @@ class ConditionalOdds:
         frozen = self.read_spec(spec_ref)
         if "market" in payload:
             from pathlib import Path
-            from decision_kernel.application.odds_market import FTSHARE_CLOSE_SCHEMA, qualify_close
+            from decision_kernel.application.odds_market import CLOSE_PRICE_KINDS, qualify_close
             from decision_kernel.application.relay_registry import RelayRegistry
             require(isinstance(payload["market"], dict)
-                and payload["market"].get("schema") == FTSHARE_CLOSE_SCHEMA, "ODDS_MARKET_ADAPTER_UNSUPPORTED")
+                and isinstance(payload["market"].get("schema"), str)
+                and payload["market"]["schema"] in CLOSE_PRICE_KINDS, "ODDS_MARKET_ADAPTER_UNSUPPORTED")
             evaluated = timestamp(payload["evaluated_at"])
             policy = validate_close_policy(payload["market_policy"])
             require(evaluated <= self.clock(), "ODDS_EVALUATION_IN_FUTURE")

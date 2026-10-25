@@ -14,6 +14,7 @@ from decision_kernel.application.conditional_odds import (
     ConditionalOdds, RECORD_LAYOUTS, RESULT_RECORD, SPEC_RECORD,
 )
 from decision_kernel.application.market_reading_scope import SourceReads, operation_failure
+from decision_kernel.application.odds_market import CLOSE_PRICE_KINDS
 from decision_kernel.application.research_agenda import RESEARCH_PATH, research_reference
 from decision_kernel.application.research_artifacts import ResearchArtifacts
 from decision_kernel.application.versioned_store import VersionedStore
@@ -112,8 +113,8 @@ def _result_shape(value, spec, assessment=None):
                 and price["security"] == spec["security"] and price["currency"] == spec["currency"]
                 and number(price["share_count"]) == number(spec["share_count"])
                 and number(price["price"]) > 0, "ODDS_BOOK_RESULT_PRICE_INVALID")
-        require(probability or value["schema"] == "conditional-odds-retained-close-v1"
-                and price["kind"] == "retained-ftshare-raw-close", "ODDS_BOOK_RESULT_PRICE_INVALID")
+        require(probability or value["schema"] == "conditional-odds-retained-close-v1",
+                "ODDS_BOOK_RESULT_PRICE_INVALID")
         timestamp(price["as_of"])
     worlds = value["world_results"]
     require(isinstance(worlds, list) and len(worlds) == len(spec["worlds"])
@@ -159,6 +160,12 @@ def _result_shape(value, spec, assessment=None):
         field = "assessment_ref" if probability else "spec_ref"
         require(_key(calculation[field]) == _key(value[field]), "ODDS_BOOK_RESULT_INPUT_MISMATCH")
         timestamp(calculation["evaluated_at"])
+        if not probability:
+            market = calculation["market"]
+            require(isinstance(market, dict) and isinstance(market.get("schema"), str)
+                    and CLOSE_PRICE_KINDS.get(market["schema"]) == price["kind"]
+                    and market.get("price_id") == price["price_id"],
+                    "ODDS_BOOK_RESULT_INPUT_MISMATCH")
 
 
 def _check_shape(value, watch, watch_ref):

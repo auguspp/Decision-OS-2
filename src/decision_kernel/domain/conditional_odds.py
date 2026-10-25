@@ -222,7 +222,7 @@ def validate_close_policy(payload):
 
 
 def calculate_retained(spec, price):
-    """Same conditional arithmetic after the application qualified FTShare input.
+    """Same conditional arithmetic after an existing retained-close adapter.
 
     This pure function cannot certify custody or market freshness. Its distinct
     output version leaves the original declared-price result/replay unchanged.
@@ -231,7 +231,8 @@ def calculate_retained(spec, price):
     shape(price, {"schema", "price_id", "kind", "security", "currency", "share_count",
                   "price", "as_of", "timestamp_semantics", "share_count_qualification"})
     require(price["schema"] == "odds-qualified-close-v1"
-            and price["kind"] == "retained-ftshare-raw-close", "ODDS_PRICE_KIND_NOT_SUPPORTED")
+            and price["kind"] in ("retained-ftshare-raw-close", "retained-relay-raw-close"),
+            "ODDS_PRICE_KIND_NOT_SUPPORTED")
     identifier(price["price_id"])
     require(number(price["price"]) > ZERO and price["security"] == spec["security"]
         and price["currency"] == spec["currency"] and number(price["share_count"]) == number(spec["share_count"]),

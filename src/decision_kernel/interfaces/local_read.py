@@ -41,10 +41,10 @@ READ_ONLY = (
     "verify-delivery", "open-delivery", "read-artifact",
 ) + odds_commands.READ_COMMANDS
 
-# Private decision preparation is excluded even though its two operations only read.
-# Its content is private custody and must keep the checked private adapter; a laptop
-# copy would move that content outside the boundary that verifies it.
-PRIVATE_ONLY = ("prepare-decision", "read-decision-preparation")
+# Preparation operations retain their checked output adapter and deployment
+# qualification. This local read whitelist does not support them. PRIVATE_ONLY
+# and its refusal code keep their historical names, not a claim about visibility.
+PRIVATE_ONLY = ("prepare-decision", "read-decision-preparation", "review-decision-preparation")
 
 
 def _binding(path: Path) -> GitHubBinding:

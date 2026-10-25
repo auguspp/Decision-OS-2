@@ -7,10 +7,25 @@ from decision_kernel.domain.records import require
 from decision_kernel.domain.research_artifacts import artifact_reference
 from decision_kernel.infrastructure.runtime_publication import checked_output_visibility, publication_basis, publication_payload
 
-READS = ("prepare-decision", "read-decision-preparation")
+READS = ("prepare-decision", "read-decision-preparation", "review-decision-preparation")
 WRITES = ("save-decision-preparation",)
 RECONCILES = ("reconcile-decision-preparation",)
 COMMANDS = READS + WRITES
+
+
+def checked_visibility(backend, operation):
+    """A review also exports original research and retained source views.
+
+    Keep the same adapter's native visibility/upgrade state and request budget
+    for every component. Ordinary preparation retains its existing scope.
+    """
+    visibility = checked_output_visibility(
+        backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+    if operation == "review-decision-preparation":
+        for scope in ("research", "sources"):
+            visibility = checked_output_visibility(
+                backend, scope, "DECISION_PREPARATION_REVIEW_PUBLICATION_REQUIRED")
+    return visibility
 
 
 class _DefaultRegistryLoader:
@@ -42,6 +57,9 @@ def preflight(operation, payload):
         publication(payload)
     elif operation == "prepare-decision":
         validate_preparation(payload)
+    elif operation == "review-decision-preparation":
+        from decision_kernel.application.decision_preparation_review import preparation_review_plan
+        preparation_review_plan(payload)
     else:
         shape(payload, {"reference", "at"})
         artifact_reference(payload["reference"])
@@ -55,6 +73,9 @@ def perform(store, operation, payload, submission_id="", registry=None, *, regis
     preflight(operation, payload)
     if registry is None and registry_loader is None:
         registry_loader = _DefaultRegistryLoader()
+    if operation == "review-decision-preparation":
+        from decision_kernel.application.decision_preparation_review import open_preparation_review
+        return open_preparation_review(store, payload, registry, registry_loader=registry_loader)
     service = DecisionPreparation(store, registry, registry_loader=registry_loader)
     if operation in WRITES + RECONCILES:
         return service.save(payload, submission_id=submission_id)

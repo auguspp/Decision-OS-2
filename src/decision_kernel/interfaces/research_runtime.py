@@ -247,7 +247,7 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
     if command["operation"] in PRIVATE_PREPARATION_OPERATIONS:
         if backend is None:
             backend = _CommandStore(replace(binding, write_enabled=command["operation"] in WRITE_OPERATIONS), api, command)
-        checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+        decision_preparation_commands.checked_visibility(backend, command["operation"])
     if private_room_allowed:
         # A public-origin marker/opt-in is not evidence of today's visibility.
         # Keep this checked adapter for the entire read, including its one-way
@@ -310,11 +310,8 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
             registry = RelayRegistry(Path("docs/sources/relay-registry.json"))
             result = decision_preparation_commands.verify_fresh(
                 result, lambda: decision_preparation_commands.private_reader(binding, api), registry)
-        if operation in PRIVATE_PREPARATION_OPERATIONS:
-            visibility = checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
-            if private_preparation_read:
-                (output / "inputs.json").write_bytes(encoded(inputs))
-            report["repository_visibility"] = visibility
+        if operation in PRIVATE_PREPARATION_OPERATIONS and operation != "review-decision-preparation":
+            report["repository_visibility"] = decision_preparation_commands.checked_visibility(backend, operation)
         if operation in hosted_handoff.OPERATIONS:
             if operation not in {"save-hosted-handoff", "reconcile-hosted-handoff"}:
                 hosted_watch_publication = hosted_handoff.publication_required(VersionedStore(backend), result)
@@ -365,10 +362,15 @@ def run_command(binding: GitHubBinding, *, api: GitHubAPI, inputs: dict,
                 reading_commands.check_ai_brief_output(VersionedStore(backend), result)
                 if authority is not None:
                     checked_output_visibility(backend, scope, "PUBLIC_RUNTIME_AUTHORIZATION_REVOKED")
+        if operation == "review-decision-preparation":
+            # Its excerpts and source views retain their own revocable grants.
+            # Check after the generic publication gate, before any result/input
+            # export, on the same adapter that completed the composed read.
+            report["repository_visibility"] = decision_preparation_commands.checked_visibility(backend, operation)
         persist()  # A verified store receipt and a retained report are distinct facts.
         if composed_room:
             reading_commands.write_html(output / "reading-room.html", room_html)
-        if operation == odds_commands.BOOK_OPERATION or composed_room:
+        if operation == odds_commands.BOOK_OPERATION or composed_room or private_preparation_read:
             (output / "inputs.json").write_bytes(encoded(inputs))
         return report
     except (RecordError, OSError, TypeError, KeyError) as error:

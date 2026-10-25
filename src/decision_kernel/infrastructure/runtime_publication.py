@@ -227,7 +227,7 @@ def publication_scope(operation):
         return "reading"
     if operation in {"save-hosted-handoff", "reconcile-hosted-handoff", "read-hosted-handoff", "latest-hosted-handoff"}:
         return "handoff"
-    if operation in {"prepare-decision", "read-decision-preparation", "save-decision-preparation", "reconcile-decision-preparation"}:
+    if operation in {"prepare-decision", "read-decision-preparation", "review-decision-preparation", "save-decision-preparation", "reconcile-decision-preparation"}:
         return "decision-preparation"
     return "research"
 

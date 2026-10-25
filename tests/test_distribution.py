@@ -178,9 +178,11 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     from test_research_agenda_integration import exercise_installed_agenda
     exercise_installed_agenda(command, outside, card["reference"])
 
-    # Same cold wheel: absent Odds needs no checkout catalogue; preserve exact custody/readback.
+    # Same cold wheel: absent Odds needs no checkout catalogue; reopen a saved
+    # preparation and review the already retained adjacent research versions.
     from test_decision_preparation_registry import exercise_installed_decision_preparation
-    exercise_installed_decision_preparation(command, outside, store, card["reference"])
+    exercise_installed_decision_preparation(command, outside, store,
+                                          checkpoint["reference"], card["reference"])
 
     # Same cold wheel: a complete large payload packs offline and reaches the host parser intact.
     transport_input = outside / "long-source.json"

@@ -33,6 +33,8 @@ GitHubBinding包含repository（owner/name）、原生数值repository_id、专�
 
 读取走绑定repo的commit→tree→blob，不跟随origin、download_url或签名地址。检查完整树、普通文件、blob长度/OID；应用层继续检查SHA256、manifest与版本摘要、正文行或CSV逻辑行列。GPT可用连接器按相同权限读取repository/commit/path；能组成地址不等于该宿主已取得读取证据。拒绝、丢失、损坏、不完整不能静默换最新版本。
 
+[本地只读控制台](../delivery/local-console.md)可显式提供 Git mirror：原生确切 commit 选定完整树，原 Store 校验整棵树并选定普通文件行后，受信内部 API 钩子才可读取本地 exact blob。直接 blob GET、工作区或镜像分支头不授予该资格。获取字节后仍通过上述相同校验；缺失、损坏或受限本地读取不可用，只回到同一 API 的一次原 GET。这个组合不改变普通适配器、写入或保管格式，也不增加远端请求额度。
+
 写入使用官方createCommitOnBranch、原生分支node ID及expectedHeadOid，把资料/研究修订/current/意图日志一次条件发布。不将REST先GET再PATCH ref冒充原生CAS，不用force、分文件提交或单纯计数检查模拟事务。仅允许共同布局内新增文件和research current更新，没有deletions。
 
 返回后核唯一前驱、分支可达性、绑定、完整文件集合、未涉及文件未变以及真实字节读回，才给成功引用。发送前head变化报Conflict；超时、5xx、异常GraphQL结果、提交后读回失败保留UnknownWrite。错误正文可能含敏感信息，不靠解析其文字猜成功；先用同一submission_id对账，不改键或自动重发。已发布日志可恢复原commit，即使分支后来前进。
@@ -48,6 +50,8 @@ HTTP固定HTTPS host api.github.com、正常TLS校验，不跟重定向、不用
 发送新提交前，writer 对旧完整树与 additions 的并集预检目录项、总版本和带固定格式余量的完整树响应估计；拒绝会在首个POST之前发生。响应仍受原8MiB硬上限，树项数量并不保证其序列化响应一定放得下；预检不将超限提交包装为已可恢复。
 
 每个GitHubStore实例缓存确切提交树（32个）、已验blob（128个、合计8MiB），以及最多128个已完整验证成功的祖先关系 `(baseSHA, headSHA)`。提交树按最近使用顺序复用；新树通过全部原校验后才替换最久未用项，树与目录清单同键增删，始终最多驻留32棵。失败的树响应不入缓存、不驱逐已核条目；未命中仍执行原commit与完整recursive tree请求，保留空目录及写前完整库存门。两个确切提交间的Git拓扑关系不会因分支移动而改变；不缓存否定、错误或未验证的compare响应，祖先证明缓存容量满后继续原请求。每次读取仍重新核仓库元数据、实时分支ref/node和marker，再以实际取得的head验证引用可达性；新head使用不同SHA对，旧证明不能代替它。可见性、权限和当前head不缓存。
+
+一次有界 Room 或本地 Catalogue 可使用现有 `reading_scope(fail_closed=True)`，在入口固定实际远端 snapshot，范围内复用其已核确切版本关系，出口再次检查实时仓库/ref及 snapshot 可达性。作用域随调用结束失效；它不跨命令保存权限，最终 JSON/HTML 导出仍执行各入口的原生可见性复核。普通适配器每次读取的检查和其他消费者行为保持原状。
 
 该有限复用服务于研究交付保存后新reader核验同一清单时的重复compare开销，不增加读取范围或第二存储入口。fresh-reader仍新建独立GitHubStore及全部缓存，复用同一API的累计512次预算；不能为绕过限额重建API。CLI每个显式操作新建API实例，保存后的delivery、artifact及共用入口的Odds/Watch读回复用该实例，fresh绑定仍只读；下一次独立CLI调用才建立新的预算。长期宿主在明确操作边界管理预算。Git对象/祖先关系缓存随实例退出，不跨操作持久化。
 

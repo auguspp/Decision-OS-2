@@ -1,5 +1,6 @@
 """The local console may only ever run reads, and only with a read-only credential."""
 import base64
+from collections import Counter
 from dataclasses import asdict, replace
 from http.client import IncompleteRead
 import json
@@ -12,6 +13,7 @@ import pytest
 from decision_kernel.application import hosted_handoff
 from decision_kernel.application.conditional_odds import ConditionalOdds
 from decision_kernel.application.research_artifacts import ResearchArtifacts
+from decision_kernel.application.research_catalogue import ResearchCatalogue
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, RevisionInput, SourceInput, StoreUnavailable, digest
@@ -20,7 +22,7 @@ from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding
 from decision_kernel.interfaces import (
     auction_commands, auction_next_session_commands, close_structure_commands, delivery_commands,
     decision_preparation_commands, local_read, odds_commands, outcome_review_commands,
-    reading_commands, reading_page, research_commands,
+    reading_commands, reading_page, research_commands, store_cli,
 )
 from test_conditional_odds import authorized, price_payload, spec_payload
 from test_hosted_watch_runtime import public_host
@@ -133,6 +135,8 @@ def test_the_receipt_states_the_store_and_that_no_write_was_requested():
     assert record["runner"] == "local"
     assert record["tree_inventory"] == {"schema": "local-git-tree-v1", "answered": 0,
                                         "declined": 0, "mirror": "absent"}
+    assert record["blob_content"] == {"schema": "local-git-blob-v1", "answered": 0,
+                                      "declined": 0, "mirror": "absent"}
 
 
 @pytest.fixture
@@ -186,8 +190,72 @@ def run_console(console, *args):
     return local_read.main(["--binding", str(console.binding), *args])
 
 
+@pytest.fixture
+def catalogue_records(console, records):
+    """Four independent cards exercise repeated live reads, without a scale fixture."""
+    store = VersionedStore(console.api.git)
+    references = {"case": records.research}
+    for index in range(1, 4):
+        case = "case-" + str(index)
+        source = store.put_source(case + "-source", SourceInput(
+            case + "-source", "content", "Synthetic catalogue evidence " + str(index),
+            "synthetic:catalogue", "Independent synthetic evidence " + str(index)))
+        references[case] = store.submit_revision(case + "-research", RevisionInput(
+            case, "r1", "full", "Synthetic catalogue research " + str(index),
+            "Engineering scope fixture", "synthetic", (source,)))
+    console.api.requests.clear()
+    return SimpleNamespace(store=store, references=references, snapshot=console.api.git.head())
+
+
+def request_kinds(requests, repository):
+    prefix = "/repos/" + repository
+    kinds = Counter()
+    for method, path, _ in requests:
+        assert method == "GET"
+        if path == prefix:
+            kinds["repository"] += 1
+        else:
+            kind = next((label for label, suffix in (
+                ("ref", "/git/ref/heads/"), ("commit", "/git/commits/"),
+                ("tree", "/git/trees/"), ("blob", "/git/blobs/"),
+                ("compare", "/compare/")) if path.startswith(prefix + suffix)), "other")
+            kinds[kind] += 1
+    return kinds
+
+
+def test_catalogue_scope_preserves_four_cards_and_reduces_repeated_live_requests(
+        console, catalogue_records, capsys):
+    # The baseline is the existing unscoped service, using a separate operation
+    # budget and the same native transport/records. No mirror is used here, so
+    # fewer calls prove scope reuse independently of blob acceleration.
+    selected = replace(console.api.binding, private_upgrade_allowed=False)
+    baseline_wire = transport(console.api)
+    baseline_api = store_cli._PublicReadAPI(baseline_wire, selected)
+    baseline_backend = GitHubStore(selected, baseline_api)
+    expected = ResearchCatalogue(VersionedStore(baseline_backend)).page(limit=4)
+    assert baseline_backend.live_visibility() == "public"
+    baseline = request_kinds(console.api.requests, selected.repository)
+    assert baseline_wire._requests == sum(baseline.values())
+    console.api.requests.clear()
+
+    assert run_console(console, "research-catalogue", "--limit", "4") == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result == json.loads(json.dumps(expected))
+    assert result["returned"] == 4 and result["snapshot"] == catalogue_records.snapshot
+    assert all(row["status"] == "readable" for row in result["items"])
+    scoped = request_kinds(console.api.requests, selected.repository)
+    assert console.wire._requests == sum(scoped.values()) < sum(baseline.values())
+    assert 3 <= scoped["repository"] < baseline["repository"]
+    assert 2 <= scoped["ref"] < baseline["ref"]
+    # Immutability does not mean skipping the bodies or changing case selection.
+    assert scoped["blob"] == baseline["blob"] > 0
+    assert json.loads(captured.err)["local_read_receipt"]["blob_content"]["mirror"] == "absent"
+    assert console.api.git.head() == catalogue_records.snapshot and console.api.writes == 0
+
+
 @pytest.mark.parametrize("selection", ["flag", "environment"])
-def test_console_selects_the_same_mirror_for_exact_trees_and_reports_actual_use(
+def test_console_selects_the_same_mirror_for_exact_trees_and_blobs_and_reports_actual_use(
         console, records, tmp_path, monkeypatch, capsys, selection):
     mirror = str(console.api.git.root)
     args = ["research-catalogue", "--limit", "4"]
@@ -200,8 +268,8 @@ def test_console_selects_the_same_mirror_for_exact_trees_and_reports_actual_use(
     original = console.wire._opener.open
 
     def broken_tree_response(request, timeout):
-        if "/git/trees/" in request.full_url:
-            raise IncompleteRead(b"synthetic incomplete tree", 100)
+        if "/git/trees/" in request.full_url or "/git/blobs/" in request.full_url:
+            raise IncompleteRead(b"synthetic incomplete object", 100)
         return original(request, timeout)
 
     monkeypatch.setattr(console.wire._opener, "open", broken_tree_response)
@@ -216,8 +284,12 @@ def test_console_selects_the_same_mirror_for_exact_trees_and_reports_actual_use(
     assert record["tree_inventory"]["mirror"] == record["ancestry"]["mirror"] == "local-git-graph"
     assert record["tree_inventory"]["answered"] > 0
     assert record["tree_inventory"]["declined"] == 0
+    assert record["blob_content"]["schema"] == "local-git-blob-v1"
+    assert record["blob_content"]["mirror"] == record["tree_inventory"]["mirror"]
+    assert record["blob_content"]["answered"] > 0 and record["blob_content"]["declined"] == 0
     assert record["ancestry"]["answered"] > 0 and record["exit_code"] == 0
     assert not any("/git/trees/" in path for _, path, _ in console.api.requests)
+    assert not any("/git/blobs/" in path for _, path, _ in console.api.requests)
     assert console.api.git.head() == records.snapshot and console.api.writes == 0
     assert local_read.STORE_TOKEN not in os.environ
 
@@ -230,6 +302,115 @@ def assert_denied(capsys, code):
     receipt = lines[1]["local_read_receipt"]
     assert receipt["exit_code"] == 2 and receipt["identity"]["write"] == "not-requested"
     return receipt
+
+
+@pytest.mark.parametrize("phase", ["entry", "exit", "export"])
+def test_catalogue_scope_keeps_native_admission_exit_and_export_checks(
+        console, catalogue_records, monkeypatch, capsys, phase):
+    execute, state = research_commands.execute, {"complete": False, "metadata": 0, "after": 0}
+
+    def completed(*args, **kwargs):
+        result = execute(*args, **kwargs)
+        state["complete"] = True
+        return result
+
+    def change_visibility(path, value):
+        if path == "/repos/" + console.api.binding.repository:
+            state["metadata"] += 1
+            if state["complete"]:
+                state["after"] += 1
+            # Initial Store construction has its own admission. The scope's
+            # entry is the next native check; exit and export follow reading.
+            refuse = (phase == "entry" and state["metadata"] == 2
+                      or phase == "exit" and state["complete"] and state["after"] == 1
+                      or phase == "export" and state["complete"] and state["after"] == 2)
+            if refuse:
+                return {**value, "private": True}
+        return value
+
+    monkeypatch.setattr(research_commands, "execute", completed)
+    console.api.corrupt_response = change_visibility
+    assert run_console(console, "research-catalogue", "--limit", "4") == 2
+    assert state["complete"] is (phase != "entry")
+    assert_denied(capsys, "LOCAL_READ_PUBLIC_STORE_ONLY")
+    assert state["metadata"] == {"entry": 2, "exit": 3, "export": 4}[phase]
+    assert console.api.git.head() == catalogue_records.snapshot and console.api.writes == 0
+
+
+def _revise_catalogue_case(records, case_id):
+    return records.store.submit_revision(case_id + "-successor", RevisionInput(
+        case_id, "r2", "full", "New synthetic research after this read began.",
+        "Engineering scope fixture", "synthetic", (), records.references[case_id],
+        ("Synthetic successor deliberately supplies no new evidence.",)))
+
+
+def test_catalogue_normal_head_advance_and_later_cursor_keep_the_original_snapshot(
+        console, catalogue_records, tmp_path, monkeypatch, capsys):
+    original, state = ResearchCatalogue._item, {"advanced": False}
+
+    def advance_after_first(self, case_id, snapshot):
+        result = original(self, case_id, snapshot)
+        if not state["advanced"]:
+            state["advanced"] = True
+            _revise_catalogue_case(catalogue_records, "case-1")
+        return result
+
+    monkeypatch.setattr(ResearchCatalogue, "_item", advance_after_first)
+    mirror = str(console.api.git.root)
+    assert run_console(console, "research-catalogue", "--limit", "2", "--git-mirror", mirror) == 0
+    captured = capsys.readouterr()
+    first = json.loads(captured.out)
+    assert state["advanced"] and first["snapshot"] == catalogue_records.snapshot
+    assert [row["reference"] for row in first["items"]] == [
+        asdict(catalogue_records.references[case]) for case in ("case", "case-1")]
+    assert console.api.git.head() != catalogue_records.snapshot
+    assert json.loads(captured.err)["local_read_receipt"]["blob_content"]["answered"] > 0
+
+    # A later call pins the original cursor even after another current pointer
+    # advances. New read admission cannot silently replace it with live HEAD.
+    _revise_catalogue_case(catalogue_records, "case-3")
+    cursor = tmp_path / "catalogue-next.json"
+    cursor.write_text(json.dumps(first["next_cursor"]), encoding="utf-8")
+    assert run_console(console, "research-catalogue", "--cursor", str(cursor),
+                       "--limit", "2", "--git-mirror", mirror) == 0
+    captured = capsys.readouterr()
+    second = json.loads(captured.out)
+    assert second["snapshot"] == catalogue_records.snapshot and second["next_cursor"] is None
+    assert [row["reference"] for row in second["items"]] == [
+        asdict(catalogue_records.references[case]) for case in ("case-2", "case-3")]
+    assert json.loads(captured.err)["local_read_receipt"]["exit_code"] == 0
+    assert console.api.writes == 0
+
+
+@pytest.mark.parametrize("failure", ["rewritten-branch", "permission-denied"])
+def test_catalogue_scope_never_exports_after_branch_rewrite_or_native_permission_denial(
+        console, catalogue_records, monkeypatch, capsys, failure):
+    original, state = ResearchCatalogue._item, {"changed": False, "reads": 0}
+
+    def invalidate_after_first(self, case_id, snapshot):
+        result = original(self, case_id, snapshot)
+        state["reads"] += 1
+        if not state["changed"]:
+            state["changed"] = True
+            if failure == "rewritten-branch":
+                # Only this test's synthetic remote branch is rewritten. Its
+                # former snapshot must fail the final reachability check.
+                console.api.git._run("update-ref", "refs/heads/records", console.api.binding.anchor,
+                                    catalogue_records.snapshot)
+            else:
+                def deny(path, value):
+                    raise StoreUnavailable("REMOTE_NOT_AUTHORIZED")
+                console.api.corrupt_response = deny
+        return result
+
+    monkeypatch.setattr(ResearchCatalogue, "_item", invalidate_after_first)
+    assert run_console(console, "research-catalogue", "--limit", "4",
+                       "--git-mirror", str(console.api.git.root)) == 2
+    assert state["changed"] and state["reads"] >= 1
+    receipt = assert_denied(capsys, "COMMIT_OUTSIDE_BINDING" if failure == "rewritten-branch"
+                            else "REMOTE_NOT_AUTHORIZED")
+    assert receipt["blob_content"]["answered"] > 0
+    assert console.api.writes == 0
 
 
 def test_local_native_private_refuses_before_any_records_request(console, capsys):
@@ -249,7 +430,10 @@ def test_prechecked_binding_is_executed_without_reopening_file_or_resetting_api(
         console.binding.write_text("{}", encoding="utf-8")
         return found
     def consume(args, store, load, **kwargs):
-        assert store.backend.binding is selected[0]
+        # A read scope may copy the frozen binding while retaining the exact
+        # preflight identity. Reopening the now-invalid file would still fail.
+        assert getattr(store.backend, "owner", store.backend).binding is selected[0]
+        assert store.backend.binding == selected[0]
         api = store.backend.api
         assert isinstance(api, GitHubAPI) and api.rate_limits is console.wire.rate_limits
         assert api._token == console.wire._token
@@ -317,9 +501,15 @@ def test_local_room_rechecks_after_read_and_render_before_html_or_stdout(console
         return result
     monkeypatch.setattr(reading_commands, "perform", completed)
     monkeypatch.setattr(reading_page, "render_page", rendered)
-    assert run_console(console, "research-room", "--input", str(plan), "--out", str(output)) == 2
+    command = ["research-room", "--input", str(plan), "--out", str(output)]
+    mirrored = include_ai and phase == "after-render"
+    if mirrored:
+        command += ["--git-mirror", str(console.api.git.root)]
+    assert run_console(console, *command) == 2
     assert state["read"] and not output.exists()
-    assert_denied(capsys, "LOCAL_READ_PUBLIC_STORE_ONLY")
+    receipt = assert_denied(capsys, "LOCAL_READ_PUBLIC_STORE_ONLY")
+    if mirrored:
+        assert receipt["blob_content"]["answered"] > 0
     assert console.api.git.head() == records.snapshot and console.api.writes == 0
 
 
@@ -377,12 +567,16 @@ def test_local_attachment_bytes_follow_the_same_final_native_gate(console, recor
             console.api.meta["private"] = True
         return result
     monkeypatch.setattr(ResearchArtifacts, "read", restored)
-    assert run_console(console, "read-artifact", "--ref", str(path)) == (2 if revoke else 0)
+    assert run_console(console, "read-artifact", "--ref", str(path),
+                       "--git-mirror", str(console.api.git.root)) == (2 if revoke else 0)
     if revoke:
-        assert_denied(capsys, "LOCAL_READ_PUBLIC_STORE_ONLY")
+        receipt = assert_denied(capsys, "LOCAL_READ_PUBLIC_STORE_ONLY")
     else:
         captured = capsys.readouterr()
         assert base64.b64decode(json.loads(captured.out)["data_base64"]) == records.attachment
+        receipt = json.loads(captured.err)["local_read_receipt"]
+    assert receipt["blob_content"]["answered"] > 0
+    assert not any("/git/blobs/" in request for _, request, _ in console.api.requests)
     assert console.api.git.head() == records.snapshot and console.api.writes == 0
 
 

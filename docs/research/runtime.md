@@ -62,7 +62,7 @@
 
 同意图重试复用原稳定提交键和内容；同键异内容报 `SUBMISSION_CONTENT_CONFLICT`，过时研究前驱报 `STALE_PREDECESSOR`，宿主写计划 head 变化报 `PLANNED_HEAD_CHANGED`。未知写沿相应宿主 `reconcile-*` 只读恢复原意图，查无回执为 `SUBMISSION_NOT_FOUND_NO_WRITE`，不是允许换键重写的结论。CLI 未列出的对账名不因此变成可用命令。
 
-[本地只读工作台](../delivery/local-console.md)复用已列入 `local_read.READ_ONLY` 的 store CLI；不承接写、`reconcile-*` 或被该入口明确排除的决策准备读取。只读 binding、客户端白名单和 `DECISION_OS_READ_TOKEN` 变量名不证明令牌的原生权限，调用者仍须使用实际只读身份。可选 Git mirror 仅加速已观测远端快照的祖先判断；任何本地页面、索引、缓存和回执均不取代 records 真源。外部宿主调度和模型推理也不搬进此接收层。
+[本地只读工作台](../delivery/local-console.md)复用已列入 `local_read.READ_ONLY` 的 store CLI；不承接写、`reconcile-*` 或被该入口明确排除的决策准备读取。只读 binding、客户端白名单和 `DECISION_OS_READ_TOKEN` 变量名不证明令牌的原生权限，调用者仍须使用实际只读身份。可选 Git mirror 复用已观测远端快照的祖先证明、确切完整树目录，以及通过原 Store 校验的普通文件正文；本地 Catalogue 使用现有单次只读作用域，并保留入口、出口和导出前的原生复核。镜像不自动 fetch，任何本地页面、对象、索引或回执均不取代 records 真源和实时权限。外部宿主调度和模型推理也不搬进此接收层。
 
 ## 4. 连接器调用与结果读取
 

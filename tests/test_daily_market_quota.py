@@ -45,7 +45,7 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     native_model.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
         repository={"id": 1420041744}, head_repository={"id": 1420041744})
     workflow_sha, execution_sha, execution_tree = "a" * 40, "b" * 40, "c" * 40
-    requested = {"operation": "update", "code_sha": workflow_sha,
+    requested = {"operation": "update", "invocation": "update", "code_sha": workflow_sha,
         "run_id": 8001, "run_attempt": 1, "event": "workflow_dispatch"}
     environment = {"GITHUB_REPOSITORY": cli.REPO, "GITHUB_REPOSITORY_ID": "1420041744",
         "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": cli.REPO + "/" + cli.WORKFLOW + "@refs/heads/main",

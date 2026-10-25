@@ -32,6 +32,7 @@ import subprocess
 from pathlib import Path
 
 from decision_kernel.domain.records import require
+from decision_kernel.infrastructure.git_tree import LocalTreeUnavailable
 
 SCHEMA = "local-git-ancestry-v1"
 DEFAULT_TIMEOUT_SECONDS = 120
@@ -53,10 +54,11 @@ class AncestryUnavailable(Exception):
 class LocalGitAncestry:
     """Read-only ancestry questions against one existing Git object graph."""
 
-    def __init__(self, path, *, timeout: int = DEFAULT_TIMEOUT_SECONDS):
+    def __init__(self, path, *, timeout: int = DEFAULT_TIMEOUT_SECONDS, object_reader=None):
         require(isinstance(timeout, int) and timeout > 0, "LOCAL_ANCESTRY_INVALID_TIMEOUT")
         self.path = str(Path(path).expanduser().resolve())
         self._timeout = timeout
+        self.object_reader = object_reader
         self._answered = 0
         self._declined = 0
         self._env = {
@@ -69,6 +71,13 @@ class LocalGitAncestry:
         }
 
     def _git(self, *args: str) -> subprocess.CompletedProcess:
+        if self.object_reader is not None:
+            try:
+                code, raw = self.object_reader.run_git(*args, timeout=self._timeout)
+            except LocalTreeUnavailable as exc:
+                raise AncestryUnavailable("LOCAL_ANCESTRY_GIT_UNAVAILABLE") from exc
+            return subprocess.CompletedProcess(["git", "-C", self.path, *args], code,
+                raw.decode("utf-8", errors="replace"), "")
         try:
             return subprocess.run(
                 ["git", "-C", self.path, *args],
@@ -100,6 +109,11 @@ class LocalGitAncestry:
         "fetch this mirror" and "do not use this mirror at all".
         """
         self._commit(sha)
+        if self.object_reader is not None:
+            try:
+                return self.object_reader.object_type(sha, timeout=self._timeout) == "commit"
+            except LocalTreeUnavailable as exc:
+                raise AncestryUnavailable("LOCAL_ANCESTRY_GIT_UNAVAILABLE") from exc
         present = self._git("cat-file", "-e", sha)
         if present.returncode == 1:
             return False

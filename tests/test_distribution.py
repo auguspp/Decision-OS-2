@@ -66,6 +66,30 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
     ref_file = outside / "ref.json"
     ref_file.write_text(json.dumps(reference), encoding="utf-8")
     assert command("read-source", "--ref", str(ref_file))["data"] == payload["text"]
+    # The same installed package shares one local object owner without relying
+    # on checkout imports, a running service, or a network/Store credential.
+    installed_objects = """
+import base64, hashlib, json, subprocess, sys
+from decision_kernel.infrastructure.git_ancestry import LocalGitAncestry
+from decision_kernel.infrastructure.git_tree import LocalGitTree
+ref = json.loads(sys.argv[2])
+root = subprocess.check_output(['git', '--git-dir=' + sys.argv[1],
+    'rev-parse', ref['commit'] + '^{tree}']).decode().strip()
+reader = LocalGitTree(sys.argv[1], max_entries=100, max_bytes=1048576, reuse_processes=True)
+try:
+    graph = LocalGitAncestry(sys.argv[1], object_reader=reader)
+    assert graph.available() and graph.has_commit(ref['commit'])
+    row = next(row for row in reader.read(root)['tree'] if row['path'] == ref['path'])
+    raw = base64.b64decode(reader.read_blob(row['sha'], row['size'])['content'])
+    assert hashlib.sha256(raw).hexdigest() == ref['sha256']
+    assert graph.has_commit(ref['commit'])
+    stats = reader.process_stats()
+    assert stats['batch_processes'] == (1 if stats['mode'] == 'batch' else 0)
+finally:
+    reader.close()
+"""
+    subprocess.run([str(python), "-I", "-c", installed_objects, str(store), json.dumps(reference["manifest"])],
+                   cwd=outside, env=env, check=True, capture_output=True, text=True, timeout=30)
     input_file.write_text(json.dumps({"case_id": "sample", "revision_id": "r1", "kind": "quick",
                                      "body": "合成工程检查，不是真实投资研究。", "mandate": "synthetic:mandate",
                                      "method": "synthetic:method", "sources": [reference]}, ensure_ascii=False), encoding="utf-8")

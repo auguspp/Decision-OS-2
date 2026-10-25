@@ -9,6 +9,7 @@ import pytest
 
 from decision_kernel.domain.records import BlobRef, RecordError, StoreUnavailable, digest
 from decision_kernel.infrastructure.git_ancestry import LocalGitAncestry
+from decision_kernel.infrastructure.git_tree import LocalGitTree
 from decision_kernel.infrastructure import github_store as remote
 from decision_kernel.interfaces import store_cli
 from test_local_tree_mirror import (
@@ -17,8 +18,11 @@ from test_local_tree_mirror import (
 )
 
 
-@pytest.fixture
-def blobs(scene, monkeypatch):
+@pytest.fixture(params=[False, True], ids=["one-shot", "batch"])
+def blobs(scene, monkeypatch, request):
+    if request.param:
+        scene.reader = LocalGitTree(scene.mirror, max_entries=remote.MAX_TREE_ENTRIES,
+            max_bytes=remote.MAX_RESPONSE, reuse_processes=True)
     scene.blob_calls = []
     native_read = scene.reader.read_blob
 
@@ -27,7 +31,10 @@ def blobs(scene, monkeypatch):
         return native_read(oid, expected_size)
 
     monkeypatch.setattr(scene.reader, "read_blob", read)
-    return scene
+    try:
+        yield scene
+    finally:
+        scene.reader.close()
 
 
 def public_api(scene):

@@ -18,7 +18,9 @@ import time
 
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.git_ancestry import SCHEMA as ANCESTRY_SCHEMA, LocalGitAncestry
-from decision_kernel.infrastructure.git_tree import BLOB_SCHEMA, SCHEMA as TREE_SCHEMA, LocalGitTree
+from decision_kernel.infrastructure.git_tree import (
+    BLOB_SCHEMA, PROCESS_SCHEMA, SCHEMA as TREE_SCHEMA, LocalGitTree,
+)
 from decision_kernel.infrastructure.github_store import GitHubBinding, MAX_RESPONSE, MAX_TREE_ENTRIES
 from decision_kernel.interfaces import (
     auction_commands, auction_next_session_commands, close_structure_commands, delivery_commands,
@@ -90,6 +92,16 @@ def _split_mirror(argv: list) -> tuple[list, str | None]:
     return rest, mirror
 
 
+def _close(reader):
+    # Cleanup must not hide the command's error or interrupt its receipt/token
+    # cleanup, including when an embedding adapter violates close's contract.
+    if reader is not None:
+        try:
+            reader.close()
+        except BaseException:
+            pass
+
+
 def mirror(flag: str | None, environ) -> LocalGitAncestry | None:
     """Select the optional local object graph through the existing ancestry gate.
 
@@ -100,13 +112,20 @@ def mirror(flag: str | None, environ) -> LocalGitAncestry | None:
     path = flag or environ.get(MIRROR) or None
     if not path:
         return None
-    ancestry = LocalGitAncestry(path)
-    require(ancestry.available(), "LOCAL_READ_GIT_MIRROR_NOT_A_REPOSITORY")
+    reader = LocalGitTree(path, max_entries=MAX_TREE_ENTRIES, max_bytes=MAX_RESPONSE,
+                          reuse_processes=True)
+    try:
+        ancestry = LocalGitAncestry(path, object_reader=reader)
+        require(ancestry.available(), "LOCAL_READ_GIT_MIRROR_NOT_A_REPOSITORY")
+    except BaseException:
+        _close(reader)
+        raise
     return ancestry
 
 
 def receipt(operation: str, binding: GitHubBinding, *, started: str, finished: str,
-            duration_ms: int, code: int, ancestry=None, tree_reader=None, blob_reader=None) -> dict:
+            duration_ms: int, code: int, ancestry=None, tree_reader=None, blob_reader=None,
+            process_reader=None) -> dict:
     return {"schema": SCHEMA, "operation": operation, "runner": "local",
             "store": {"repository": binding.repository, "branch": binding.branch,
                       "anchor": binding.anchor, "store_id": binding.store_id,
@@ -122,6 +141,10 @@ def receipt(operation: str, binding: GitHubBinding, *, started: str, finished: s
             "blob_content": {**(blob_reader.blob_stats() if blob_reader is not None else
                                {"schema": BLOB_SCHEMA, "answered": 0, "declined": 0}),
                              "mirror": "local-git-graph" if blob_reader is not None else "absent"},
+            "git_process": {**(process_reader.process_stats() if process_reader is not None else
+                              {"schema": PROCESS_SCHEMA, "processes": 0, "batch_processes": 0,
+                               "batch_requests": 0, "mode": "unprobed"}),
+                            "mirror": "local-git-graph" if process_reader is not None else "absent"},
             "started_at": started, "finished_at": finished,
             "duration_ms": duration_ms, "exit_code": code}
 
@@ -151,35 +174,38 @@ def main(argv: list | None = None) -> int:
     ancestry = None
     tree_reader = None
     try:
-        binding = check(args.store_command, args.binding, os.environ)
-        ancestry = mirror(flag, os.environ)
-        if ancestry is not None:
-            tree_reader = LocalGitTree(ancestry.path, max_entries=MAX_TREE_ENTRIES,
-                                      max_bytes=MAX_RESPONSE)
-    except RecordError as error:
-        print(json.dumps({"error": str(error)}), file=sys.stderr)
-        return 2
-    except (OSError, ValueError, UnicodeError, TypeError, KeyError):
-        print('{"error":"LOCAL_READ_BINDING_UNREADABLE"}', file=sys.stderr)
-        return 2
-    # GitHubAPI reads this name and nothing else, so the read token is the only
-    # credential in the process for the duration of the command.
-    os.environ[STORE_TOKEN] = os.environ[READ_TOKEN]
-    try:
-        code = store_cli.execute(args, ancestry=ancestry, tree_reader=tree_reader, blob_reader=tree_reader,
-                                 read_binding=binding)
+        try:
+            binding = check(args.store_command, args.binding, os.environ)
+            ancestry = mirror(flag, os.environ)
+            if ancestry is not None:
+                tree_reader = ancestry.object_reader
+        except RecordError as error:
+            print(json.dumps({"error": str(error)}), file=sys.stderr)
+            return 2
+        except (OSError, ValueError, UnicodeError, TypeError, KeyError):
+            print('{"error":"LOCAL_READ_BINDING_UNREADABLE"}', file=sys.stderr)
+            return 2
+        # GitHubAPI reads this name and nothing else, so the read token is the only
+        # credential in the process for the duration of the command.
+        try:
+            os.environ[STORE_TOKEN] = os.environ[READ_TOKEN]
+            code = store_cli.execute(args, ancestry=ancestry, tree_reader=tree_reader,
+                                     blob_reader=tree_reader, read_binding=binding)
+        finally:
+            os.environ.pop(STORE_TOKEN, None)
+            finished_at = datetime.now(timezone.utc).isoformat()
+            record = receipt(args.store_command, binding, started=started_at, finished=finished_at,
+                             duration_ms=int((time.monotonic() - clock) * 1000), code=code,
+                             ancestry=ancestry, tree_reader=tree_reader, blob_reader=tree_reader,
+                             process_reader=tree_reader)
+            print(json.dumps({"local_read_receipt": record}, sort_keys=True), file=sys.stderr)
+            target = os.environ.get("DECISION_OS_READ_RECEIPT")
+            if target:
+                Path(target).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
+                                        encoding="utf-8")
+        return code
     finally:
-        os.environ.pop(STORE_TOKEN, None)
-        finished_at = datetime.now(timezone.utc).isoformat()
-        record = receipt(args.store_command, binding, started=started_at, finished=finished_at,
-                         duration_ms=int((time.monotonic() - clock) * 1000), code=code,
-                         ancestry=ancestry, tree_reader=tree_reader, blob_reader=tree_reader)
-        print(json.dumps({"local_read_receipt": record}, sort_keys=True), file=sys.stderr)
-        target = os.environ.get("DECISION_OS_READ_RECEIPT")
-        if target:
-            Path(target).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
-                                    encoding="utf-8")
-    return code
+        _close(tree_reader)
 
 
 if __name__ == "__main__":

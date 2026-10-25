@@ -17,9 +17,11 @@ from threading import Lock, Thread
 import time
 
 from decision_kernel.domain.records import MAX_BYTES, encoded, require
+from decision_kernel.infrastructure.git_batch import GitBatchUnavailable, GitObjectBatch
 
 SCHEMA = "local-git-tree-v1"
 BLOB_SCHEMA = "local-git-blob-v1"
+PROCESS_SCHEMA = "local-git-process-v1"
 MAX_BLOB_BYTES = 2 * MAX_BYTES
 DEFAULT_TIMEOUT_SECONDS = 30
 _SHA = re.compile(r"[a-f0-9]{40}\Z")
@@ -53,15 +55,27 @@ def _environment():
 class LocalGitTree:
     """Bounded exact-object questions, compatible with ordinary/bare Git."""
     def __init__(self, path, *, max_entries: int, max_bytes: int,
-                 timeout: float = DEFAULT_TIMEOUT_SECONDS):
+                 timeout: float = DEFAULT_TIMEOUT_SECONDS, reuse_processes: bool = False):
         require(type(max_entries) is int and max_entries > 0
             and type(max_bytes) is int and max_bytes > 0, "LOCAL_TREE_INVALID_LIMITS")
         require(type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0,
             "LOCAL_TREE_INVALID_TIMEOUT")
+        require(type(reuse_processes) is bool, "LOCAL_TREE_INVALID_REUSE")
         self.path = str(Path(path).expanduser().resolve())
         self._max_entries, self._max_bytes, self._timeout = max_entries, max_bytes, timeout
         self._answered = self._declined = 0
         self._blob_answered = self._blob_declined = 0
+        self._batch_mode = None if reuse_processes else False
+        self._batch = None
+        self._closed = False
+        self._processes = 0
+
+    def _command(self, *args):
+        return ["git", "--no-pager", "--no-replace-objects",
+            *(["--no-lazy-fetch"] if self._batch_mode is True else []),
+            "-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false",
+            "-c", "gc.auto=0", "-c", "protocol.allow=never", "-c", "credential.helper=",
+            "-C", self.path, *args]
 
     def _git(self, *args, deadline, limit, rows=None, allowed=(0,)):
         """Drain both pipes with finite buffers; kill on overflow or deadline.
@@ -70,16 +84,16 @@ class LocalGitTree:
         allocate the entire child output before a caller could enforce a bound.
         All native queries in one object read share one deadline.
         """
+        if self._closed:
+            raise LocalTreeUnavailable("LOCAL_TREE_CLOSED")
         if time.monotonic() >= deadline:
             raise LocalTreeUnavailable("LOCAL_TREE_TIMEOUT")
-        command = ["git", "--no-pager", "--no-replace-objects",
-            "-c", "core.hooksPath=" + os.devnull, "-c", "core.fsmonitor=false",
-            "-c", "gc.auto=0", "-c", "protocol.allow=never", "-c", "credential.helper=",
-            "-C", self.path, *args]
+        command = self._command(*args)
         try:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
                 env=_environment(), shell=False)
+            self._processes += 1
         except (OSError, ValueError):
             raise LocalTreeUnavailable("LOCAL_TREE_GIT_UNAVAILABLE") from None
         output, errors, refusal = bytearray(), bytearray(), []
@@ -159,13 +173,87 @@ class LocalGitTree:
         if status != 1 or partial:
             raise LocalTreeUnavailable("LOCAL_TREE_PARTIAL_REPOSITORY")
 
+    def _prepare_objects(self, *, deadline):
+        if self._closed:
+            raise LocalTreeUnavailable("LOCAL_TREE_CLOSED")
+        if self._batch_mode is True:
+            return
+        self._check_no_partial(deadline=deadline)
+        if self._batch_mode is None:
+            # Probe the native no-fetch switch, not a version string. Older Git
+            # keeps the existing one-shot local path and its per-object config
+            # check. Modern Git enforces this switch on every object process,
+            # so this one invocation can reuse its already qualified channel.
+            status, _ = self._git("--no-lazy-fetch", "--version", deadline=deadline,
+                limit=8192, allowed=(0, 129))
+            self._batch_mode = status == 0
+            if self._batch_mode:
+                self._batch = GitObjectBatch(self._command("cat-file", "--batch-command"),
+                    env=_environment())
+
+    def _info(self, oid, *, deadline):
+        try:
+            return self._batch.info(oid, deadline=deadline)
+        except GitBatchUnavailable as exc:
+            raise LocalTreeUnavailable(exc.reason) from None
+
+    def object_type(self, oid, *, timeout):
+        """Exact type for the same operation's ancestry owner; no ref peeling."""
+        if not isinstance(oid, str) or _SHA.fullmatch(oid) is None:
+            raise LocalTreeUnavailable("LOCAL_TREE_INVALID_OID")
+        require(type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0,
+            "LOCAL_TREE_INVALID_TIMEOUT")
+        deadline = time.monotonic() + timeout
+        self._prepare_objects(deadline=deadline)
+        if self._batch_mode:
+            info = self._info(oid, deadline=deadline)
+            return info[0] if info is not None else None
+        status, _ = self._git("cat-file", "-e", oid, deadline=deadline, limit=8192,
+            allowed=(0, 1))
+        if status == 1:
+            return None
+        _, raw = self._git("cat-file", "-t", oid, deadline=deadline, limit=32)
+        if raw not in (b"blob\n", b"tree\n", b"commit\n", b"tag\n"):
+            raise LocalTreeUnavailable("LOCAL_TREE_INVALID_TYPE")
+        return raw.decode("ascii").strip()
+
+    def run_git(self, *args, timeout, limit=8192, allowed=(0, 1)):
+        """Bounded native graph commands for the same operation's ancestry."""
+        require(type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0,
+            "LOCAL_TREE_INVALID_TIMEOUT")
+        deadline = time.monotonic() + timeout
+        # --git-dir is an admission question without object lookup. All actual
+        # graph/ref queries qualify the no-fetch path before consulting objects.
+        if args != ("rev-parse", "--git-dir"):
+            self._prepare_objects(deadline=deadline)
+        return self._git(*args, deadline=deadline, limit=limit, allowed=allowed)
+
+    def close(self):
+        """End this operation's channel; a closed owner never respawns it."""
+        self._closed = True
+        if self._batch is not None:
+            self._batch.close()
+
+    def process_stats(self):
+        """Count process starts and protocol requests, without command data."""
+        batch = self._batch.stats() if self._batch is not None else {"processes": 0, "requests": 0}
+        return {"schema": PROCESS_SCHEMA, "processes": self._processes + batch["processes"],
+            "batch_processes": batch["processes"], "batch_requests": batch["requests"],
+            "mode": "unprobed" if self._batch_mode is None else
+                ("batch" if self._batch_mode else "legacy")}
+
     def _read(self, tree_sha):
         if not isinstance(tree_sha, str) or _SHA.fullmatch(tree_sha) is None:
             raise LocalTreeUnavailable("LOCAL_TREE_INVALID_TREE")
         deadline = time.monotonic() + self._timeout
-        self._check_no_partial(deadline=deadline)
-        _, kind = self._git("cat-file", "-t", tree_sha, deadline=deadline, limit=32)
-        if kind != b"tree\n":
+        self._prepare_objects(deadline=deadline)
+        if self._batch_mode:
+            info = self._info(tree_sha, deadline=deadline)
+            kind = info[0] if info is not None else None
+        else:
+            _, raw_kind = self._git("cat-file", "-t", tree_sha, deadline=deadline, limit=32)
+            kind = "tree" if raw_kind == b"tree\n" else None
+        if kind != "tree":
             raise LocalTreeUnavailable("LOCAL_TREE_NOT_TREE")
         _, raw = self._git("ls-tree", "-r", "-t", "-l", "-z", "--full-tree", tree_sha,
             deadline=deadline, limit=self._max_bytes, rows=self._max_entries)
@@ -219,13 +307,21 @@ class LocalGitTree:
         if len(encoded(result)) + 4 * ((expected_size + 2) // 3) > self._max_bytes:
             raise LocalTreeUnavailable("LOCAL_BLOB_RESPONSE_LIMIT")
         deadline = time.monotonic() + self._timeout
-        self._check_no_partial(deadline=deadline)
-        _, kind = self._git("cat-file", "-t", oid, deadline=deadline, limit=32)
-        if kind != b"blob\n":
-            raise LocalTreeUnavailable("LOCAL_BLOB_NOT_BLOB")
-        # No textconv, filters, replacement refs or worktree lookup. A zero-byte
-        # bound is intentional: an empty blob cannot supply even one body byte.
-        _, raw = self._git("cat-file", "blob", oid, deadline=deadline, limit=expected_size)
+        self._prepare_objects(deadline=deadline)
+        if self._batch_mode:
+            try:
+                raw = self._batch.blob(oid, expected_size, deadline=deadline)
+            except GitBatchUnavailable as exc:
+                raise LocalTreeUnavailable(exc.reason) from None
+            if raw is None:
+                raise LocalTreeUnavailable("LOCAL_BLOB_MISSING")
+        else:
+            _, kind = self._git("cat-file", "-t", oid, deadline=deadline, limit=32)
+            if kind != b"blob\n":
+                raise LocalTreeUnavailable("LOCAL_BLOB_NOT_BLOB")
+            # No textconv, filters, replacement refs or worktree lookup. A zero-
+            # byte bound is intentional: an empty blob cannot supply body bytes.
+            _, raw = self._git("cat-file", "blob", oid, deadline=deadline, limit=expected_size)
         if len(raw) != expected_size:
             raise LocalTreeUnavailable("LOCAL_BLOB_SIZE_MISMATCH")
         actual_oid = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()

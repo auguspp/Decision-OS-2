@@ -69,8 +69,8 @@ def test_no_local_command_can_write_or_reconcile():
 
 
 def test_private_decision_preparation_never_runs_locally():
-    assert "prepare-decision" not in local_read.READ_ONLY
-    assert "read-decision-preparation" not in local_read.READ_ONLY
+    assert set(decision_preparation_commands.READS) <= set(local_read.PRIVATE_ONLY)
+    assert set(decision_preparation_commands.READS).isdisjoint(local_read.READ_ONLY)
 
 
 def test_a_write_command_is_refused_before_any_binding_or_token_is_read(tmp_path):
@@ -79,9 +79,10 @@ def test_a_write_command_is_refused_before_any_binding_or_token_is_read(tmp_path
     assert str(refused.value) == "LOCAL_READ_REFUSES_WRITE_COMMAND"
 
 
-def test_private_custody_reads_are_refused_with_their_own_reason(tmp_path):
+@pytest.mark.parametrize("operation", decision_preparation_commands.READS)
+def test_private_custody_reads_are_refused_with_their_own_reason(tmp_path, operation):
     with pytest.raises(RecordError) as refused:
-        local_read.check("prepare-decision", binding(tmp_path), {local_read.READ_TOKEN: "x"})
+        local_read.check(operation, binding(tmp_path), {local_read.READ_TOKEN: "x"})
     assert str(refused.value) == "LOCAL_READ_PRIVATE_CUSTODY_REQUIRES_GITHUB"
 
 

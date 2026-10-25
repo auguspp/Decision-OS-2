@@ -70,6 +70,13 @@ def test_private_custody_is_checked_before_any_output_even_with_save_rights(nati
     ref = DecisionPreparation(store).save(authorized(value), submission_id='fixture-preparation')['reference']
     payload = (authorized(value) if operation in commands.WRITES + commands.RECONCILES else
                value if operation == 'prepare-decision' else {'reference': ref, 'at': LATER})
+    if operation == 'review-decision-preparation':
+        # Admission must precede opening either selected research version; the
+        # second exact reference only needs a valid, distinct preflight shape.
+        payload = {'reference': ref, 'horizon_id': 'near', 'at': LATER,
+                   'review': {'before': {'reference': value['research_ref'], 'start': 1, 'end': 1},
+                              'after': {'reference': {**value['research_ref'], 'sha256': 'f' * 64},
+                                        'start': 1, 'end': 1}, 'question_id': 'q1'}}
     host.meta['private'] = False
     before, writes = host.git.head(), host.writes
     with pytest.raises(RecordError, match='PRIVATE_CUSTODY_REQUIRED'):

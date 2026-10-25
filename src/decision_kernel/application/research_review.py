@@ -40,14 +40,14 @@ def _question(research, question_id):
     return request, progress, question, finding, challenges
 
 
-def _side(store, research, item, question_id, limit):
+def _side(store, research, item, question_id, limit, source_reader=None):
     request, progress, question, finding, challenges = _question(research, question_id)
     indices = sorted({i for claim in ([finding] if finding else []) + challenges for i in claim.evidence})
     evidence = []
-    reader = ResearchReader(store)
+    read_source = source_reader or ResearchReader(store)._source
     for index in indices[:limit]:
         # Reuse the Reader's exact SourceRef read and local-failure semantics.
-        row = reader._source(index, progress.sources[index])
+        row = read_source(index, progress.sources[index])
         row["open_request"] = {"operation": "read-source", "payload": asdict(progress.sources[index])}
         row["display"] = "included"
         if len(encoded(row)) > MAX_EVIDENCE_BYTES:
@@ -122,15 +122,18 @@ def _request(agenda, reference, question_id, revision_time):
     return result
 
 
-def open_review(store, value, *, agenda, brief):
+def open_review(store, value, *, agenda, brief, research_reader=None, source_reader=None):
+    # Preparation review supplies its same-store accounted readers. Ordinary
+    # Room review retains the original readers and per-source failure semantics.
     plan = review_plan(value)
-    before = store.read_revision(BlobRef(**plan["before"]["reference"]))
-    after = store.read_revision(BlobRef(**plan["after"]["reference"]))
+    read_research = research_reader or store.read_revision
+    before = read_research(BlobRef(**plan["before"]["reference"]))
+    after = read_research(BlobRef(**plan["after"]["reference"]))
     old, new = before["record"]["input"], after["record"]["input"]
     require(new["predecessor"] == before["reference"] and new["case_id"] == old["case_id"],
             "REVIEW_EXACT_DIRECT_SUCCESSOR_REQUIRED")
     require(_question(before, plan["question_id"])[2] is not None, "REVIEW_ORIGINAL_QUESTION_NOT_FOUND")
-    sides = {name: _side(store, raw, plan[name], plan["question_id"], plan["evidence_limit"])
+    sides = {name: _side(store, raw, plan[name], plan["question_id"], plan["evidence_limit"], source_reader)
              for name, raw in (("before", before), ("after", after))}
     a, b = sides["before"], sides["after"]
     relation = ("not-carried-forward" if b["question"] is None else

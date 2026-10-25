@@ -1,6 +1,6 @@
 # 决策准备、判断历史与多期限复核
 
-责任 #147 第三批、目标设计 §16.3。本组把已保存研究接成 AI 决策准备包，复用原研究读取/SourceRef、`ResearchArtifacts`、原 BlobRef、工作底稿及同仓 records。准备包固定目标证券和表达、主要假设与最强反证、合理替代选项、需人裁定事项、原有估值/Odds/价格上下文及仍未知的部分，并保留经济机制、催化、失效条件与多期限复核窗口。保存和读取均不创建正式 Decision，不确认人工接受，不执行投资或交易。
+责任 #147 第三批、#251 按需期限复核，目标设计 §16.3、§17。本能力把已保存研究接成 AI 决策准备包，复用原研究读取/SourceRef、`ResearchArtifacts`、原 BlobRef、工作底稿及同仓 records。准备包固定目标证券和表达、主要假设与最强反证、合理替代选项、需人裁定事项、原有估值/Odds/价格上下文及仍未知的部分，并保留经济机制、催化、失效条件与多期限复核窗口。保存、读取和按需复核均不创建正式 Decision，不确认人工接受，不执行投资或交易。
 
 ## 一份准备包的用途
 
@@ -73,6 +73,33 @@
 
 没有新增准备包 current 指针。返回的 `history_scope` 只承诺选中引用的完整前驱链，不冒充发现所有草稿或全局最新判断；`current_use` 只另外比较研究 current，不修改原文档和摘要。不同选择或替代方案必须保留各自确切引用，不靠同名覆盖。
 
+## 按需复核一个原期限
+
+`review-decision-preparation` 是现役 store CLI 和同名 `research-runtime` operation 的只读入口。它选择一个已存准备包中的原 `horizon_id`，把该期限的一个原问题与明确指定的直接研究后继连接起来，复用[相邻研究 Review](../delivery/research-review.md)的原文、判断、挑战和证据读取。它不保存新的准备稿或 Review Artifact，也不改变研究 current、原窗口、复核日期或状态。
+
+输入严格只有四个顶层字段：
+
+| 字段 | 含义 |
+|---|---|
+| `reference` | 已存准备包的完整确切 ArtifactRef；先独立重放其完整原前驱与依据 |
+| `horizon_id` | 该准备包中实际存在的一个期限 ID |
+| `at` | 本次带时区的复核截止；不得早于准备包声明时间或晚于实际执行时钟 |
+| `review` | 原相邻 Review 计划：`before`、`after`、`question_id`，可选 `evidence_limit`（默认2，范围1—4） |
+
+`review.before` 和 `review.after` 均使用完整 `{reference,start,end}`，正文行号从1开始、包含两端，每段至多80行、8192字节。`before.reference` 必须与准备包的原 `research_ref` 完全一致；`question_id` 必须属于选定期限的 `question_ids`。没有结构化原问题的期限不能由程序猜一个问题后继续复核。
+
+`after` 必须实际记录 `before` 为直接 predecessor，且为同一 case；后继保存时刻不得早于原研究，也不得晚于 `at`。跨多个研究版本的祖先证明不能代替相邻 Review 的原文选择，因此本入口不跳过中间稿，不换用当前版。行段与问题的经济关联仍由调用者核对，程序核验确切版本和所选原文。
+
+原准备历史、原问题、反证及数值上下文沿 `DecisionPreparation.read` 完整恢复。所选问题每侧 finding/challenge 的证据下标并集，沿原 Review 的 `evidence_limit` 读取；其余引用保留原 SourceRef、selection 和未读请求。读取的后继来源复用同一准备稿 reader 的缓存与计账，保存时刻必须不晚于 `at`，取得/公布时刻有值时按原精度核到同一截止。成功读取项的 `cutoff_check` 保留三个原时钟、`missing_clocks`、本次截止及精度说明，即使原来源 view 超过64KiB而被省略也保留这份核对。缺时钟仍为未知，不从部分时钟通过推出完整可用性资格；日精度不认证盘中可用性，未读 pending 引用没有取得本次时间资格，外部定位不自动补抓。
+
+晚于原 `prepared_at`、但截至 `at` 的研究和材料可以用于事后复核。输出保留原保存、取得、公布时钟和复核时点，不能凭较早公布日期把后来才保管的材料变成准备时已持有的依据。原准备稿的 `prepared_at` 继续是作者声明；准备 Artifact 本身没有可据此认证的保存时钟，本次复核不补签事前存在、及时发现或市场 PIT。到原 `review_at` 之前也可以主动读取；`timing` 显示后继保存时刻相对原准备声明、原窗口的位置，日期位置不代表机制兑现或失效。
+
+结果 `schema=decision-preparation-review-v1` 包含原 `reference/horizon_id/at`、完整 `preparation` 读回结果、选定的原 `horizon` 投影、原 `review` 结果及 `timing/persistence/execution`。未选期限保持其原准备内容，不从这次选择派生评价。原问题/委托变动、删除的未解挑战、来源缺失与未读项继续显式保留；`finding_changed` 或片段变化不代签经济判断改善。独立命令没有选择 Agenda 或 Brief，其反馈/采用关系按原 Review 保持未提供，不能推定没有采用。
+
+`preparation.current_use` 保留原 reader 在本次执行时取得的 current 指针对照，用于识别原研究现在是否仍为当前版。它不是截至 `at` 的历史指针快照，不替换所选 `before/after`；后继与已读证据的时间检查也不认证整个 Git 状态或准备 Artifact 在 `at` 时已经存在。
+
+复核正文与准备输入中的文字都是待评价材料，不是执行指令。该结果不自动评定机制、催化或失效条件，不产生人工接受、交易意图、胜率或方法评分。需要经营原预测与实绩计算时，仍使用[原 Outcome 计划与口径资格](../delivery/outcome-review.md)，不能从期限的自由文本推造预测，或把原 T+5/T+20 改成准备稿的任意窗口。
+
 ## 保管、读取与接线
 
 命令使用现役 store 和 research-runtime 适配，具体引用来自真实回执，不从示例生成生产引用：
@@ -81,30 +108,41 @@
 decision-os store --binding readonly.json prepare-decision --input preparation.json
 decision-os store --binding approved.json save-decision-preparation --input publication.json --submission-id original-preparation-intent
 decision-os store --binding readonly.json read-decision-preparation --input read.json
+decision-os store --binding readonly.json review-decision-preparation --input review.json
 ```
 
-`prepare-decision` 的输入是上表对象；保存包装为 `{preparation,rights_confirmed:true,rights_basis}`，这些字段只承载已存在的保管授权声明，不新增第三方公开权利或正式 Decision 权限。`read.json` 为 `{reference:<原回执的确切引用>,at:<明确评价时刻>}`。调用者自己保存的 payload 不证明该工作已被研究、Brief 或人工采用。
+`prepare-decision` 的输入是上表对象；保存包装为 `{preparation,rights_confirmed:true,rights_basis}`，这些字段只承载已存在的保管授权声明，不新增第三方公开权利或正式 Decision 权限。`read.json` 为 `{reference:<原回执的确切引用>,at:<明确评价时刻>}`；`review.json` 使用上一节的四字段计划，引用均来自实际保管回执。同名宿主 Review operation 的 `submission_id/expected_head` 留空。调用者自己保存的 payload 不证明该工作已被研究、Brief 或人工采用。
 
 底层仍保存为原 `research/artifacts/.../manifest.json + content.bin`，原稳定 submission/CAS 处理同意图重放和不同内容冲突。独立 reader 重新打开整条前驱与原证据；读回失败时保留真实保存回执，不把它改成“未写”。原研究 current、正文和来源均不修改。
 
 宿主 `reconcile-decision-preparation` 沿相同 payload/submission_id 和原只读对账 backend 恢复未知写；对账不是另一次写授权。缺原意图继续明确失败，不能换编号补发。共享宿主/CLI/Reading Room 接入此模块时，写操作仅保存，准备/读取/对账维持原读权限；使用同一 store、原预算与既有可见性约束。
 
-四个准备命令的远端出口必须在创建输出目录前确认原生 private，并在服务与独立读回之后通过同一原 adapter 的末次可见性检查。原 public-origin marker/私有升级许可不能代替当前可见性。只读命令的输入引用也在最后检查后才写入输出；保存命令在已确认私有后、任何可能的 CAS 前保留原 payload/submission/expected-head，供未知写按原意图恢复。公共保管声明不能打开这个私有命令出口，原绑定和历史锚点保持。
+准备与期限 Review 命令的原生入口在创建输出目录前核查当前可见性，并在服务与独立读回之后通过同一原 adapter 的末次出口检查。真实 private 沿既有私有读取资格。真实 public 下，原 `prepare-decision`、`read-decision-preparation`、`save-decision-preparation`、`reconcile-decision-preparation` 沿用可撤销部署授权中的 `decision-preparation` 范围及确切 repository_id、records 分支、store_id、anchor。
+
+`review-decision-preparation` 还会输出所选后继研究和来源表示，因此其 public 资格必须同时具备原 `decision-preparation`、`research`、`sources` 三个范围，并匹配同一个确切绑定。入场和最后出口均重新核这三个既有范围；仅有准备稿授权不能释放后继研究正文或来源 view。即使 `decision-preparation` 仍有效，单独缺失或撤销 `research` 或 `sources` 也拒绝复核；在读取过程中撤销任一范围，末次核验失败后不释放整份结果及只读输入引用，不能省略受限部分后继续发布。该组合使用现有三个范围，不增加授权配置或借用 Room 的 `reading/brief/watch` 范围。
+
+关闭授权或目标不符同样拒绝；输入里的公共保管布尔值、public-origin marker 或私有升级许可均不能代替原生可见性和适用范围核验。只读命令的输入引用在最后检查后才写入输出；保存命令通过原实际可见性资格后，在任何可能的 CAS 前保留原 payload/submission/expected-head，供未知写按原意图恢复。原绑定和历史锚点保持。
+
+`decision-os local-read` 继续拒绝准备稿的准备、读取及期限 Review 命令；独立 Review 使用上述受检的主 CLI 或原生宿主出口。现有 Reading Room 仍可按原计划分别读取准备稿与相邻研究 Review；新独立命令不增加 Room 计划字段或页面面板。
 
 Reading Room 使用可选 `decision_preparation: {reference, at}` 计划，读取确切已存准备包及完整前驱；原私有宿主无需谎报公开许可。选择公共 Room 出口时仍须分别通过原研究和来源的明确导出声明，准备包的保存权利不会自动传递。无准备计划时不调用本组 reader，旧 Room 的形状和页面仍正常。
 
 页面只读取结果并提供原引用、历史和读取请求，没有“确认”“批准”“下单”按钮。暂未读取的研究、外部原文和剩余限制仍显示。保存准备包不等于发布研究、触发通知或启动长期监控。
 
-共享接线使用 `decision_preparation_commands.READS / WRITES / RECONCILES`，分别是 `prepare-decision, read-decision-preparation`、`save-decision-preparation` 和只读对账 `reconcile-decision-preparation`。`DecisionPreparation(store, registry=None, *, clock=None, registry_loader=None)`、`perform(store, operation, payload, submission_id="", registry=None, *, registry_loader=None)` 和 `verify_fresh(receipt, reader_factory, registry=None)` 接受原 store/registry，不新建数据或来源客户端。可选 `registry_loader` 只在实际重建非 null Odds 且未直接提供 registry 时返回受信注册表；命令入口负责保留该真实对象供独立读回，不能由来源内容选择 loader。页面导出 `CSS`、`JS`，`renderDecisionPreparation()` 消费 `D.decision_preparation` 中 `{status,view,open_request}`，由共享页面提供 `decision-preparation-content` 容器与原安全文本辅助函数。
+共享接线使用 `decision_preparation_commands.READS / WRITES / RECONCILES`，分别是 `prepare-decision, read-decision-preparation, review-decision-preparation`、`save-decision-preparation` 和只读对账 `reconcile-decision-preparation`。`DecisionPreparation(store, registry=None, *, clock=None, registry_loader=None)`、`perform(store, operation, payload, submission_id="", registry=None, *, registry_loader=None)` 和 `verify_fresh(receipt, reader_factory, registry=None)` 接受原 store/registry，不新建数据或来源客户端。期限 Review 的底层入口为 `application.decision_preparation_review.preparation_review_plan(value)` 与 `open_preparation_review(store, value, registry=None, *, clock=None, registry_loader=None)`。可选 `registry_loader` 只在实际重建非 null Odds 且未直接提供 registry 时返回受信注册表；命令入口负责保留该真实对象供独立读回，不能由来源内容选择 loader。当前准备和所有前驱都没有 Odds 时，新 Review 同样无需默认目录；最新稿删除 Odds 也不能跳过原前驱的匹配目录要求。页面导出 `CSS`、`JS`，`renderDecisionPreparation()` 消费 `D.decision_preparation` 中 `{status,view,open_request}`，由共享页面提供 `decision-preparation-content` 容器与原安全文本辅助函数。
 
 ## 复用、验证与退出
 
 使用现役 JSON/Artifact/Store、原工作底稿和 Python 标准库 datetime；不引入新的状态机、日历调度、金融模型或数据主库。与现役相邻版本 Review 分工明确：Review 比较真实研究修订/Brief 引文采用，本组记录确切研究之上的作者准备历史，不能用准备稿代替原研究修订。
 
-输入上限128KiB，单文档384KiB，结果768KiB，本组累计纳入重建的已读材料上限8MiB；准备历史及研究祖先各最多32版本。原估值/Odds Reader 的内部原文读取继续受既有文件和同一远端请求预算约束，8MiB 不另授原 Reader 读取额度。复杂历史可能先达到字节或现役远端请求上限，届时显式失败，不截断前驱、信任调用者汇总或重置预算。来源缺失、损坏、访问失败和预算耗尽立即结束相应操作，不用第二客户端继续拼出成功结果。
+输入上限128KiB，单文档384KiB，结果768KiB，本组累计纳入重建的已读材料上限8MiB；准备历史及研究祖先各最多32版本。原估值/Odds Reader 的内部原文读取继续受既有文件和同一远端请求预算约束，8MiB 不另授原 Reader 读取额度。复杂历史可能先达到字节或现役远端请求上限，届时显式失败，不截断前驱、信任调用者汇总或重置预算。准备包原件重放中的来源缺失、损坏、访问失败和预算耗尽立即结束准备操作，不用第二客户端继续拼出成功结果。
+
+期限 Review 的完整组合结果同样不得超过768KiB，原准备重建和复核所读研究/来源共用准备稿8MiB计账及同一个原生API的512请求上限。复用已核确切对象避免重复I/O，不另开API或来源预算。后继普通来源缺件或损坏沿原 Review 保留逐项缺口和 partial；每来源64KiB显示边界和未读引用也继续保留。完整组合超限、原件时钟不合格、访问/范围/预算终态或最终原生核验失败，均不能截断历史后输出成功。
 
 上述领域输入上限不提高实际 workflow 的 60 KiB 完整请求限制；经过原 payload 编码后的实际请求仍须在该上限内。超过宿主上限不分批伪装为同一准备包，不换意图编号重复写。
 
 新增真实 Git 回归保护原问题/反证/来源继承、两版历史、删项不等于解决、研究祖先/案例/时钟拒绝、日期与结果分离、稳定意图、伪造摘要拒绝、独立读回、边界及失败后无继续读。准备包专属回归同时覆盖明确目标/替代选项/人工问题、缺数值时 null 与 partial、原条件/概率结果重放、原行情资格不升级、错误目标/研究/估值引用拒绝和注册表要求。合成工程验证不代签真实经济机制、原始来源认证、事前预测质量或人工接受。
+
+期限 Review 的安装后消费者扩展原唯一 cold-wheel 测试：在源码树之外，用已经保存的相邻工作底稿经新命令读取同一准备稿，默认空数值上下文不读取注册表且不写Store；历史保留非 null Odds 时，缺目录仍拒绝，匹配的原目录才能恢复。各入口继续按确切输入核验权限、时间、原问题和直接后继，工程样本不替代真实案例的实质复盘。
 
 退出本能力时同步退出新 domain/application/commands、宿主/CLI/页面接线及专属测试。保留已存 Artifact 和历史版本读取责任，不回退或删除用户资料。正式 Decision 的受信独立确认、防重放和改稿失效仍属于其独立责任，不能由本组文件字段补签。

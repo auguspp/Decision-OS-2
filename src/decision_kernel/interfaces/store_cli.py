@@ -5,7 +5,6 @@ import argparse
 from dataclasses import asdict, replace
 import json
 from pathlib import Path
-from decision_kernel.infrastructure.runtime_publication import checked_output_visibility
 import sys
 
 from decision_kernel.interfaces import research_commands, delivery_commands, odds_commands
@@ -202,10 +201,10 @@ def execute(args: argparse.Namespace, *, ancestry=None, tree_reader=None, blob_r
                 handler = (decision_preparation_commands if args.store_command in decision_preparation_commands.COMMANDS else
                            odds_commands if args.store_command in odds_commands.COMMANDS else delivery_commands)
                 if handler is decision_preparation_commands and args.binding is not None:
-                    checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+                    decision_preparation_commands.checked_visibility(backend, args.store_command)
                 result = handler.execute(args, store, _load, fresh_reader)
                 if handler is decision_preparation_commands and args.binding is not None:
-                    checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
+                    decision_preparation_commands.checked_visibility(backend, args.store_command)
             elif args.store_command in research_commands.COMMANDS:
                 if read_binding is not None and args.store_command == "research-catalogue":
                     # Catalogue already chooses one exact snapshot. Reuse the

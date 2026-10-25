@@ -25,6 +25,18 @@ MAX_RESULT_BYTES = 768 * 1024
 MAX_READ_BYTES = 8 * 1024 * 1024
 
 
+def source_clock_check(view, cutoff):
+    """Preserve the original stored/date/timestamp qualification for evidence."""
+    manifest = view["manifest"]
+    require(moment(manifest["stored_at"]) <= cutoff, "DECISION_PREPARATION_EVIDENCE_AFTER_PREPARATION")
+    for field in ("acquired_at", "published_at"):
+        source_clock = manifest["input"][field]
+        if source_clock is not None:
+            within = (moment(source_clock) <= cutoff if "T" in source_clock
+                      else date.fromisoformat(source_clock) <= cutoff.date())
+            require(within, "DECISION_PREPARATION_SOURCE_CLOCK_AFTER_PREPARATION")
+
+
 def publication(value):
     shape(value, {"preparation", "rights_confirmed", "rights_basis"})
     require(value["rights_confirmed"] is True, "DECISION_PREPARATION_CUSTODY_RIGHTS_REQUIRED")
@@ -87,31 +99,27 @@ class DecisionPreparation:
             self._research_cache[key] = research
         return self._research_cache[key]
 
+    def _source(self, index, ref):
+        """One exact source cache/account shared by preparation and its review."""
+        key = encoded(asdict(ref))
+        if key not in self._source_cache:
+            # Do not convert native access/privacy/budget errors to item gaps.
+            view = self.store.read_source(ref)
+            row = {"index": index, "reference": asdict(ref), "view": view,
+                   "status": view["availability"], "error": None}
+            self._account(row)
+            self._source_cache[key] = view
+        return self._source_cache[key]
+
     def _evidence(self, sources, indices, prepared_at):
         evidence = []
         for index in sorted(indices):
             require(index < len(sources), "DECISION_PREPARATION_SOURCE_OUTSIDE_RESEARCH")
             ref = SourceRef.from_dict(sources[index])
-            key = encoded(sources[index])
-            if key not in self._source_cache:
-                # Resolve the same exact SourceRef without the ordinary paged
-                # reader's per-item error conversion. Preserve native access,
-                # privacy and budget failures so the whole operation can stop.
-                view = self.store.read_source(ref)
-                row = {"index": index, "reference": asdict(ref), "view": view,
-                       "status": view["availability"], "error": None}
-                self._account(row)
-                self._source_cache[key] = view
-            view = self._source_cache[key]
+            view = self._source(index, ref)
             manifest = view["manifest"]
-            require(moment(manifest["stored_at"]) <= prepared_at, "DECISION_PREPARATION_EVIDENCE_AFTER_PREPARATION")
+            source_clock_check(view, prepared_at)
             meta = manifest["input"]
-            for field in ("acquired_at", "published_at"):
-                source_clock = meta[field]
-                if source_clock is not None:
-                    within = (moment(source_clock) <= prepared_at if "T" in source_clock
-                              else date.fromisoformat(source_clock) <= prepared_at.date())
-                    require(within, "DECISION_PREPARATION_SOURCE_CLOCK_AFTER_PREPARATION")
             evidence.append({"index": index, "reference": deepcopy(sources[index]),
                              "availability": view["availability"], "original_verified": False,
                              "selected_content_sha256": digest(encoded(view["data"])),

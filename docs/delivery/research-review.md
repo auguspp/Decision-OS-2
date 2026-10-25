@@ -19,6 +19,16 @@ decision-os store --path /tmp/existing-synthetic.git research-room \
 
 公共宿主仍为同一 `research-runtime.yml` / `operation=reading-room`，新核 `main/code_sha`，`submission_id/expected_head` 留空。因为复核会读来源表示，除原 `public_research_custody_confirmed` 外还必须明确 `public_material_custody_confirmed=true`；省略、字符串或 false 在 Store 访问和公共输入产物生成前拒绝。保存过的议程/反馈仍需原独立反馈许可。布尔字段是调用者对实际授权的声明，不是材料或用户身份认证。
 
+## 准备稿某一期限的独立复用入口
+
+现役主 CLI 与同名 `research-runtime` operation `review-decision-preparation` 复用本页的 `open_review`，完整输入与可见性资格见[决策准备的期限复核](../research/decision-preparation.md#按需复核一个原期限)。输入为 `{reference,horizon_id,at,review}`：先恢复确切准备 Artifact 及完整历史，再把原 `review` 计划绑定到其中一个期限。`review.before.reference` 必须等于原准备研究，`question_id` 必须属于该期限；后继仍须是同 case 的直接下一稿，不能借准备历史允许跨多稿的祖先追溯跳过中间研究。
+
+该独立入口的 public 输出同时需要匹配同一确切绑定的原 `decision-preparation`、`research`、`sources` 三个部署授权范围；所选后继研究和来源表示不能仅凭准备稿授权释放。三个范围在原 adapter 入场和最后出口都须成立，单独缺失或撤销 `research` 或 `sources` 均拒绝；读取后撤销也不发布整份复核结果或只读输入引用。真实 private 保持原读取资格，其他准备命令仍沿原 `decision-preparation` 范围。本组合只复用这三个既有范围，不新增 scope 或要求 Room 的 `reading/brief/watch` 范围。
+
+该入口在原同一 reader 中核所读后继和来源截至 `at` 的保存/取得/公布时钟，保留日精度和缺时钟未知；晚于原准备日期但已在本截止保管的材料明确用于事后复核，不能认证原准备时已经持有。它可在原计划复核日之前主动读取，日期状态不代签经济结果。原研究与来源回调复用已核确切字节和计账，`open_review` 的相邻关系、问题、引文及缺口语义继续由本 owner 负责。
+
+独立期限 Review 不选择 Agenda/Brief，原反馈与采用关系显示未提供；不据此判断未采用、更正被接受或人工确认。它只读返回原准备、原期限和本相邻 Review，不保存新 Review 或修改原研究。现有 Room 的 `review` 计划和面板继续采用本页原合同；新命令没有附加 Room 面板，也不扩展[原预测兑现 Outcome](outcome-review.md)的数值或 T+5/T+20 资格。
+
 ## 四种不同事实
 
 **提出复核。** 仅从指定已存 Agenda 的完整原版引用与原问题匹配反馈；可使用原有整版选择作为默认。无议程、不匹配和不可读分别表达。反馈记录时刻晚于新版保存时刻时标成事后记录；即使更早也不证明它导致修订。反馈是已提交声明，不等于已执行或人工接受。

@@ -1,7 +1,9 @@
 """The local console may only ever run reads, and only with a read-only credential."""
 import base64
 from dataclasses import asdict, replace
+from http.client import IncompleteRead
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -129,6 +131,8 @@ def test_the_receipt_states_the_store_and_that_no_write_was_requested():
                                   "authority": "local-read-only-console"}
     assert record["store"]["branch"] == "records" and record["duration_ms"] == 12
     assert record["runner"] == "local"
+    assert record["tree_inventory"] == {"schema": "local-git-tree-v1", "answered": 0,
+                                        "declined": 0, "mirror": "absent"}
 
 
 @pytest.fixture
@@ -180,6 +184,42 @@ def records(console, monkeypatch):
 
 def run_console(console, *args):
     return local_read.main(["--binding", str(console.binding), *args])
+
+
+@pytest.mark.parametrize("selection", ["flag", "environment"])
+def test_console_selects_the_same_mirror_for_exact_trees_and_reports_actual_use(
+        console, records, tmp_path, monkeypatch, capsys, selection):
+    mirror = str(console.api.git.root)
+    args = ["research-catalogue", "--limit", "4"]
+    if selection == "flag":
+        args += ["--git-mirror", mirror]
+    else:
+        monkeypatch.setenv(local_read.MIRROR, mirror)
+    target = tmp_path / "execution-receipt.json"
+    monkeypatch.setenv("DECISION_OS_READ_RECEIPT", str(target))
+    original = console.wire._opener.open
+
+    def broken_tree_response(request, timeout):
+        if "/git/trees/" in request.full_url:
+            raise IncompleteRead(b"synthetic incomplete tree", 100)
+        return original(request, timeout)
+
+    monkeypatch.setattr(console.wire._opener, "open", broken_tree_response)
+    assert run_console(console, *args) == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["snapshot"] == records.snapshot
+    assert any(item["reference"] == asdict(records.research) for item in result["items"])
+    record = json.loads(captured.err)["local_read_receipt"]
+    assert json.loads(target.read_text(encoding="utf-8")) == record
+    assert record["tree_inventory"]["schema"] == "local-git-tree-v1"
+    assert record["tree_inventory"]["mirror"] == record["ancestry"]["mirror"] == "local-git-graph"
+    assert record["tree_inventory"]["answered"] > 0
+    assert record["tree_inventory"]["declined"] == 0
+    assert record["ancestry"]["answered"] > 0 and record["exit_code"] == 0
+    assert not any("/git/trees/" in path for _, path, _ in console.api.requests)
+    assert console.api.git.head() == records.snapshot and console.api.writes == 0
+    assert local_read.STORE_TOKEN not in os.environ
 
 
 def assert_denied(capsys, code):

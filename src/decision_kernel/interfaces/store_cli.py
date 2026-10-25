@@ -17,9 +17,10 @@ from decision_kernel.interfaces import auction_next_session_commands
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_source_use import audit_demonstrated
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef, require
+from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SHA, SourceInput, SourceRef, require
 from decision_kernel.infrastructure.git_store import GitStore
-from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+from decision_kernel.infrastructure.git_tree import LocalTreeUnavailable
+from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore, MAX_REQUESTS
 
 
 class _PublicReadAPI(GitHubAPI):
@@ -29,9 +30,11 @@ class _PublicReadAPI(GitHubAPI):
     own GitHubStore. A caught native denial cannot turn into a publishable partial
     result after the repository or permission later changes back.
     """
-    def __init__(self, api, binding):
+    def __init__(self, api, binding, *, tree_reader=None):
         self._delegate, self._repository_path = api, "/repos/" + binding.repository
         self._failure = None
+        self._tree_reader = tree_reader
+        self._native_trees = set()
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
@@ -41,10 +44,32 @@ class _PublicReadAPI(GitHubAPI):
             raise self._failure
         try:
             require(method == "GET", "LOCAL_READ_REFUSES_WRITE_COMMAND")
+            tree_prefix, recursive = self._repository_path + "/git/trees/", "?recursive=1"
+            if self._tree_reader is not None and payload is None and path.startswith(tree_prefix) and path.endswith(recursive):
+                tree_sha = path[len(tree_prefix):-len(recursive)]
+                if tree_sha in self._native_trees:
+                    try:
+                        # Only native commit responses select a local immutable
+                        # tree. The shared Store still validates every returned
+                        # row, directory, mode, size and path without filtering.
+                        return self._tree_reader.read(tree_sha)
+                    except LocalTreeUnavailable:
+                        # A partial/missing local graph is not another truth.
+                        # Use the original single request and its existing budget.
+                        pass
             value = self._delegate.request(method, path, payload)
             if path == self._repository_path:
                 require(isinstance(value, dict) and value.get("private") is False,
                         "LOCAL_READ_PUBLIC_STORE_ONLY")
+            commit_prefix = self._repository_path + "/git/commits/"
+            if self._tree_reader is not None and payload is None and path.startswith(commit_prefix):
+                commit = path[len(commit_prefix):]
+                tree = value.get("tree") if isinstance(value, dict) else None
+                tree_sha = tree.get("sha") if isinstance(tree, dict) else None
+                if (SHA.fullmatch(commit) and isinstance(value, dict) and value.get("sha") == commit
+                        and isinstance(tree_sha, str) and SHA.fullmatch(tree_sha)
+                        and len(self._native_trees) < MAX_REQUESTS):
+                    self._native_trees.add(tree_sha)
             return value
         except RecordError as error:
             self._failure = error
@@ -110,7 +135,8 @@ def _load(path: Path) -> dict:
     return value
 
 
-def execute(args: argparse.Namespace, *, ancestry=None, read_binding: GitHubBinding | None = None) -> int:
+def execute(args: argparse.Namespace, *, ancestry=None, tree_reader=None,
+            read_binding: GitHubBinding | None = None) -> int:
     """Execute once; a local reader may supply its already checked public binding.
 
     This internal argument is not a command-line authority flag. It preserves
@@ -138,7 +164,7 @@ def execute(args: argparse.Namespace, *, ancestry=None, read_binding: GitHubBind
                     raise RecordError("REMOTE_READ_ONLY")
                 api = GitHubAPI.from_environment()
                 if read_binding is not None:
-                    api = _PublicReadAPI(api, binding)
+                    api = _PublicReadAPI(api, binding, tree_reader=tree_reader)
                 backend = GitHubStore(binding, api, ancestry=ancestry)
                 if read_binding is not None:
                     def before_export():

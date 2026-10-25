@@ -6,24 +6,26 @@
 
 ## 为什么值得搬
 
-对最近 100 次运行的观测（2026-10-23，只是快照，不进契约）：`research-runtime` 被派发 51 次，其中 **39 次只读**；只读运行的中位耗时 37 秒、p90 101 秒，且其中 5 次在只读阶段就失败。同一份读在链路上没有额外一跳时是秒级——下面「实测」一节会说明这一跳现在卡在哪。搬走的收益不是机器费（本仓 public，分钟数本就不计费），而是三样更贵的东西：
+对最近 100 次运行的观测（2026-10-23，只是快照，不进契约）：`research-runtime` 被派发 51 次，其中 **39 次只读**；只读运行的中位耗时 37 秒、p90 101 秒，且其中 5 次在只读阶段就失败。本地读取省去 runner 派发，但仍需访问 GitHub；下面分别说明祖先证明和树目录的本地加速，实际端到端耗时仍取决于宿主链路与镜像可用性。搬走的收益不是机器费（本仓 public，分钟数本就不计费），而是三样更贵的东西：
 
 1. **延迟**：等 37–100 秒读一份 catalogue。
 2. **噪音**：只读也会因为 runner/checkout 变红，红一次就要人解释一次。
 3. **耦合**：读取还要经过派发、runner 与代码准入。2026-10-23 的严格 main 相等检查曾使日更被合并撞停；现行后端已允许代码仍在 main 祖先链内的正常前进，这个历史故障不代表当前仍要求 SHA 相等。本地读取直接复用 store，不依赖 runner 派发。
 
-## 六道闸，任一不过就不发请求
+## 参数解析与六道本地闸
+
+本入口先复用 `decision-os store` 的参数解析，再执行本地预检。缺少必填参数、未知命令或互斥参数冲突，由 argparse 输出 usage 并退出 2；此时尚未进入下表，也未创建 API。例如，`put-source` 缺少 `--submission-id` / `--input`，或 `prepare-decision` 缺少 `--input`，会先在参数解析时退出。下表错误码适用于语法已通过的命令。
 
 | 失败码 | 含义 |
 |---|---|
 | `LOCAL_READ_REFUSES_WRITE_COMMAND` | 不在只读白名单里（写、reconcile 一律不在） |
 | `LOCAL_READ_PRIVATE_CUSTODY_REQUIRES_GITHUB` | `prepare-decision` / `read-decision-preparation`：私有决策准备不落笔记本 |
-| `LOCAL_READ_REQUIRES_A_BINDING` | 必须给 `--binding`，不接本地合成 store |
+| `LOCAL_READ_REQUIRES_A_BINDING` | 必须给 `--binding`；语法完整地选择 `--path` 也不能接入本地合成 store |
 | `LOCAL_READ_TOKEN_REQUIRED` | 必须先设 `DECISION_OS_READ_TOKEN` |
 | `LOCAL_READ_REFUSES_STORE_TOKEN` | 环境里出现 `DECISION_OS_STORE_TOKEN` 就拒绝，避免误用可写令牌 |
 | `LOCAL_READ_REQUIRES_READ_ONLY_BINDING` / `LOCAL_READ_PUBLIC_STORE_ONLY` | binding 必须 `write_enabled=false` 且 `visibility=public` |
 
-闸在**构造任何 API 客户端之前**跑完，所以被拒的命令不会产生一次网络请求，也不会读到 records。
+binding 先通过共享结构与策略校验。`visibility=private` 且 `private_upgrade_allowed=true` 会先返回 `INVALID_PRIVATE_UPGRADE_POLICY`；合法的 private binding（`private_upgrade_allowed=false`）才进入本地 `LOCAL_READ_PUBLIC_STORE_ONLY` 检查。以上参数解析和本地预检都在**构造任何 API 客户端之前**完成，被拒的命令不会产生网络请求，也不会读到 records。
 
 配置通过后，还须核 GitHub 返回的**实际仓库可见性**。本地入口使用预检得到的同一 binding，并在本次执行中关闭 `private_upgrade_allowed`；不修改保管配置、历史锚点或 hosted 的私有读取资格。初始实际 private 在读取 records 前拒绝；过程中观测到 public→private，则拒绝后续 JSON、HTML 和附件导出。配置中的 `visibility=public` 本身不是这项实际核验。
 
@@ -40,7 +42,9 @@
 
 ## 回执
 
-每条命令都会在 **stderr** 输出一行 `{"local_read_receipt": …}`，stdout 仍是原样结果，管道不受影响。设 `DECISION_OS_READ_RECEIPT=<path>` 可另存一份。
+通过参数解析和本地预检、进入共享执行后，命令会在 **stderr** 输出一行 `{"local_read_receipt": …}`，包括执行阶段失败的情况。参数解析或本地预检失败只输出对应错误，不生成这份执行回执。stdout 保留共享执行的原样结果；设 `DECISION_OS_READ_RECEIPT=<path>` 可另存已生成的执行回执。
+
+以下为结构示例，计数和时长不代表现场验收：
 
 ```json
 {
@@ -53,20 +57,22 @@
                "authority": "local-read-only-console"},
   "ancestry": {"schema": "local-git-ancestry-v1", "mirror": "local-git-graph",
                "answered": 1, "declined": 0},
+  "tree_inventory": {"schema": "local-git-tree-v1", "mirror": "local-git-graph",
+                     "answered": 1, "declined": 0},
   "started_at": "…", "finished_at": "…", "duration_ms": 820, "exit_code": 0
 }
 ```
 
-`ancestry` 只记计数，不记提交 id：`answered` 是本地对象图答上的次数，`declined` 是它拒绝、改由 `compare` 回答的次数，`mirror` 为 `absent` 表示没开本地图。**`declined > 0` 就是「镜像落后了，去 fetch」的信号**，不是错误。
+`ancestry` 保留原有祖先证明计数；新增的 `tree_inventory` 单独记录完整树目录尝试。两者的 `answered` 是本地对象图答上的次数，`declined` 是本地尝试拒绝、交回原远端路径的次数；`mirror=absent` 表示未提供镜像，启用时为 `local-git-graph`。其中 `tree_inventory.answered` 只计本地完整输出，后续 Store 校验仍另行负责。计数不记录提交 id，也不证明整个读取成功。镜像落后或对象缺失可以导致回落；目录超限、不完整或不支持的仓库配置也会导致回落，不能把所有 `declined` 都诊断为需要 fetch。
 
-回执说明的是**这次读的身份**，不是「已验证」。它不能替代 Ready/Gate 原件，也不能替任何研究提交或 Human Decision 签字。
+回执说明的是**这次读所声明的身份与执行情况**，不是「已验证」。`identity.token=read-only-required` 表示凭据要求，不证明 token 的实际权限已被核验；只读权限资格须由宿主提供原生权限依据。回执不能替代 Ready/Gate 原件，也不能替任何研究提交或 Human Decision 签字。
 
 ## 用法
 
 ```bash
 export DECISION_OS_READ_TOKEN=<fine-grained PAT, Contents: Read-only>
 
-# Mirror first, or the read pays for a remote comparison anyway (see below).
+# Fetch explicitly before reading; tree inventory does not fetch missing objects.
 git fetch origin records:refs/remotes/origin/records
 
 python -m decision_kernel.interfaces.local_read \
@@ -99,9 +105,9 @@ python -m decision_kernel.interfaces.local_read \
 
 计划文件与 HTML 路径须为新文件；重复读取时使用新的文件名，不覆盖已有原件。`as_of` 是此次阅读时钟，已存 Brief、研究和行情仍显示其原日期，缺失不会变成今天的新内容。Research 与 Odds 只取本次有界页；若返回 `partial` / `next_cursor`，按返回的确切后继请求接续，不能把尾部未读写成没有结果。AI Brief 与 Odds 页均绑定同一 Room 快照。
 
-`--git-mirror` 也可由 `DECISION_OS_GIT_MIRROR` 提供。**不给就完全按旧行为**：每一次祖先证明都走 `compare`。
+`--git-mirror` 也可由 `DECISION_OS_GIT_MIRROR` 提供。同一镜像可回答祖先证明与已核确切树的完整目录；本地不能回答时，分别回落原有 `compare` 和树目录 GET。不给镜像就保留原有远端读取路径。树目录加速不会自动补镜像，需由用户在读取之外显式执行 `git fetch`。
 
-令牌要求：**只读**。公开仓理论上可匿名读，但匿名会撞跑 API 限额且无法区分调用者，所以仍要求一个只读令牌，而不是复用运行时令牌。`DECISION_OS_STORE_TOKEN` 是运行时唯一 writer 用的名字，本地一律拒绝。
+令牌要求：**只读**。公开仓理论上可匿名读，但匿名会撞跑 API 限额且无法区分调用者，所以仍要求一个只读令牌，而不是复用运行时令牌。`DECISION_OS_STORE_TOKEN` 是运行时唯一 writer 用的名字，本地一律拒绝。入口核读令牌是否存在并禁止环境中的 writer 令牌，不查询或认证 token 的实际授权范围；把具写能力的 OAuth token 放进 `DECISION_OS_READ_TOKEN` 不会让它变成只读凭据。使用这种凭据的获准读路径验证仍须保留其权限偏离，不能签收只读凭据资格。
 
 ## 证据链第一跳：把「数提交」换成「验哈希链」
 
@@ -122,9 +128,9 @@ python -m decision_kernel.interfaces.local_read \
 | 路径 | 耗时 | 说明 |
 |---|---:|---|
 | `GET /compare/…?per_page=1`（同一链路上两次） | 7 s / 17 s | 曾达 47.5 s；`ahead_by=1127`，`per_page=1` 限不住服务端计算 |
-| `git merge-base --is-ancestor`（本地） | **0.67–1.14 s** | 稳定，与历史长度无关的常数级外挂成本 |
+| `git merge-base --is-ancestor`（本地） | **0.67–1.14 s** | 当时镜像与链路下的本地测量，不承诺固定耗时 |
 
-它不是新的信任根，只有三条边界（`src/decision_kernel/infrastructure/git_ancestry.py` 头部写全）：
+祖先证明的本地加速不是新的信任根，有三条边界（`src/decision_kernel/infrastructure/git_ancestry.py` 头部写全）：
 
 1. **只回答远端已经返回的提交 id。** 调用方仍然先取 live ref，所以 head 一动问题就换。
 2. **答不上来就拒绝，永不猜。** 对象缺失 → `AncestryUnavailable(LOCAL_ANCESTRY_OBJECT_MISSING)`，随即**回落到 `compare`**。把「镜像过期」误判成「不是祖先」会凭空指控 store 被改写，这是唯一不能犯的错。
@@ -136,12 +142,26 @@ python -m decision_kernel.interfaces.local_read \
 
 2026-10-23 22:51 的实跑回执：`answered=1, declined=2, exit_code=0`。当天的 `records` head 正被日更写入推着走（`87e9c38d` → `cf889c0a`），本地镜像停在旧 head，于是两次祖先证明本地答不上来、回落 `compare`，整次读花 **163 s** 才拿到结果——拿到了，但慢在回落。
 
-所以正确用法是**先 `git fetch` 再读**（本仓 `records` 全量 13216 个对象、8.6 MB，实测 5 s）。不回落的读是亚秒级；回落的读仍然能出结果，只是把 47.5 秒的风险又请回来了。
+因此应**先 `git fetch` 再读**。当时本仓 `records` 全量 13216 个对象、8.6 MB，fetch 实测 5 s；这是历史观测，不是当前规模或耗时保证。祖先证明本地命中只省去对应的 `compare`，目录与正文等其他请求仍可能失败。
 
+## 同一镜像回答确切树目录
+
+[#246](https://github.com/auguspp/Decision-OS-2/issues/246) 记录了另一处真实阻塞：2026-10-25 的 WorkBuddy 验证中，祖先证明已由本地回答，但 records 的递归树列表仍需下载约 2.36 MB JSON，在该宿主链路超时或断流。该现场使用经用户批准的宽权限 OAuth、Python 3.13.14 和 `PYTHONPATH=src`，凭据与加载方式的偏离按原回执保留，不作为只读凭据或标准安装的验收。树目录加速只处理这一类请求，不改变正文读取、权限或保存格式；实现与 CI 不能代替修复后的本机补验。
+
+本地入口的 `_PublicReadAPI` 继续包装原生 GET。只有它已从**本仓确切 commit 的原生响应**取得、且响应 `sha` 与请求 commit 匹配的 `tree.sha`，才允许用 `LocalGitTree.read` 回答该树的递归目录请求。本地结果仍交给原 `GitHubStore._tree` 执行相同的目录校验，不另设一份 Store 读取规则。
+
+这条加速有以下边界：
+
+- **远端身份与权限仍是前提。** 仓库 public 核验、live ref、确切 commit→tree 关系，以及原有 marker、blob、正文与摘要校验，继续走原路径。镜像分支头不能充当远端当前 head，任意本地 tree id 也不能取得目录读取资格。
+- **只回答确切对象，不更新镜像。** `LocalGitTree` 不读取本地 refs 或工作区内容，不 fetch、不写入；它拒绝 partial clone / promisor 仓库，并在自己的 Git 调用中禁用协议与替换对象。这些限制用于新树目录读取，不扩大为旧祖先适配器的环境隔离保证。
+- **完整回答或回落。** 对象缺失、目录不完整、超限或仓库配置不支持时，本地不返回部分树冒充完整目录，只交回原有的一次树目录 GET；不新增重试或请求预算。远端仍可能失败，不能把回落记成读取成功。
+- **执行机器与 Git 对象库仍须可信。** 使用本地 Git 对象不等于审计整个 object store，也不代替远端可见性及原有记录校验。
+
+是否实际命中看本次 `tree_inventory` 回执；是否读到所需资料看原 stdout 结果及其确切引用。该计数不能证明 HTML 已打开、附件已下载，或研究已完成采用。
 
 ## 稳定边界：为什么工作台可以直接调它
 
-本控制台对上层只暴露两个东西：**stdout 上的 JSON 结果**、**stderr 上的一行回执**。任何宿主——WorkBuddy 技能、连接器、MCP 工具、一个 shell 脚本——按这个契约调用即可，不需要知道 Python 内部结构。反过来说，换宿主也不改本仓的读实现，这正是「只保留核心与连接性」的落点。
+本控制台对上层暴露**退出码、stdout 上的 JSON 结果，以及 stderr 上的错误或执行回执**；回执的生成阶段见上文。任何宿主——WorkBuddy 技能、连接器、MCP 工具、一个 shell 脚本——按这个契约调用即可，不需要知道 Python 内部结构。反过来说，换宿主也不改本仓的读实现，这正是「只保留核心与连接性」的落点。
 
 ## 明确不搬的部分
 

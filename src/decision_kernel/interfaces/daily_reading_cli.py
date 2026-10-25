@@ -20,6 +20,7 @@ from decision_kernel.application.daily_discovery import reading_discovery
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, digest, encoded, require
+from decision_kernel.infrastructure.daily_execution import select_execution, verify_checkout
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed, measure_phase, timed
@@ -30,6 +31,8 @@ from decision_kernel.interfaces.reading_commands import check_ai_brief_output, p
 from decision_kernel.interfaces.reading_page import render_page
 
 OUTPUTS = ("reading-room.html", "reading-room.json", "reading-summary.md")
+RUNTIME_IDENTITY_FIELDS = ("operation", "invocation", "code_sha", "workflow_sha", "runtime_version",
+    "run_id", "run_attempt", "event")
 UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code", "reading_reason_code", "frontier_reason_code", "cycle_date", "cycle_status",
     "source_requests", "calendar_source_requests", "price_source_requests", "expected_completed_session",
     "calendar_last_failure", "calendar_source_budget", "calendar_original_source_budget",
@@ -38,7 +41,8 @@ UPDATE_FIELDS = ("operation", "invocation", "admission", "status", "reason_code"
     "master_source_requests", "master_refresh", "master_reserved_queries", "master_query_budget",
     "master_page_budget", "master_source_budget", "master_execution", "master_interruption",
     "master_releases",
-    "calendar_checked_through", "started_at", "finished_at", "code_sha", "run_id", "run_attempt", "event")
+    "calendar_checked_through", "started_at", "finished_at", "code_sha", "workflow_sha", "runtime_version",
+    "run_id", "run_attempt", "event")
 STATES = {"read": "仅检查已存状态", "complete": "本次限定行情更新完成", "already-complete": "本轮已完成，未重复请求",
     "no-new-session": "没有新增交易日", "paused": "更新已暂停", "not-due": "尚未到约定更新时间",
     "blocked": "本轮更新受阻", "source-held": "来源已暂停，等待复核", "persistence-unconfirmed": "保存结果待对账",
@@ -268,13 +272,20 @@ def _open_readers(api):
     return VersionedStore(GitHubStore(binding, api)), VersionedStore(GitMarketReader(binding, api))
 
 
+def require_runtime_identity(receipt, selected, error="DAILY_READING_RUNTIME_MISMATCH"):
+    # Canonical JSON equality also preserves types inside the approved runtime
+    # evidence; Python's nested equality would accept True in place of CI run 1.
+    require(isinstance(receipt, dict) and all(key in receipt
+        and encoded(receipt[key]) == encoded(value) for key, value in selected.items()), error)
+
+
 def read_update_receipt(out, selected):
     """The source writer's canonical native-identity receipt, reused by both consumers."""
     raw = _regular(out / "result.json", 1024 * 1024)
     receipt = _json(raw)
     require(isinstance(receipt, dict) and receipt.get("schema") == "daily-market-runtime-v1"
-            and encoded(receipt) == raw and all(type(receipt.get(key)) is type(value)
-                and receipt[key] == value for key, value in selected.items()), "DAILY_READING_RUNTIME_MISMATCH")
+            and encoded(receipt) == raw, "DAILY_READING_RUNTIME_MISMATCH")
+    require_runtime_identity(receipt, selected)
     require(isinstance(receipt.get("status"), str) and re.fullmatch(r"[a-z][a-z0-9-]{0,63}", receipt["status"]),
             "DAILY_READING_RUNTIME_STATUS")
     require(all(receipt.get(key) is None or isinstance(receipt[key], str)
@@ -292,12 +303,14 @@ def read_discovery_receipt(out, selected, receipt):
     require(isinstance(result, dict) and encoded(result) == raw
         and result.get("schema") == "daily-discovery-runtime-v1"
         and result.get("source_receipt_sha256") == digest(encoded(receipt))
-        and all(type(result.get(key)) is type(value) and result[key] == value for key, value in selected.items())
         and result.get("status") in {"stored-and-verified", "already-recorded", "not-updated", "unavailable"}
         and type(result.get("source_requests")) is int and result["source_requests"] == 0,
         "DAILY_DISCOVERY_RUNTIME_MISMATCH")
-    return {key: deepcopy(result.get(key)) for key in (
-        "status", "reason_code", "as_of", "records_writes", "reference", "persistence", "source_requests")}
+    require_runtime_identity(result, selected, "DAILY_DISCOVERY_RUNTIME_MISMATCH")
+    return {**{key: deepcopy(result.get(key)) for key in (
+        "status", "reason_code", "as_of", "records_writes", "reference", "persistence", "source_requests")},
+        **{key: deepcopy(result[key]) for key in ("source_receipt_sha256", *RUNTIME_IDENTITY_FIELDS)
+            if key in result}}
 
 
 @diagnosed
@@ -315,6 +328,11 @@ def run_runtime(event, env, out, *, api=None, clock=None):
         receipt = read_update_receipt(out, selected)
         discovery_receipt = read_discovery_receipt(out, selected, receipt)
         api = GitHubAPI(token) if api is None else api
+        selected = select_execution(api, selected, env=env, require_inherited=True)
+        verify_checkout(selected)
+        require_runtime_identity(receipt, selected)
+        if discovery_receipt is not None:
+            require_runtime_identity(discovery_receipt, selected, "DAILY_DISCOVERY_RUNTIME_MISMATCH")
         native_ready(api, selected)
         store, market_store = _open_readers(api)
         as_of = (clock or (lambda: datetime.now(timezone.utc).isoformat()))()

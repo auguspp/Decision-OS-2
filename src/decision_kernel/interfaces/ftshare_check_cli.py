@@ -76,6 +76,14 @@ def settings(event, env):
 def check_private(api, selected):
     # Historical studies remain private-only; normal hosts may use #164 authority.
     from decision_kernel.infrastructure.runtime_publication import native_publication_basis, require_code_on_main
+    if "runtime_version" in selected:
+        # Only the daily entry establishes this frozen execution binding. Its
+        # live guard owns both native visibility and current deployment grants;
+        # the old checkout's public-runtime file cannot override a revocation.
+        from decision_kernel.infrastructure.daily_execution import require_live_execution
+        require("study" not in selected, 'FTSHARE_PRIVATE_REPOSITORY_REQUIRED')
+        require_live_execution(api, selected)
+        return
     meta = api.request('GET', PREFIX)
     authorization_selection = selected
     if meta.get('private') is False and set(selected) == {'code_sha'} \

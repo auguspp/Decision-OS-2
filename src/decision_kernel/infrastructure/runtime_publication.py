@@ -101,6 +101,16 @@ def authorization():
         value = json.loads(raw, object_pairs_hook=_object)
     except (OSError, ValueError, UnicodeError, RecursionError):
         raise RecordError("PUBLIC_RUNTIME_POLICY_INVALID") from None
+    value = validate_authorization(value)
+    return value if value["enabled"] else None
+
+
+def validate_authorization(value):
+    """Validate the same fixed deployment grant, including an explicit revoke.
+
+    The daily host also applies this contract to bytes read from an exact native
+    main commit. Parsing a value never establishes where it came from.
+    """
     require(isinstance(value, dict) and set(value) == {
         "schema", "enabled", "repository", "repository_id", "branch", "anchor",
         "store_id", "authorization_ref", "scopes"}, "PUBLIC_RUNTIME_POLICY_INVALID")
@@ -118,7 +128,7 @@ def authorization():
     require(isinstance(scopes, list) and all(isinstance(scope, str) for scope in scopes)
         and len(scopes) == len(set(scopes)) and set(scopes) <= SCOPES,
         "PUBLIC_RUNTIME_POLICY_INVALID")
-    return value if value["enabled"] else None
+    return value
 
 
 def publication_basis(binding, scope):

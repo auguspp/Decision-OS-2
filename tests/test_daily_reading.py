@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from decision_kernel.application.brief_discovery import cutoff_age
-from decision_kernel.domain.records import RecordError, encoded
+from decision_kernel.domain.records import RecordError, digest, encoded
 from decision_kernel.interfaces import daily_market_cli, daily_reading_cli as cli
 from test_daily_market import native_context
 from test_ftshare_collection_runtime import NativeAPI
@@ -33,6 +33,23 @@ def receipt(selected=None, **changes):
     return {"schema": "daily-market-runtime-v1", "status": "read", "reason_code": None,
             "source_requests": 0, "calendar_source_requests": 0, "price_source_requests": 0,
             **(selected or {}), **changes}
+
+
+def frozen_identity():
+    """Synthetic receipt evidence; real admission is exercised separately."""
+    return {"operation": "update", "invocation": "external-clock", "event": "workflow_dispatch",
+        "run_id": 8001, "run_attempt": 1, "workflow_sha": "a" * 40, "code_sha": "b" * 40,
+        "runtime_version": {"schema": "daily-runtime-selection-v1", "mode": "pinned",
+            "code_tree": "c" * 40, "policy_commit": "a" * 40, "policy_sha256": "d" * 64,
+            "protocol": "daily-runtime-v1", "workflow_ci_run": 1, "execution_ci_run": 2,
+            "approval_ref": "https://github.com/auguspp/Decision-OS-2/issues/221#issuecomment-1"}}
+
+
+def discovery_receipt(selected, source):
+    return {"schema": "daily-discovery-runtime-v1", **deepcopy(selected),
+        "source_receipt_sha256": digest(encoded(source)), "status": "not-updated",
+        "reason_code": "DAILY_DISCOVERY_UPDATE_NOT_QUALIFIED", "as_of": AT,
+        "records_writes": 0, "reference": None, "persistence": "not-written", "source_requests": 0}
 
 
 def fake_readers(monkeypatch, *, status="read", resolution_failure=False):
@@ -76,6 +93,54 @@ def test_same_reading_room_receives_exact_market_and_latest_selector_without_wri
     assert payload["plan"]["market"]["entity_id"] is None and registry == "trusted-registry"
     assert result["daily_update"]["source_http_requests"] == 0
     assert result["daily_update"]["records_write"] == "not-requested" and original == receipt()
+
+
+def test_reading_preserves_frozen_workflow_execution_and_approval_evidence(tmp_path, monkeypatch):
+    selected = frozen_identity()
+    source = receipt(selected)
+    state = discovery_receipt(selected, source)
+    (tmp_path / "result.json").write_bytes(encoded(source))
+    (tmp_path / "discovery-result.json").write_bytes(encoded(state))
+    restored = cli.read_update_receipt(tmp_path, selected)
+    discovered = cli.read_discovery_receipt(tmp_path, selected, restored)
+    readers, _ = fake_readers(monkeypatch)
+    result = cli.build_reading(*readers, "registry", approved(), restored, as_of=AT,
+        discovery_receipt=discovered)
+    context = result["daily_update"]
+    for key, value in selected.items():
+        assert context["source_receipt"][key] == context["discovery_update"][key] == value
+    assert context["source_receipt_sha256"] == context["discovery_update"]["source_receipt_sha256"] \
+        == digest(encoded(source))
+    context["source_receipt"]["runtime_version"]["mode"] = "current-main"
+    assert source["runtime_version"]["mode"] == "pinned"
+
+
+@pytest.mark.parametrize("stage", ["source", "discovery"])
+@pytest.mark.parametrize("field,fault", [
+    ("workflow_sha", "missing"), ("workflow_sha", "changed"),
+    ("code_sha", "changed"), ("runtime_version", "missing"),
+    ("runtime_version", "changed"), ("runtime_version", "nested-bool"),
+])
+def test_receipts_cannot_omit_or_relabel_pinned_execution_evidence(tmp_path, stage, field, fault):
+    selected = frozen_identity()
+    source = receipt(selected)
+    changed = deepcopy(source) if stage == "source" else discovery_receipt(selected, source)
+    if fault == "missing":
+        changed.pop(field)
+    elif fault == "nested-bool":
+        # bool and int compare equal inside a dict but identify different JSON.
+        changed[field]["workflow_ci_run"] = True
+    elif field == "runtime_version":
+        changed[field]["policy_sha256"] = "e" * 64
+    else:
+        changed[field] = "f" * 40
+    name = "result.json" if stage == "source" else "discovery-result.json"
+    (tmp_path / name).write_bytes(encoded(changed))
+    with pytest.raises(RecordError, match="RUNTIME_MISMATCH"):
+        if stage == "source":
+            cli.read_update_receipt(tmp_path, selected)
+        else:
+            cli.read_discovery_receipt(tmp_path, selected, source)
 
 
 def test_failed_update_and_older_market_remain_visible_in_human_summary(monkeypatch):
@@ -124,6 +189,13 @@ def test_host_paragraph_and_job_summary_escape_nonexecuting_input(monkeypatch):
 
 
 def native_run(tmp_path, monkeypatch, **changes):
+    from decision_kernel.interfaces import daily_discovery_cli
+
+    # These original consumer fixtures exercise native run/visibility checks.
+    # Approved checkout admission has its own real-module fixtures below.
+    for entry in (cli, daily_discovery_cli):
+        monkeypatch.setattr(entry, "select_execution", lambda api, selected, **kwargs: selected)
+        monkeypatch.setattr(entry, "verify_checkout", lambda selected: None)
     event, env = native_context()
     env.update(RUNNER_TEMP=str(tmp_path), GITHUB_TOKEN="synthetic-job-token")
     selected = daily_market_cli.settings(event, env, approved())
@@ -139,6 +211,102 @@ def native_run(tmp_path, monkeypatch, **changes):
     return event, env, out, api, readers, calls
 
 
+def approved_native_run(tmp_path, monkeypatch, *, pinned=True):
+    """Real native approval with a synthetic checkout and existing reader model."""
+    from decision_kernel.interfaces import daily_discovery_cli
+    from test_daily_execution import Native
+
+    preflight = Native(pinned=pinned)
+    selected = preflight.freeze()
+    event = {"inputs": {"operation": "update", "code_sha": selected["workflow_sha"]}}
+    env = {**preflight.env, "RUNNER_TEMP": str(tmp_path), "GITHUB_TOKEN": "synthetic-job-token"}
+    out = tmp_path / "daily-market"
+    out.mkdir()
+    (out / "result.json").write_bytes(encoded(receipt(selected, status="source-held")))
+    checkouts, guards = [], []
+    readers, calls = fake_readers(monkeypatch, status="blocked")
+    for entry in (cli, daily_discovery_cli):
+        monkeypatch.setattr(entry, "verify_checkout", lambda selected: checkouts.append(deepcopy(selected)))
+    def writer(current, *, before_write):
+        guards.append(before_write)
+        return readers
+    monkeypatch.setattr(daily_discovery_cli, "_open_writer", writer)
+    return event, env, out, Native(pinned=pinned), selected, calls, checkouts, guards
+
+
+def test_native_pinned_state_and_reading_keep_one_frozen_proof_after_main_advances(tmp_path, monkeypatch):
+    from decision_kernel.interfaces import daily_discovery_cli
+    from test_daily_execution import Native
+
+    event, env, out, native, selected, _, checkouts, guards = approved_native_run(tmp_path, monkeypatch)
+    original = (out / "result.json").read_bytes()
+    assert daily_discovery_cli.run_runtime(event, env, out, api=native, clock=lambda: AT) == 0
+    discovery = cli._json((out / daily_discovery_cli.OUTPUT).read_bytes())
+    assert discovery["status"] == "not-updated" and discovery["records_writes"] == 0
+    later = Native(pinned=True)
+    later.advance()
+    assert cli.run_runtime(event, env, out, api=later, clock=lambda: AT) == 0
+    saved = cli._json((out / "reading-room.json").read_bytes())["daily_update"]
+    for key, value in selected.items():
+        assert discovery[key] == saved["source_receipt"][key] == saved["discovery_update"][key] == value
+    assert checkouts == [selected, selected]
+    assert len(guards) == 1 and selected["code_sha"] != selected["workflow_sha"]
+    assert discovery["source_receipt_sha256"] == saved["source_receipt_sha256"] == digest(original)
+    assert (out / "result.json").read_bytes() == original
+    for api in (native, later):
+        ci_calls = [path for _, path in api.calls if "/actions/workflows/ci.yml/runs?" in path]
+        assert len(ci_calls) == 2  # Each new entry checks each exact CI once.
+    disabled = deepcopy(native.policies[native.workflow_sha])
+    disabled["enabled"] = False
+    native.advance(policy=disabled)
+    with pytest.raises(RecordError, match="DAILY_EXECUTION_DISABLED"):
+        guards[0]()  # The discovery writer retains this same live authority.
+
+
+@pytest.mark.parametrize("consumer", ["reading", "discovery"])
+def test_native_consumer_cannot_reselect_when_its_frozen_envelope_is_missing(tmp_path, monkeypatch, consumer):
+    from decision_kernel.interfaces import daily_discovery_cli
+
+    event, env, out, native, _, calls, checkouts, guards = approved_native_run(
+        tmp_path, monkeypatch, pinned=False)
+    env.pop("DECISION_OS_EXECUTION")
+    entry = cli if consumer == "reading" else daily_discovery_cli
+    with pytest.raises(RecordError, match="DAILY_EXECUTION_ENVIRONMENT"):
+        entry.run_runtime(event, env, out, api=native, clock=lambda: AT)
+    assert native.calls == [] and not calls and not checkouts and not guards
+    assert not (out / daily_discovery_cli.OUTPUT).exists()
+    assert not any((out / name).exists() for name in cli.OUTPUTS)
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("policy", "DAILY_EXECUTION_DISABLED"),
+    ("publication", "DAILY_EXECUTION_PUBLICATION_REVOKED"),
+    ("native-run", "DAILY_MARKET_NATIVE_RUN"),
+])
+def test_native_pinned_reading_rechecks_live_authority_after_render_before_export(
+        tmp_path, monkeypatch, change, reason):
+    event, env, out, native, selected, calls, checkouts, _ = approved_native_run(tmp_path, monkeypatch)
+    original = cli.daily_page
+    def changed(model):
+        page = original(model)
+        if change == "policy":
+            disabled = deepcopy(native.policies[native.workflow_sha])
+            disabled["enabled"] = False
+            native.advance(policy=disabled)
+        elif change == "publication":
+            disabled = deepcopy(native.publications[native.workflow_sha])
+            disabled["enabled"] = False
+            native.advance(publication=disabled)
+        else:
+            native.run["head_sha"] = "f" * 40
+        return page
+    monkeypatch.setattr(cli, "daily_page", changed)
+    with pytest.raises(RecordError, match=reason):
+        cli.run_runtime(event, env, out, api=native, clock=lambda: AT)
+    assert calls and checkouts == [selected]
+    assert not any((out / name).exists() for name in cli.OUTPUTS)
+
+
 def test_native_step_uses_only_github_token_and_leaves_market_receipt_unchanged(tmp_path, monkeypatch):
     event, env, out, api, _, _ = native_run(tmp_path, monkeypatch)
     original = (out / "result.json").read_bytes()
@@ -150,6 +318,33 @@ def test_native_step_uses_only_github_token_and_leaves_market_receipt_unchanged(
     saved = cli._json((out / "reading-room.json").read_bytes())
     assert saved["daily_update"]["records_write"] == "not-requested"
     assert (out / "reading-summary.md").read_text() == cli.summary_markdown(saved)
+
+
+@pytest.mark.parametrize("consumer", ["reading", "discovery"])
+def test_new_admission_cannot_upgrade_a_legacy_receipt_missing_its_proof(tmp_path, monkeypatch, consumer):
+    from decision_kernel.interfaces import daily_discovery_cli
+
+    event, env, out, api, _, reads = native_run(tmp_path, monkeypatch)
+    entry = cli if consumer == "reading" else daily_discovery_cli
+    original = (out / "result.json").read_bytes()
+    admitted = {**frozen_identity(), **daily_market_cli.settings(event, env, approved())}
+    observed = []
+    def admit(current, selected, *, env, require_inherited):
+        assert current is api and "runtime_version" not in selected
+        assert require_inherited is True
+        observed.append("admit")
+        return deepcopy(admitted)
+    def checkout(selected):
+        assert selected == admitted
+        observed.append("checkout")
+    monkeypatch.setattr(entry, "select_execution", admit)
+    monkeypatch.setattr(entry, "verify_checkout", checkout)
+    with pytest.raises(RecordError, match="RUNTIME_MISMATCH"):
+        entry.run_runtime(event, env, out, api=api, clock=lambda: AT)
+    assert observed == ["admit", "checkout"] and not reads and not api.calls
+    assert (out / "result.json").read_bytes() == original
+    assert not (out / daily_discovery_cli.OUTPUT).exists()
+    assert not any((out / name).exists() for name in cli.OUTPUTS)
 
 
 def test_output_is_withheld_when_native_privacy_changes_after_reading(tmp_path, monkeypatch):
@@ -230,7 +425,8 @@ def test_native_workflow_wires_reading_with_only_job_token_before_gated_release(
         # Include inherited workflow/job env: source keys must stay local to
         # the independent source step, not leak into this read-only command.
         effective_env = {**workflow.get("env", {}), **job.get("env", {}), **reading.get("env", {})}
-        assert effective_env == {"GITHUB_TOKEN": "${{ github.token }}"}, name
+        assert effective_env == {"GITHUB_TOKEN": "${{ github.token }}",
+            "DECISION_OS_EXECUTION": "${{ needs.visibility.outputs.execution }}"}, name
         assert "secrets." not in reading["run"], name
         assert reading_index < release_index, name
         summaries = [index for index, step in enumerate(steps) if "GITHUB_STEP_SUMMARY" in step.get("run", "")]

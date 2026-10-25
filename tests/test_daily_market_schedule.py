@@ -96,6 +96,11 @@ def test_explicit_recovery_cannot_take_a_caller_chosen_day_or_native_clock(appro
 
 
 def native_runtime(tmp_path, monkeypatch, approved, *, invocation, admitted_at, actual_at):
+    # This fixture isolates the native clock, retained cycle and source-budget
+    # contracts. Exact execution admission/checkout has its own native tests;
+    # the full quota model also runs the real selector and live write guards.
+    monkeypatch.setattr(cli, "select_execution", lambda api, selected, **kwargs: selected)
+    monkeypatch.setattr(cli, "verify_checkout", lambda selected: None)
     event, env = native_context()
     if invocation == "schedule":
         event = {"schedule": approved["schedule_utc"]}

@@ -205,7 +205,7 @@ def test_reading_and_discovery_own_separate_diagnostics_and_do_not_rewrite_sourc
             value = perf.annotate_performance(json.loads((out / "result.json").read_bytes()))
         (out / "result.json").write_bytes(encoded(value))
     source_bytes = (out / "result.json").read_bytes()
-    monkeypatch.setattr(discovery_cli, "_open_writer", lambda api: (object(), object()))
+    monkeypatch.setattr(discovery_cli, "_open_writer", lambda api, **kwargs: (object(), object()))
     assert discovery_cli.run_runtime(event, env, out, api=api, clock=lambda: AT) == 0
     discovery = json.loads((out / discovery_cli.OUTPUT).read_bytes())
     assert discovery["performance"]["schema"] == "daily-runtime-performance-v1"

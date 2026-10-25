@@ -3,14 +3,19 @@ from collections import Counter
 from copy import copy, deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+import base64
+import hashlib
 import json
 import re
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import encoded
+from decision_kernel.infrastructure import daily_execution as execution
 from decision_kernel.infrastructure.github_store import GitHubAPI, MAX_REQUESTS
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
+from decision_kernel.infrastructure.runtime_publication import ANCHOR, STORE_ID
 from decision_kernel.interfaces import daily_market_cli as cli
 from test_daily_market import Host, QuotaClock, quota_headers
 from test_ftshare_collection_runtime import NativeAPI
@@ -39,15 +44,47 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     native_model.ci.update(total_count=1)
     native_model.ci["workflow_runs"][0].update(name="decision-os-ci", run_attempt=1,
         repository={"id": 1420041744}, head_repository={"id": 1420041744})
-    selected = {"operation": "update", "code_sha": native_model.main["object"]["sha"],
+    workflow_sha, execution_sha, execution_tree = "a" * 40, "b" * 40, "c" * 40
+    requested = {"operation": "update", "code_sha": workflow_sha,
         "run_id": 8001, "run_attempt": 1, "event": "workflow_dispatch"}
+    environment = {"GITHUB_REPOSITORY": cli.REPO, "GITHUB_REPOSITORY_ID": "1420041744",
+        "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": cli.REPO + "/" + cli.WORKFLOW + "@refs/heads/main",
+        "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "8001", "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "GITHUB_SHA": workflow_sha, "GITHUB_WORKFLOW_SHA": workflow_sha}
+    approved_version = {"schema": execution.POLICY_SCHEMA, "enabled": True, "mode": "pinned",
+        "pinned": {"code_sha": execution_sha, "tree_sha": execution_tree, "main_ci_run": 6002,
+            "approval_ref": "https://github.com/auguspp/Decision-OS-2/issues/221#issuecomment-1"}}
+    publication = {"schema": "public-runtime-authorization-v1", "enabled": False,
+        "repository": cli.REPO, "repository_id": 1420041744, "branch": "records", "anchor": ANCHOR,
+        "store_id": STORE_ID, "authorization_ref": "https://github.com/auguspp/Decision-OS-2/issues/164#issuecomment-1",
+        "scopes": []}
+    # Code is a separate synthetic native model. The real local records Git,
+    # private binding, original source rights and budgets remain unchanged.
+    code_documents = {(execution_sha, execution.INTERFACE_PATH): encoded(execution.INTERFACE)}
+    main_heads = []
+
+    def advance_main():
+        sha = hashlib.sha1(("synthetic-daily-main-" + str(len(main_heads))).encode("ascii")).hexdigest()
+        main_heads.append(sha)
+        native_model.main["object"]["sha"] = sha
+        code_documents[sha, execution.POLICY_PATH] = encoded(approved_version)
+        code_documents[sha, execution.PUBLIC_PATH] = encoded(publication)
+        return sha
+
+    code_commit_path = cli.PREFIX + "/git/commits/" + execution_sha
     counts, apis, fetches, progress, trace = {}, [], [], [], []
     immutable_responses, cache_hits = {}, Counter()
     blob_sizes, size_queries, native_size_queries = {}, Counter(), Counter()
     immutable_path = re.compile(re.escape(cli.PREFIX) +
         r"/git/(?:(?:commits|blobs)/[a-f0-9]{40}|trees/[a-f0-9]{40}(?:\?recursive=1)?)")
 
+    def records_object(path):
+        return path != code_commit_path and immutable_path.fullmatch(path) is not None
+
     class Wire:
+        def __init__(self, unit):
+            self.unit = unit
+
         def open(self, request, timeout):
             window = int(clock.at // 3600)
             reset = (window + 1) * 3600
@@ -55,12 +92,13 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
             resource = "graphql" if request.method == "POST" else "core"
             totals[resource] += 1
             path = request.full_url.removeprefix("https://api.github.com")
-            trace.append({"window": window, "resource": resource, "method": request.method, "path": path})
+            trace.append({"window": window, "resource": resource, "unit": self.unit,
+                "method": request.method, "path": path})
             headers = quota_headers(resource=resource, remaining=max(0, 1000 - totals[resource]), reset=reset)
             if totals[resource] > 1000:
                 raise HTTPError(request.full_url, 429, "synthetic quota exhausted", headers, None)
             payload = json.loads(request.data) if request.data else None
-            cacheable = request.method == "GET" and immutable_path.fullmatch(path) is not None
+            cacheable = request.method == "GET" and records_object(path)
             if cacheable and path in immutable_responses:
                 # Only the synthetic server reuses the exact immutable object
                 # body. Every wire call above still consumes quota and gets
@@ -70,12 +108,34 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
                 return Response(immutable_responses[path], request.full_url, headers=headers)
             if path.endswith("/git/ref/heads/main"):
                 value = deepcopy(native_model.main)
+            elif path.startswith(cli.PREFIX + "/contents/"):
+                parsed = urlsplit(path)
+                file = parsed.path.removeprefix(cli.PREFIX + "/contents/")
+                query = parse_qs(parsed.query)
+                assert set(query) == {"ref"} and len(query["ref"]) == 1
+                raw = code_documents[query["ref"][0], file]
+                blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+                value = {"type": "file", "path": file, "encoding": "base64", "size": len(raw),
+                    "content": base64.b64encode(raw).decode("ascii"), "sha": blob}
+            elif path.startswith(cli.PREFIX + "/compare/") and path.split("/compare/", 1)[1][:40] in {
+                    workflow_sha, execution_sha}:
+                parsed = urlsplit(path)
+                base, head = parsed.path.rsplit("/", 1)[1].split("...")
+                assert head == native_model.main["object"]["sha"] and parse_qs(parsed.query) == {"per_page": ["1"]}
+                value = {"status": "ahead", "merge_base_commit": {"sha": base}}
+            elif path == code_commit_path:
+                value = {"sha": execution_sha, "tree": {"sha": execution_tree}}
             elif path.endswith("/actions/runs/8001"):
                 value = deepcopy(native_model.run)
             elif "/actions/runs?status=in_progress&" in path:
                 value = {"total_count": 1, "workflow_runs": [deepcopy(native_model.run)]}
             elif "/actions/workflows/ci.yml/runs?" in path:
                 value = deepcopy(native_model.ci)
+                query = parse_qs(urlsplit(path).query)
+                code = query["head_sha"][0]
+                assert query == {"branch": ["main"], "event": ["push"], "head_sha": [code], "per_page": ["5"]}
+                assert code in {workflow_sha, execution_sha}
+                value["workflow_runs"][0].update(head_sha=code, id=6001 if code == workflow_sha else 6002)
             elif cacheable and path.startswith(cli.PREFIX + "/git/trees/"):
                 # Keep the original server's native tree expansion. Blob size
                 # belongs to its exact object SHA, so later trees can reuse the
@@ -110,7 +170,10 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     class BudgetAPI(GitHubAPI):
         def __init__(self, token):
             super().__init__(token)
-            self._opener = Wire()
+            # Each new unit sees a distinct main head, forcing the actual live
+            # guard's six cold GETs; the approved execution stays pinned.
+            self.main_sha = advance_main()
+            self._opener = Wire(len(apis))
             apis.append(self)
 
     def sleep(seconds):
@@ -123,6 +186,14 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     monkeypatch.setattr(cli, "GitMarketReader", lambda binding, api:
         GitMarketReader(binding, api, fetch=local_fetch(model, fetches)))
     startup = BudgetAPI("synthetic-native-daily-only")
+    selected = execution.select_execution(startup, requested, env=environment)
+    frozen = deepcopy(selected)
+    assert selected["workflow_sha"] == workflow_sha != selected["code_sha"] == execution_sha
+    assert selected["runtime_version"] == {"schema": execution.SELECTION_SCHEMA, "mode": "pinned",
+        "code_tree": execution_tree, "policy_commit": main_heads[0],
+        "policy_sha256": hashlib.sha256(encoded(approved_version)).hexdigest(), "protocol": execution.PROTOCOL,
+        "workflow_ci_run": 6001, "execution_ci_run": 6002,
+        "approval_ref": approved_version["pinned"]["approval_ref"]}
     cli.native_ready(startup, selected)
     opened = cli.remote_units("synthetic-native-daily-only", selected, clock=lambda: clock.at,
         monotonic=lambda: clock.elapsed, sleep=sleep)
@@ -143,9 +214,9 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     cli.check_private(startup, selected)
     receipt = first["receipt"]
     immutable_requests = Counter(row["path"] for row in trace
-        if row["method"] == "GET" and immutable_path.fullmatch(row["path"]))
+        if row["method"] == "GET" and records_object(row["path"]))
     model_immutable_requests = Counter(path for method, path, _ in model.requests
-        if method == "GET" and immutable_path.fullmatch(path))
+        if method == "GET" and records_object(path))
     assert immutable_requests == model_immutable_requests
     assert set(immutable_responses) == set(immutable_requests)
     assert all(immutable_requests[path] == cache_hits[path] + 1 for path in immutable_requests)
@@ -154,6 +225,30 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     assert len(trace) == sum(api._requests for api in apis) == sum(sum(row.values()) for row in counts.values())
     assert native_size_queries == Counter({sha: 1 for sha in blob_sizes})
     assert set(size_queries) == set(blob_sizes) and sum(size_queries.values()) > len(blob_sizes)
+    assert selected == frozen and len(set(main_heads)) == len(apis) > 1
+    native_static = [row for row in trace if "/actions/workflows/ci.yml/runs?" in row["path"]
+        or row["path"] == code_commit_path or execution.INTERFACE_PATH in row["path"]]
+    assert len(native_static) == 4 and {row["unit"] for row in native_static} == {0}
+    for unit, api in enumerate(apis[1:], start=1):
+        # Every unit admits the frozen identity through the actual live guard;
+        # new units cannot reuse static CI or a different head's authorization.
+        rows = [row for row in trace if row["unit"] == unit]
+        assert [row["path"] for row in rows[:7]] == [cli.PREFIX,
+            cli.PREFIX + "/git/ref/heads/main",
+            cli.PREFIX + "/contents/" + execution.POLICY_PATH + "?ref=" + api.main_sha,
+            cli.PREFIX + "/contents/" + execution.PUBLIC_PATH + "?ref=" + api.main_sha,
+            cli.PREFIX + "/compare/" + workflow_sha + "..." + api.main_sha + "?per_page=1",
+            cli.PREFIX + "/compare/" + execution_sha + "..." + api.main_sha + "?per_page=1",
+            cli.PREFIX + "/actions/runs/8001"]
+    posts = [index for index, row in enumerate(trace) if row["method"] == "POST"]
+    assert len(posts) == model.writes > 0
+    for index in posts:
+        # A real GitHubStore CAS callback pays its own live repository/head
+        # check immediately before the POST, even after all source/store reads.
+        assert [row["path"] for row in trace[index - 2:index]] == [
+            cli.PREFIX, cli.PREFIX + "/git/ref/heads/main"]
+        assert all(row["method"] == "GET" and row["unit"] == trace[index]["unit"]
+            for row in trace[index - 2:index])
     # An independent native batch read verifies every reused size and object
     # type once, without changing any client/server wire or quota accounting.
     batch = model.git._run("cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)",
@@ -173,6 +268,8 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
             "blob_size_cache_hits": sum(size_queries.values()) - sum(native_size_queries.values()),
             "independent_native_sizes_verified": len(verified_sizes)},
         "max_unit_requests": max(api._requests for api in apis), "progress": progress,
+        "runtime_selection": frozen, "distinct_live_main_heads": len(main_heads),
+        "static_admission_requests": len(native_static), "cas_live_guards": len(posts),
         "core_remaining_before_reading": 1000 - counts[int(clock.at // 3600)]["core"],
         "result": first}
     (tmp_path / "daily-quota-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
@@ -182,6 +279,7 @@ def test_native_1000_core_and_graphql_complete_two_calendars_twelve_prices_in_on
     assert (receipt["calendar_source_requests"], receipt["price_source_requests"], receipt["source_requests"]) == (2, 12, 14)
     assert receipt["cycle_status"] == "complete" and receipt["cycle_date"] == "20261020"
     assert len(host.calendar_clients) == len(host.price_clients) == 1
+    assert selected == frozen
     assert host.calendar_clients[0].requests == 2 and host.price_clients[0].requests == 12
     assert receipt["store_quota_wait"]["refresh_waits"] == 5 and len(counts) == 6
     assert receipt["store_quota_wait"]["waited_seconds"] <= 5 * 3600

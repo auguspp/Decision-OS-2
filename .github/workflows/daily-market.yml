@@ -12,7 +12,7 @@ on:
       code_sha:
         type: string
         required: true
-        description: 'Exact reviewed current main commit; external-clock and clock-probe require the literal current-main and verify the native checkout and main CI'
+        description: 'Exact native main workflow commit; external-clock and clock-probe require current-main. Business jobs use the separately approved execution tree.'
 permissions: {}
 concurrency:
   group: decision-os-relay-source
@@ -29,6 +29,8 @@ jobs:
       visibility: ${{ steps.visibility.outputs.visibility }}
       runtime_authorized: ${{ steps.visibility.outputs.runtime_authorized }}
       admitted: ${{ steps.visibility.outputs.admitted }}
+      execution_sha: ${{ steps.visibility.outputs.execution_sha }}
+      execution: ${{ steps.visibility.outputs.execution }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -50,10 +52,12 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      DECISION_OS_EXECUTION: ${{ needs.visibility.outputs.execution }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.visibility.outputs.execution_sha }}
           persist-credentials: false
       - uses: ./.github/actions/ci-python
         with:
@@ -93,10 +97,12 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      DECISION_OS_EXECUTION: ${{ needs.visibility.outputs.execution }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.visibility.outputs.execution_sha }}
           persist-credentials: false
       - uses: ./.github/actions/ci-python
         with:

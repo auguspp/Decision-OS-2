@@ -9,6 +9,9 @@ import yaml
 
 from decision_kernel.domain.records import RecordError
 from decision_kernel.interfaces import daily_visibility_cli as cli
+from decision_kernel.infrastructure import daily_execution as execution
+from decision_kernel.infrastructure import runtime_publication as publication
+from test_daily_execution import Native as ExecutionNative
 
 SHA = "a" * 40
 
@@ -17,13 +20,15 @@ def context(operation="status", *, scheduled=False):
     env = {"GITHUB_REPOSITORY": cli.REPOSITORY, "GITHUB_REPOSITORY_ID": str(cli.REPOSITORY_ID),
         "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": cli.REPOSITORY + "/" + cli.WORKFLOW + "@refs/heads/main",
         "GITHUB_EVENT_NAME": "schedule" if scheduled else "workflow_dispatch",
-        "GITHUB_RUN_ID": "8001", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": SHA}
+        "GITHUB_RUN_ID": "8001", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": SHA,
+        "GITHUB_WORKFLOW_SHA": SHA}
     event = {"schedule": "35 10 * * 1-5"} if scheduled else {"inputs": {"operation": operation, "code_sha": SHA}}
     return event, env
 
 
 class NativeAPI:
     def __init__(self, *, private=False, scheduled=False):
+        self.execution = ExecutionNative(public=not private)
         self.calls = []
         self.meta = {"id": cli.REPOSITORY_ID, "full_name": cli.REPOSITORY,
             "private": private, "archived": False, "default_branch": "main"}
@@ -54,6 +59,12 @@ class NativeAPI:
             return deepcopy(self.ancestry)
         if path.startswith(cli.PREFIX + "/actions/workflows/ci.yml/runs?"):
             return deepcopy(self.ci)
+        if path.startswith(cli.PREFIX + "/contents/") or path.startswith(cli.PREFIX + "/git/commits/"):
+            head = self.main["object"]["sha"]
+            if head not in self.execution.policies:
+                self.execution.advance(head)
+            self.execution.publications[head] = json.loads(publication.AUTHORIZATION_FILE.read_bytes())
+            return self.execution.request(method, path)
         assert path == cli.PREFIX + "/actions/runs/8001", "No data, artifact, source or records endpoints."
         return deepcopy(self.run)
 
@@ -260,7 +271,9 @@ def test_workflow_native_preflight_dispatch_only_keeps_original_gates():
     assert "repository.private" not in job["if"] and "schedule" in job["if"]
     assert job["outputs"] == {"visibility": "${{ steps.visibility.outputs.visibility }}",
                               "runtime_authorized": "${{ steps.visibility.outputs.runtime_authorized }}",
-                              "admitted": "${{ steps.visibility.outputs.admitted }}"}
+                              "admitted": "${{ steps.visibility.outputs.admitted }}",
+                              "execution_sha": "${{ steps.visibility.outputs.execution_sha }}",
+                              "execution": "${{ steps.visibility.outputs.execution }}"}
     commands = [step for step in job["steps"] if "run" in step]
     assert len(commands) == 1 and commands[0]["id"] == "visibility"
     assert shlex.split(commands[0]["run"]) == ["python", "-m", cli.__name__, "--use-runtime-authorization"]
@@ -269,6 +282,9 @@ def test_workflow_native_preflight_dispatch_only_keeps_original_gates():
     assert "secrets." not in json.dumps(job) and "upload-artifact" not in json.dumps(job)
     for name in ("status", "daily"):
         child = workflow["jobs"][name]
+        assert child["env"] == {"DECISION_OS_EXECUTION": "${{ needs.visibility.outputs.execution }}"}
+        checkout = next(step for step in child["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+        assert checkout["with"]["ref"] == "${{ needs.visibility.outputs.execution_sha }}"
         assert child["needs"] == "visibility"
         assert child["if"].startswith("needs.visibility.outputs.runtime_authorized == 'true' && ")
         assert "needs.visibility.outputs.admitted == 'true'" in child["if"]

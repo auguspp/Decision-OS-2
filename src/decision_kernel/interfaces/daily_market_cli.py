@@ -33,6 +33,10 @@ from decision_kernel.application.research_sources import capture_registered
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, UnknownWrite, encoded, require
 from decision_kernel.infrastructure.github_store import MAX_REQUESTS, GitHubAPI, GitHubRateLimits, GitHubStore
+from decision_kernel.infrastructure.daily_execution import (
+    AUTH_GUARD_REQUESTS, execution_identity, native_head_sha, require_live_execution,
+    select_execution, verify_checkout,
+)
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.relay_http import RelayHTTP, SECRET_ENV
 from decision_kernel.infrastructure.relay_retry import RetryingRelay, RetryPolicy
@@ -50,22 +54,26 @@ POLICY_FILE = Path("config/daily-market.json")
 MASTER_POLICY_FILE = Path("config/daily-master-refresh.json")
 TOKEN_ENV = "DECISION_OS_STORE_TOKEN"
 ADMISSION_REQUESTS = 240
-# 一次并发核验：本运行首尾复核 + 至多十页在途列表，共 12 GET；加原资格核验 3 GET。
-# 只在上游请求前一刻付这笔钱，成本与实际来源请求数同阶。
-GUARD_REQUESTS = PEER_MAX_PAGES + 2 + 3
-# 一条保管边：writer最多44次，加独立快照入口/出口各18次。
-STORE_REQUESTS = 44 + 2 * 18
+# Live authority: repository + main ref + two exact-commit policies + at most
+# two ancestry comparisons. Immutable policies/proofs cache only by exact head;
+# every effect still reads the live ref. Peer inventory is paid only at HTTP.
+GUARD_REQUESTS = AUTH_GUARD_REQUESTS
+SOURCE_GUARD_REQUESTS = AUTH_GUARD_REQUESTS + PEER_MAX_PAGES + 2
+NATIVE_READY_REQUESTS = AUTH_GUARD_REQUESTS + 1  # Plus this native run, no cold CI.
+# One custody edge: writer 44 + independent snapshot boundaries 2*18 + a
+# separate live authority callback immediately before the actual CAS POST.
+STORE_REQUESTS = 44 + 2 * 18 + AUTH_GUARD_REQUESTS
 CUSTODY_REQUESTS = STORE_REQUESTS + GUARD_REQUESTS
 CONTROL_REQUESTS = CUSTODY_REQUESTS
 # calendar：预留、原页、query、完成控制；phase推进另开无来源单元。
-CALENDAR_SETTLEMENT_REQUESTS = 3 * CUSTODY_REQUESTS + GUARD_REQUESTS
-CALENDAR_UNIT_REQUESTS = CUSTODY_REQUESTS + GUARD_REQUESTS + CALENDAR_SETTLEMENT_REQUESTS
+CALENDAR_SETTLEMENT_REQUESTS = 3 * CUSTODY_REQUESTS + AUTH_GUARD_REQUESTS
+CALENDAR_UNIT_REQUESTS = CUSTODY_REQUESTS + SOURCE_GUARD_REQUESTS + CALENDAR_SETTLEMENT_REQUESTS
 # price：新generation、slot预留、原响应、结算，另含三个FT执行guard、HTTP适配guard及初始读/容量scope。
-PRICE_UNIT_REQUESTS = 4 * CUSTODY_REQUESTS + 4 * GUARD_REQUESTS + 2 * 18
-PRICE_SETTLEMENT_REQUESTS = 2 * CUSTODY_REQUESTS + 2 * GUARD_REQUESTS
+PRICE_UNIT_REQUESTS = 4 * CUSTODY_REQUESTS + 4 * SOURCE_GUARD_REQUESTS + 2 * 18
+PRICE_SETTLEMENT_REQUESTS = 2 * CUSTODY_REQUESTS + 2 * SOURCE_GUARD_REQUESTS
 # master 分阶段：in-flight控制 + accepted页/控制；HTTP后不再同单元promotion或下一页。
 MASTER_SETTLEMENT_REQUESTS = 2 * CUSTODY_REQUESTS + GUARD_REQUESTS
-MASTER_RESERVATION_REQUESTS = CUSTODY_REQUESTS + GUARD_REQUESTS + MASTER_SETTLEMENT_REQUESTS
+MASTER_RESERVATION_REQUESTS = CUSTODY_REQUESTS + SOURCE_GUARD_REQUESTS + MASTER_SETTLEMENT_REQUESTS
 # 原query预留独立成单元，仅另留一次来源guard；后续checkpoint自有完整准入。
 MASTER_UNIT_REQUESTS = MASTER_RESERVATION_REQUESTS
 # waiting/ready两条控制边，各一次执行guard，加最多180秒的三次wait guard。
@@ -122,7 +130,7 @@ class DailyQuotaWindows:
             return self._paused("DAILY_MARKET_QUOTA_RESET_UNUSABLE")
         delay = core["reset"] - now
         if self.waits >= MAX_QUOTA_REFRESH_WAITS or self.waited + delay > MAX_QUOTA_WAIT_SECONDS \
-                or api._requests + 4 > MAX_REQUESTS:
+                or api._requests + NATIVE_READY_REQUESTS > MAX_REQUESTS:
             return self._paused("DAILY_MARKET_QUOTA_WAIT_BOUND")
         self.waits += 1
         self._emit("waiting-for-native-reset")
@@ -180,9 +188,15 @@ def settings(event, env, approved, *, clock=None, allow_probe=False):
         and sha == env.get("GITHUB_SHA"), "DAILY_MARKET_CODE_SHA")
     run_id = env.get("GITHUB_RUN_ID")
     require(isinstance(run_id, str) and re.fullmatch(r"[1-9][0-9]{0,14}", run_id), "DAILY_MARKET_RUN_ID")
-    return {"operation": operation, "invocation": invocation,
+    result = {"operation": operation, "invocation": invocation,
         "code_sha": sha, "run_id": int(run_id), "run_attempt": 1,
         "event": event_name}
+    execution = execution_identity(env)
+    if execution is not None:
+        require(invocation != CLOCK_PROBE and execution["workflow_sha"] == sha,
+            "DAILY_MARKET_CODE_SHA")
+        result.update(execution)
+    return result
 
 
 def native_ready(api, selected, *, metadata_only=False):
@@ -199,7 +213,7 @@ def native_ready(api, selected, *, metadata_only=False):
         check_private(api, selected)
     run = api.request("GET", PREFIX + "/actions/runs/" + str(selected["run_id"]))
     require(run.get("id") == selected["run_id"] and type(run.get("id")) is int
-        and run.get("head_sha") == selected["code_sha"] and run.get("head_branch") == "main"
+        and run.get("head_sha") == native_head_sha(selected) and run.get("head_branch") == "main"
         and run.get("event") == selected["event"] and type(run.get("run_attempt")) is int
         and run["run_attempt"] == 1 and run.get("path") == WORKFLOW
         and run.get("name") == run_title(selected.get("invocation")) and run.get("status") == "in_progress"
@@ -207,6 +221,14 @@ def native_ready(api, selected, *, metadata_only=False):
              or run.get("display_title") == run_title(selected["invocation"]))
         and run.get("repository", {}).get("id") == 1420041744
         and run.get("head_repository", {}).get("id") == 1420041744, "DAILY_MARKET_NATIVE_RUN")
+    if "runtime_version" in selected:
+        # The native entry has already checked both exact CI runs, tree and
+        # protocol. Static proof travels with this frozen run; live authority
+        # and the native run above are rechecked for each subsequent work unit.
+        version = selected["runtime_version"]
+        return {"main_ci_run": version["execution_ci_run"],
+            "workflow_ci_run": version["workflow_ci_run"],
+            "native_run_created_at": run.get("created_at")}
     ci = api.request("GET", PREFIX + "/actions/workflows/ci.yml/runs?" + urlencode({
         "branch": "main", "event": "push", "head_sha": selected["code_sha"], "per_page": 5}))
     rows = ci.get("workflow_runs")
@@ -225,9 +247,9 @@ def native_ready(api, selected, *, metadata_only=False):
 
 
 def collection_guard(api, selected):
-    _settle(api, GUARD_REQUESTS + 1)
+    _settle(api, SOURCE_GUARD_REQUESTS + 1)
     check_private(api, selected)
-    require_no_peer_collection(api, run_id=selected["run_id"], code_sha=selected["code_sha"],
+    require_no_peer_collection(api, run_id=selected["run_id"], code_sha=native_head_sha(selected),
         workflow_path=WORKFLOW)
     _settle(api)
 
@@ -250,7 +272,9 @@ def remote_units(token, selected, *, clock=time.time, monotonic=time.monotonic, 
         readonly = replace(binding, write_enabled=False)
         # 提交级并发保护仍是原条件更新：guard 只在真正发出上游请求前核验，
         # 每次提交都探测会把合法开销变成配额耗尽，把保护本身变成故障源。
-        store = VersionedStore(GitHubStore(binding, api))
+        before_write = ((lambda: require_live_execution(api, selected))
+            if write and "runtime_version" in selected else None)
+        store = VersionedStore(GitHubStore(binding, api, before_write=before_write))
         return store, lambda: VersionedStore(GitMarketReader(readonly, api)), api
     open_unit.quota_wait = quota.wait
     open_unit.quota_receipt = quota.receipt
@@ -282,7 +306,7 @@ def _source_admit(api, guard, reserve, probe=None):
     会把正常采集的合法开销算成配额耗尽。
     """
     _admit(api)
-    _settle(api, GUARD_REQUESTS + reserve)
+    _settle(api, (SOURCE_GUARD_REQUESTS if probe is not None else AUTH_GUARD_REQUESTS) + reserve)
     (probe or guard)(api)
     _admit(api)
     _settle(api, reserve)
@@ -811,6 +835,8 @@ def run_runtime(event, env, out, *, api=None, open_unit=None, execute=run_daily)
     require(not out.exists() and not out.is_symlink() and out.parent.resolve().is_relative_to(root)
         and out.resolve() != root, "DAILY_MARKET_OUTPUT")
     api = GitHubAPI(env[TOKEN_ENV]) if api is None else api
+    selected = select_execution(api, selected, env=env, require_inherited=True)
+    verify_checkout(selected)
     proof = native_ready(api, selected)
     repair_options = {}
     if selected["invocation"] == "repair-calendar":
@@ -897,7 +923,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "release":
-            check_private(GitHubAPI(os.environ[TOKEN_ENV]), {"code_sha": os.environ["GITHUB_SHA"]})
+            event = _json(_regular(Path(os.environ["GITHUB_EVENT_PATH"]), 1024 * 1024))
+            selected = settings(event, os.environ, _json(_regular(POLICY_FILE, 8192)),
+                clock=load_clock_policy())
+            api = GitHubAPI(os.environ[TOKEN_ENV])
+            selected = select_execution(api, selected, env=os.environ, require_inherited=True)
+            verify_checkout(selected)
+            native_ready(api, selected)
             return 0
         require(args.out is not None, "DAILY_MARKET_OUTPUT")
         event = _json(_regular(Path(os.environ["GITHUB_EVENT_PATH"]), 1024 * 1024))

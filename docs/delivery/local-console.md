@@ -10,7 +10,7 @@
 
 1. **延迟**：等 37–100 秒读一份 catalogue。
 2. **噪音**：只读也会因为 runner/checkout 变红，红一次就要人解释一次。
-3. **耦合**：run 以派发时的 `code_sha` 为准，main 一动整轮作废（2026-10-23 18:39 那次日更被合并撞停就是这个机制）。
+3. **耦合**：读取还要经过派发、runner 与代码准入。2026-10-23 的严格 main 相等检查曾使日更被合并撞停；现行后端已允许代码仍在 main 祖先链内的正常前进，这个历史故障不代表当前仍要求 SHA 相等。本地读取直接复用 store，不依赖 runner 派发。
 
 ## 六道闸，任一不过就不发请求
 
@@ -24,6 +24,8 @@
 | `LOCAL_READ_REQUIRES_READ_ONLY_BINDING` / `LOCAL_READ_PUBLIC_STORE_ONLY` | binding 必须 `write_enabled=false` 且 `visibility=public` |
 
 闸在**构造任何 API 客户端之前**跑完，所以被拒的命令不会产生一次网络请求，也不会读到 records。
+
+配置通过后，还须核 GitHub 返回的**实际仓库可见性**。本地入口使用预检得到的同一 binding，并在本次执行中关闭 `private_upgrade_allowed`；不修改保管配置、历史锚点或 hosted 的私有读取资格。初始实际 private 在读取 records 前拒绝；过程中观测到 public→private，则拒绝后续 JSON、HTML 和附件导出。配置中的 `visibility=public` 本身不是这项实际核验。
 
 ## 白名单等于「当前全部读命令」
 
@@ -70,10 +72,32 @@ git fetch origin records:refs/remotes/origin/records
 python -m decision_kernel.interfaces.local_read \
   --binding config/store-binding.json --git-mirror . research-catalogue --limit 4
 
+# Create a plan with the actual reading time. This is not a new research cutoff.
+python - <<'PY'
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+
+plan = {
+    "as_of": datetime.now(timezone.utc).isoformat(),
+    "catalogue": {"limit": 4},
+    "ai_brief": {"select": "latest-ai-brief"},
+    "odds_book_view": {
+        "query": {"limit": 4, "scan_limit": 16},
+        "page_limit": 1,
+    },
+}
+with Path("local-room-plan.json").open("x", encoding="utf-8") as handle:
+    json.dump(plan, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
+
 python -m decision_kernel.interfaces.local_read \
   --binding config/store-binding.json --git-mirror . research-room \
-  --plan '{"components":["overview","research-book","odds-book"]}' --out room
+  --input local-room-plan.json --out local-room.html
 ```
+
+计划文件与 HTML 路径须为新文件；重复读取时使用新的文件名，不覆盖已有原件。`as_of` 是此次阅读时钟，已存 Brief、研究和行情仍显示其原日期，缺失不会变成今天的新内容。Research 与 Odds 只取本次有界页；若返回 `partial` / `next_cursor`，按返回的确切后继请求接续，不能把尾部未读写成没有结果。AI Brief 与 Odds 页均绑定同一 Room 快照。
 
 `--git-mirror` 也可由 `DECISION_OS_GIT_MIRROR` 提供。**不给就完全按旧行为**：每一次祖先证明都走 `compare`。
 
@@ -132,6 +156,6 @@ GitHub 上的对应 workflow **全部保留**：本地优先不等于停用入�
 ## 验证
 
 ```bash
-python -m pytest tests/test_local_read.py -q      # 12 条：白名单等于上游读集合、与写集合不相交、六道闸、回执形状
-python -m pytest tests/test_workflow_estate.py -q # 7 条：入口清单与仓库一致
+python -m pytest tests/test_local_read.py -q      # 白名单、预检与实际可见性、正常读取和导出、回执
+python -m pytest tests/test_workflow_estate.py -q # 入口清单与仓库一致
 ```

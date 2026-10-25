@@ -8,6 +8,7 @@ one implementation of every read; what it adds is a hard gate in front of it.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import os
@@ -15,7 +16,7 @@ from pathlib import Path
 import sys
 import time
 
-from decision_kernel.domain.records import MAX_BYTES, RecordError, require
+from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.git_ancestry import SCHEMA as ANCESTRY_SCHEMA, LocalGitAncestry
 from decision_kernel.infrastructure.github_store import GitHubBinding
 from decision_kernel.interfaces import (
@@ -46,10 +47,9 @@ PRIVATE_ONLY = ("prepare-decision", "read-decision-preparation")
 
 
 def _binding(path: Path) -> GitHubBinding:
-    with path.open("rb") as handle:
-        raw = handle.read(MAX_BYTES + 1)
-    require(len(raw) <= MAX_BYTES, "INPUT_TOO_LARGE")
-    return GitHubBinding.from_dict(json.loads(raw))
+    # Keep the shared parser's duplicate-key and size checks when carrying this
+    # already checked object into execution instead of reopening the file.
+    return GitHubBinding.from_dict(store_cli._load(path))
 
 
 def check(operation: str, binding_path: Path | None, environ) -> GitHubBinding:
@@ -62,7 +62,10 @@ def check(operation: str, binding_path: Path | None, environ) -> GitHubBinding:
     binding = _binding(Path(binding_path))
     require(not binding.write_enabled, "LOCAL_READ_REQUIRES_READ_ONLY_BINDING")
     require(binding.visibility == "public", "LOCAL_READ_PUBLIC_STORE_ONLY")
-    return binding
+    # The shared binding may permit a hosted private upgrade. This console's
+    # public-only boundary does not: keep the exact identity/marker and tighten
+    # only this execution's native repository check.
+    return replace(binding, private_upgrade_allowed=False)
 
 
 def _split_mirror(argv: list) -> tuple[list, str | None]:
@@ -152,7 +155,7 @@ def main(argv: list | None = None) -> int:
     # credential in the process for the duration of the command.
     os.environ[STORE_TOKEN] = os.environ[READ_TOKEN]
     try:
-        code = store_cli.execute(args, ancestry=ancestry)
+        code = store_cli.execute(args, ancestry=ancestry, read_binding=binding)
     finally:
         os.environ.pop(STORE_TOKEN, None)
         finished_at = datetime.now(timezone.utc).isoformat()

@@ -20,6 +20,13 @@ from decision_kernel.domain.records import RecordError, SourceRef, digest, encod
 from decision_kernel.observations.market_daily import MarketInputError
 
 FTSHARE_CLOSE_SCHEMA = "odds-ftshare-close-v1"
+RELAY_CLOSE_SCHEMA = "odds-retained-close-v1"
+# Finite existing adapters, not a provider registry. Qualification remains in
+# the corresponding source reader; this mapping only binds its public shapes.
+CLOSE_PRICE_KINDS = {
+    FTSHARE_CLOSE_SCHEMA: "retained-ftshare-raw-close",
+    RELAY_CLOSE_SCHEMA: "retained-relay-raw-close",
+}
 
 
 def qualify_close(payload, spec, policy, evaluated_at, registry, store):

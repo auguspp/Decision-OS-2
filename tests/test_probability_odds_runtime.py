@@ -125,6 +125,23 @@ def exercise_installed_probability(command, outside, executable, env, store_path
     read = call("read-probability-odds", saved["reference"], reference=True, registry=True)
     assert read["result"] == result and read["recalculation"] == "matches"
     assert command("current", "--case-id", "prob-case")["reference"] == research
+
+    # The same installed client and exact retained source also serve an
+    # unweighted conditional calculation; no probability conversion or feed.
+    conditional = {"spec_ref": frozen["reference"], "market": market,
+        "market_policy": {key: a["policy"][key] for key in (
+            "policy_id", "as_of", "rationale", "max_quote_age_days", "max_master_age_days", "max_capital_age_days")},
+        "evaluated_at": calc["evaluated_at"]}
+    unweighted = call("calculate-odds", conditional, registry=True)
+    assert unweighted["price"]["kind"] == "retained-relay-raw-close"
+    assert unweighted["market"] == result["market"] and unweighted["weighted_aggregate"] is None
+    assert unweighted["world_results"][1]["undiscounted_holding_period_return"] == "0.25"
+    stored = call("save-odds", authorized("calculation", conditional), "retained-conditional", registry=True)
+    assert stored["readback"]["status"] == "verified"
+    reopened = call("read-odds", stored["reference"], reference=True, registry=True)
+    assert reopened["result"] == unweighted and reopened["recalculation"] == "matches"
+    assert command("current", "--case-id", "prob-case")["reference"] == research
+
     invalid = authorized("assessment", deepcopy(a)); invalid["assessment"]["probabilities"][0]["probability"] = "0.61"
     path.write_text(json.dumps(invalid), encoding="utf-8")
     rejected = subprocess.run([str(executable), "store", "--path", str(store_path), "freeze-odds-assessment", "--input", str(path),

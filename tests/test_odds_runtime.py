@@ -52,6 +52,56 @@ def test_runtime_freeze_calculate_save_and_read_are_separate(host, tmp_path):
     assert viewed["result"]["recalculation"] == "matches" and host.writes == writes+1
 
 
+@pytest.mark.parametrize("lost_receipt", [False, True])
+def test_retained_relay_conditional_runtime_and_original_intent_recovery(host, tmp_path, monkeypatch, lost_receipt):
+    from test_probability_odds import EVALUATED
+    from test_probability_odds_runtime import prepare_host
+
+    store, _, _, assessment, market = prepare_host(host, monkeypatch)
+    policy = {key: assessment["policy"][key] for key in (
+        "policy_id", "as_of", "rationale", "max_quote_age_days", "max_master_age_days", "max_capital_age_days")}
+    calculation = {"spec_ref": assessment["spec_ref"], "market": market,
+                   "market_policy": policy, "evaluated_at": EVALUATED}
+    original_request = host.request
+    requests = []
+
+    def bounded(method, path, payload=None):
+        requests.append((method, path))
+        assert len(requests) <= 512, "Original shared API request budget exceeded"
+        return original_request(method, path, payload)
+
+    monkeypatch.setattr(host, "request", bounded)
+    before, head, research = host.writes, host.git.head(), store.current("case")
+    requests.clear()
+    result = invoke(host, tmp_path / "retained-compute", "calculate-odds", calculation)
+    assert result["write"] == "not-requested" and host.writes == before
+    assert result["result"]["price"]["kind"] == "retained-relay-raw-close"
+    assert result["result"]["market"]["source_requests"] == 0
+    assert result["result"]["weighted_aggregate"] is None
+    payload = authorized("calculation", calculation)
+    requests.clear()
+    if lost_receipt:
+        def lose(_):
+            raise UnknownWrite("SIMULATED_RETAINED_CONDITIONAL_RECEIPT_LOST")
+        host.after_write = lose
+        with pytest.raises(UnknownWrite, match="READONLY_RECONCILIATION"):
+            invoke(host, tmp_path / "retained-save", "save-odds", payload, "retained-intent", head)
+        host.after_write = None
+        requests.clear()
+        saved = invoke(host, tmp_path / "retained-reconcile", "reconcile-odds", payload, "retained-intent", head)
+        assert saved["write"] == "reconciled-without-write"
+        assert all(method == "GET" for method, _ in requests)
+    else:
+        saved = invoke(host, tmp_path / "retained-save", "save-odds", payload, "retained-intent", head)
+        assert saved["write"] == "published"
+    assert saved["result"]["readback"]["status"] == "verified" and host.writes == before + 1
+    requests.clear()
+    viewed = invoke(host, tmp_path / "retained-read", "read-odds", {"reference": saved["result"]["reference"]})
+    assert viewed["result"]["recalculation"] == "matches"
+    assert viewed["result"]["result"] == result["result"]
+    assert host.writes == before + 1 and store.current("case") == research
+
+
 @pytest.mark.parametrize("operation", ["freeze-valuation", "save-odds"])
 def test_unknown_write_same_original_intent_recovers_readonly(host, tmp_path, operation):
     spec = prepare(host)

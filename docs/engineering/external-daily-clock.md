@@ -15,10 +15,12 @@
 | 入口 | 代码绑定与实际行为 |
 |---|---|
 | 原 status / update / recover-late / repair-calendar / reconcile-write | 继续要求显式确切 40 位 `code_sha`；来源和恢复操作保持原授权及有限范围。 |
-| `external-clock` | 输入必须为 `code_sha=current-main`，受信宿主立即绑定原生 `GITHUB_SHA`，再核当前 main、仓库、workflow、首次 attempt 和同 SHA 的适用 main CI。只有 primary=external-cron 才能进入原 daily job；canonical operation 为 update，回执保留真实 invocation。 |
+| `external-clock` | 输入必须为 `code_sha=current-main`，先绑定原生 `GITHUB_SHA` 的 workflow 身份，再按受审 daily-runtime 配置选择实际执行树，分别核两份适用 main CI。只有 primary=external-cron 才能进入原 daily job；canonical operation 为 update，回执保留真实 invocation。 |
 | `clock-probe` | 同样把 current-main 绑定原生 SHA，只检查仓库/main/run/CI/clock 配置元数据。独立只读 job 不实例化来源、Store 或阅读模型；0 source、0 records 读写、0 dispatch，不进入 status/daily、Discovery 或 Reading。它可在外部生产尚未启用时验收工程接缝。 |
 
 两种新入口不接受调用者指定业务日期、cron、expected records、备用 workflow 或任意代码。旧手动操作不能用 `current-main` 绕过 exact-SHA 要求。visibility 在注入来源密钥之前拦住非主时钟；真实生产/消费者再次检查，probe 也不能通过直接调用生产命令落入普通读取。
+
+外部服务商继续 dispatch `ref=main`，不因[批准执行版本](../architecture/daily-market.md#批准的执行版本与在线撤销)改填旧提交或改变 body。visibility 输出冻结的执行凭据，status/daily checkout 已批准 SHA；Discovery、Reading 和发布沿同一代码树。原生 `GITHUB_SHA`/`GITHUB_WORKFLOW_SHA` 保留，回执将 `workflow_sha` 与实际 `code_sha` 分开。clock-probe 继续原 main 上的零业务检查，不证明 pinned 版本已经生产运行。
 
 同一 `decision-os-relay-source` concurrency 保持。相同业务日复用原 cycle；完成后再次调用不重采，blocked/source_hold、in-flight 未知和未成功前周期继续阻断，pending 仅接原未预留单元。外部重复 tick 不增加来源预算、不重置失败或换日跨过旧 hold。排队跨午夜仍冻结原生 run.created_at；时钟源不改变来源真实 capture 时间。
 

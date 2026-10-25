@@ -342,11 +342,15 @@ class GitHubAPI:
 
 class GitHubStore:
     """A narrow authenticated adapter. Library checks are not server role isolation."""
-    def __init__(self, binding: GitHubBinding, api: GitHubAPI, *, ancestry=None):
+    def __init__(self, binding: GitHubBinding, api: GitHubAPI, *, ancestry=None, before_write=None):
         require(isinstance(binding, GitHubBinding), "INVALID_GITHUB_BINDING")
         require(ancestry is None or callable(getattr(ancestry, "is_ancestor", None)),
                 "INVALID_LOCAL_ANCESTRY")
+        require(before_write is None or callable(before_write), "INVALID_BEFORE_WRITE_GUARD")
         self.binding, self.api = binding, api
+        # Trusted runtime composition only, never a record/binding payload.
+        # A reader and callers without this hook retain their original behavior.
+        self._before_write = before_write
         self.repository = binding.repository
         self._prefix = "/repos/" + self.repository
         self._trees: dict[str, dict] = {}
@@ -629,6 +633,11 @@ class GitHubStore:
                                             for path, raw in sorted(files.items())]},
         }}}
         self._repository()  # Re-check immediately before sending write bytes.
+        # The guard may revoke an admitted run after its reads/preparation. A
+        # refusal here is definitely before this POST; keep its original error
+        # outside the post-send reconciliation/UnknownWrite handling below.
+        if self._before_write is not None:
+            self._before_write()
         with measure_phase("store.cas_post"):
             value = self.api.request("POST", "/graphql", payload)
         phase, classification = "response", None

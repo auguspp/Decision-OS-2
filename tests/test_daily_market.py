@@ -526,6 +526,7 @@ def native_context():
     event = {"inputs": {"operation": "update", "code_sha": "a" * 40}}
     env = {"GITHUB_REPOSITORY": cli.REPO, "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_WORKFLOW_REF": cli.REPO + "/" + cli.WORKFLOW + "@refs/heads/main",
+        "GITHUB_REPOSITORY_ID": "1420041744", "GITHUB_WORKFLOW_SHA": "a" * 40,
         "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "8001", "GITHUB_RUN_ATTEMPT": "1"}
     return event, env
 

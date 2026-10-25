@@ -86,8 +86,18 @@ def seeded_host(model, master=False, master_rows=3):
 
 
 def options(host, selected, opened):
-    return dict(open_unit=opened, guard=lambda api: cli.collection_guard(api, selected),
-        read_guard=lambda api: cli.check_private(api, selected), sleep=lambda _: None)
+    # Match the native runtime: ordinary reads/custody pay only authorization;
+    # the ten-page peer scan belongs to the last admission before source HTTP.
+    return dict(open_unit=opened, guard=lambda api: cli.check_private(api, selected),
+        read_guard=lambda api: cli.check_private(api, selected),
+        probe=lambda api: cli.collection_guard(api, selected), sleep=lambda _: None)
+
+
+def assert_last_source_probe(model):
+    own = cli.PREFIX + "/actions/runs/8001"
+    expected = [own, *[cli.PREFIX + "/actions/runs?status=in_progress&per_page=100&page=" + str(page)
+        for page in range(1, 11)], own]
+    assert model.requests[-12:] == [("GET", path, None) for path in expected]
 
 
 @pytest.mark.parametrize("settlement_remaining", [None, 330])
@@ -100,6 +110,7 @@ def test_calendar_real_store_ten_pages_settles_beyond_240(monkeypatch, settlemen
         value = original()
         request = value.request_registered
         def http(*args, **kwargs):
+            assert_last_source_probe(model)
             before_http.append(apis[-1]._requests)
             result = request(*args, **kwargs)
             after_http.append(apis[-1])
@@ -107,6 +118,11 @@ def test_calendar_real_store_ten_pages_settles_beyond_240(monkeypatch, settlemen
                 apis[-1].rate_limits.observe(quota_headers(remaining=settlement_remaining,
                     limit=5000, reset=2000000000))
                 assert not apis[-1].rate_limits.admits(512 - apis[-1]._requests)
+            # Explicitly model native reads while the source response returns.
+            # Settlement must still work after the source-admission threshold;
+            # do not rely on redundant peer scans to cross it incidentally.
+            while apis[-1]._requests <= cli.ADMISSION_REQUESTS:
+                apis[-1].request("GET", cli.PREFIX)
             return result
         value.request_registered = http
         return value
@@ -131,7 +147,7 @@ def test_calendar_real_store_ten_pages_settles_beyond_240(monkeypatch, settlemen
     assert after_http and any(api._requests > 240 for api in after_http)
     assert all(api._requests <= 512 for api in apis)
     lists = [path for method, path, _ in model.requests if "?status=in_progress&" in path]
-    assert lists and len(lists) % 10 == 0
+    assert len(lists) == 10 * len(before_http)
     for offset in range(0, len(lists), 10):
         assert [int(path.rsplit("=", 1)[1]) for path in lists[offset:offset + 10]] == list(range(1, 11))
 
@@ -144,7 +160,8 @@ def test_full_unit_budget_rejected_before_source_or_reservation(monkeypatch, res
     before = model.git.head()
     api._requests = 200
     with pytest.raises(RecordError, match="STORE_SETTLEMENT_BUDGET"):
-        cli._source_admit(api, lambda api: cli.collection_guard(api, selected), reserve)
+        cli._source_admit(api, lambda api: cli.check_private(api, selected), reserve,
+            probe=lambda api: cli.collection_guard(api, selected))
     assert model.git.head() == before and model.writes == 0
 
 
@@ -154,12 +171,13 @@ def test_settlement_uses_real_remaining_not_source_window(monkeypatch):
     api._requests = 260
     api.rate_limits.observe(quota_headers(remaining=200, limit=5000, reset=2000000000))
     assert not api.rate_limits.admits(512 - api._requests)
-    cli.collection_guard(api, selected)
+    cli.check_private(api, selected)
     before = model.git.head()
     store.backend.commit({"submissions/synthetic-settlement.json": b"{}"}, expected=before)
     assert model.writes == 1 and 240 < api._requests < 512
     with pytest.raises(RecordError, match="STORE_ADMISSION"):
-        cli._source_admit(api, lambda api: cli.collection_guard(api, selected), 1)
+        cli._source_admit(api, lambda api: cli.check_private(api, selected), 1,
+            probe=lambda api: cli.collection_guard(api, selected))
 
 
 @pytest.mark.parametrize("case", ["peer", "quota"])
@@ -206,6 +224,7 @@ def test_master_real_store_ten_pages_checkpoint_then_zero_http_promotion(monkeyp
         client = original()
         request = client.request_registered
         def http(*args, **kwargs):
+            assert_last_source_probe(model)
             http_counts.append(apis[-1]._requests)
             value = request(*args, **kwargs)
             if response_remaining is not None:

@@ -31,7 +31,7 @@ def test_reconciliation_needs_deployment_and_fixed_grant_before_records_or_crede
     else:
         with pytest.raises(RecordError, match='NOT_AUTHORIZED'):
             visibility.preflight(event, env, api, use_authorization=True)
-    assert len(api.calls) == 3  # Native metadata only, before Store/artifact/source access.
+    assert len(api.calls) == 15  # Native code/approval metadata; no Store/artifact/source access.
 
 
 def test_unapproved_public_reconciliation_cannot_load_its_local_grant(monkeypatch):

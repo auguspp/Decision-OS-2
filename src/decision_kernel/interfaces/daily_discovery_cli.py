@@ -19,11 +19,14 @@ from decision_kernel.application.daily_market import policy
 from decision_kernel.application.relay_registry import RelayRegistry, _json
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import RecordError, SourceRef, digest, encoded, require
+from decision_kernel.infrastructure.daily_execution import (
+    require_live_execution, select_execution, verify_checkout,
+)
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubStore
 from decision_kernel.infrastructure.market_snapshot import GitMarketReader
 from decision_kernel.infrastructure.runtime_performance import annotate_performance, diagnosed
 from decision_kernel.interfaces.daily_market_cli import POLICY_FILE, _admit, load_clock_policy, native_ready, settings
-from decision_kernel.interfaces.daily_reading_cli import read_update_receipt
+from decision_kernel.interfaces.daily_reading_cli import read_update_receipt, require_runtime_identity
 from decision_kernel.interfaces.ftshare_check_cli import _regular, _safe_error
 from decision_kernel.interfaces.market_collection_cli import REGISTRY, _records_runtime_binding
 
@@ -35,10 +38,10 @@ def _reason(exc, token=None):
     return "DAILY_DISCOVERY_FAILED" if code == "FTSHARE_CHECK_FAILED" or token and token in code else code
 
 
-def _open_writer(api):
+def _open_writer(api, *, before_write=None):
     binding = _records_runtime_binding("sync")
     require(binding.write_enabled is True, "DAILY_DISCOVERY_WRITE_BINDING_REQUIRED")
-    store = VersionedStore(GitHubStore(binding, api))
+    store = VersionedStore(GitHubStore(binding, api, before_write=before_write))
     source = VersionedStore(GitMarketReader(replace(binding, write_enabled=False), api))
     return store, source
 
@@ -66,12 +69,15 @@ def run_runtime(event, env, out, *, api=None, clock=None):
         expected = control["market_reference"]
         SourceRef.from_dict(expected)
     api = GitHubAPI(token) if api is None else api
+    selected = select_execution(api, selected, env=env, require_inherited=True)
+    verify_checkout(selected)
+    require_runtime_identity(receipt, selected)
     native_ready(api, selected)
     at = (clock or (lambda: datetime.now(timezone.utc).isoformat()))()
     try:
         if receipt["status"] in SAVE_STATUSES:
             _admit(api)
-        store, source = _open_writer(api)
+        store, source = _open_writer(api, before_write=lambda: require_live_execution(api, selected))
         result = save_daily_discovery(store, source, RelayRegistry(REGISTRY), approved, receipt,
             as_of=at, submission_id="daily-discovery-" + str(selected["run_id"]) + "-1",
             expected_reference=expected, guard=lambda: native_ready(api, selected))

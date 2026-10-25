@@ -12,7 +12,7 @@ from decision_kernel.domain.records import RecordError, StoreUnavailable, digest
 from decision_kernel.domain.research_artifacts import ArtifactInput
 from decision_kernel.interfaces import daily_discovery_cli as cli, daily_reading_cli
 from test_daily_market import Host, NOW
-from test_daily_reading import native_run
+from test_daily_reading import approved_native_run, native_run
 from test_market_discovery import REGISTRY, request, retain, rising, row, storage, put_document
 from test_market_snapshot import native
 
@@ -252,6 +252,7 @@ def test_workflow_state_write_stays_inside_existing_daily_writer_without_source_
                              ("reading", "daily_reading_cli"), ("release", "daily_market_cli release"))}
     assert list(indices.values()) == sorted(indices.values())
     assert job["permissions"] == {"contents": "write", "actions": "read"}
+    assert job["env"] == {"DECISION_OS_EXECUTION": "${{ needs.visibility.outputs.execution }}"}
     step = steps[indices["state"]]
     assert step["if"] == "always()" and step["env"] == {"GITHUB_TOKEN": "$" + "{{ github.token }}"}
     assert "secrets." not in step["run"]
@@ -259,7 +260,7 @@ def test_workflow_state_write_stays_inside_existing_daily_writer_without_source_
 
 def test_native_state_host_retains_identity_and_source_receipt_and_calls_no_provider(tmp_path, monkeypatch):
     event, env, out, api, readers, calls = native_run(tmp_path, monkeypatch, status="source-held")
-    monkeypatch.setattr(cli, "_open_writer", lambda current: readers)
+    monkeypatch.setattr(cli, "_open_writer", lambda current, **kwargs: readers)
     original = (out / "result.json").read_bytes()
     assert cli.run_runtime(event, env, out, api=api, clock=lambda: NOW) == 0
     saved = cli._json((out / cli.OUTPUT).read_bytes())
@@ -279,7 +280,7 @@ def test_native_state_host_rejects_copied_receipt_before_any_read_or_write(tmp_p
 
 def test_native_state_output_is_withheld_after_private_visibility_changes(tmp_path, monkeypatch):
     event, env, out, api, _, _ = native_run(tmp_path, monkeypatch, status="source-held")
-    def changed(*args):
+    def changed(*args, **kwargs):
         api.meta["private"] = False
         return object(), object()
     monkeypatch.setattr(cli, "_open_writer", changed)
@@ -288,18 +289,36 @@ def test_native_state_output_is_withheld_after_private_visibility_changes(tmp_pa
     assert not (out / cli.OUTPUT).exists()
 
 
+def test_native_pinned_state_output_is_withheld_after_live_approval_is_revoked(tmp_path, monkeypatch):
+    event, env, out, api, selected, calls, checkouts, _ = approved_native_run(tmp_path, monkeypatch)
+    original = cli.save_daily_discovery
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        disabled = deepcopy(api.policies[api.workflow_sha])
+        disabled["enabled"] = False
+        api.advance(policy=disabled)
+        return result
+    monkeypatch.setattr(cli, "save_daily_discovery", changed)
+    with pytest.raises(RecordError, match="DAILY_EXECUTION_DISABLED"):
+        cli.run_runtime(event, env, out, api=api, clock=lambda: NOW)
+    assert checkouts == [selected] and not calls
+    assert not (out / cli.OUTPUT).exists()
+
+
 def test_native_writer_and_source_reader_share_original_binding_anchor_api(monkeypatch):
     opened = []
-    def backend(binding, api):
-        opened.append((binding, api))
+    def backend(binding, api, **kwargs):
+        opened.append((binding, api, kwargs))
         return object()
     monkeypatch.setattr(cli, "GitHubStore", backend)
     monkeypatch.setattr(cli, "GitMarketReader", backend)
     api = object()
-    cli._open_writer(api)
+    before_write = lambda: None
+    cli._open_writer(api, before_write=before_write)
     assert len(opened) == 2 and opened[0][0].write_enabled is True and opened[1][0].write_enabled is False
     assert opened[0][0].anchor == opened[1][0].anchor and opened[0][0].repository == opened[1][0].repository
     assert all(item[1] is api for item in opened)
+    assert opened[0][2] == {"before_write": before_write} and opened[1][2] == {}
 
 
 def test_status_operation_cannot_invoke_native_state_writer(tmp_path, monkeypatch):
@@ -430,7 +449,7 @@ def test_native_success_rechecks_eligibility_immediately_before_existing_cas(tmp
     api.rate_limits = GitHubRateLimits()
     api.rate_limits.observe({"x-ratelimit-resource": "core", "x-ratelimit-remaining": "900",
         "x-ratelimit-limit": "1000", "x-ratelimit-reset": "9999999999"})
-    monkeypatch.setattr(cli, "_open_writer", lambda current: (host.fixture["store"], host.fixture["fresh"]()))
+    monkeypatch.setattr(cli, "_open_writer", lambda current, **kwargs: (host.fixture["store"], host.fixture["fresh"]()))
     assert cli.run_runtime(event, env, out, api=api, clock=lambda: NOW) == 0
     saved = cli._json((out / cli.OUTPUT).read_bytes())
     assert saved["status"] == "stored-and-verified" and saved["records_writes"] == 1

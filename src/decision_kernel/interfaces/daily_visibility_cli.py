@@ -19,7 +19,9 @@ from decision_kernel.application.daily_clock import (
 )
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.github_store import GitHubAPI
-from decision_kernel.infrastructure.runtime_publication import native_publication_basis
+from decision_kernel.infrastructure.daily_execution import (
+    ERROR_CODES as EXECUTION_ERROR_CODES, require_live_execution, select_execution,
+)
 
 REPOSITORY = "auguspp/Decision-OS-2"
 REPOSITORY_ID = 1420041744
@@ -38,8 +40,8 @@ ERROR_CODES = frozenset({
     "DAILY_VISIBILITY_CHANGED", "DAILY_VISIBILITY_OUTPUT", "DAILY_VISIBILITY_FAILED",
     "DAILY_CLOCK_POLICY", "DAILY_CLOCK_NOT_PRIMARY", "DAILY_CLOCK_INVOCATION",
     "DAILY_CLOCK_METADATA_MODE", "DAILY_MARKET_NATIVE_RUN", "DAILY_MARKET_MAIN_CI",
-    "FTSHARE_MAIN_MOVED",
-})
+    "FTSHARE_MAIN_MOVED", "PUBLIC_RUNTIME_POLICY_INVALID",
+}) | EXECUTION_ERROR_CODES
 
 
 def selection(event, env, *, clock=None):
@@ -85,10 +87,11 @@ def _repository(api):
 
 
 def preflight(event, env, api, *, use_authorization=False, clock=None):
-    """Three metadata GETs, seven for an admitted clock; no records or source I/O.
+    """Select a verified execution tree before the job receives source secrets.
 
-    Automatic producers must still be the current main with applicable native
-    CI before their job receives source secrets. The runtime checks again.
+    The diagnostic/probe path remains metadata-only. Runtime admission checks
+    native workflow and execution CI, exact code tree and supported protocol;
+    downstream jobs independently verify the frozen selection and checkout.
     """
     selected = selection(event, env, clock=clock)
     visibility = _repository(api)
@@ -106,10 +109,19 @@ def preflight(event, env, api, *, use_authorization=False, clock=None):
     public = visibility == "public"
     require(type(use_authorization) is bool, "DAILY_VISIBILITY_INPUT")
     probe = selected["invocation"] == CLOCK_PROBE
-    basis = native_publication_basis(selected, env=env) if public and use_authorization and not probe else None
-    allowed = not public or basis is not None
+    basis = None
     proof = None
-    if allowed and selected["invocation"] in {"schedule", EXTERNAL_CLOCK}:
+    if use_authorization and not probe:
+        selected = select_execution(api, selected, env=env)
+        live = require_live_execution(api, selected)
+        require(live["visibility"] == visibility, "DAILY_VISIBILITY_CHANGED")
+        basis = live["publication_basis"]
+        version = selected["runtime_version"]
+        proof = {"main_ci_run": version["execution_ci_run"],
+            "workflow_ci_run": version["workflow_ci_run"],
+            "native_run_created_at": run.get("created_at")}
+    allowed = not public or basis is not None
+    if not use_authorization and allowed and selected["invocation"] in {"schedule", EXTERNAL_CLOCK}:
         from decision_kernel.interfaces.daily_market_cli import native_ready
         proof = native_ready(api, selected, metadata_only=True)
     require(_repository(api) == visibility, "DAILY_VISIBILITY_CHANGED")
@@ -209,6 +221,11 @@ def main(argv=None, *, env=None, api_factory=GitHubAPI):
         if use_authorization:
             output += "runtime_authorized=" + ("true" if report["runtime_authorized"] else "false") + "\n"
             output += "admitted=" + ("true" if report["admitted"] else "false") + "\n"
+            if report["admitted"]:
+                execution = {key: report[key] for key in ("workflow_sha", "code_sha", "runtime_version")}
+                output += "execution_sha=" + report["code_sha"] + "\n"
+                output += "execution=" + json.dumps(execution, ensure_ascii=True,
+                    sort_keys=True, separators=(",", ":")) + "\n"
         _append(env, "GITHUB_OUTPUT", output)
     except Exception as exc:
         code = str(exc) if isinstance(exc, RecordError) and str(exc) in ERROR_CODES else "DAILY_VISIBILITY_FAILED"

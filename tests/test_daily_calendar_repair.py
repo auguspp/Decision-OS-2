@@ -275,7 +275,8 @@ def native_context():
         'GITHUB_REPOSITORY': REPOSITORY, 'GITHUB_REPOSITORY_ID': str(REPOSITORY_ID),
         'GITHUB_REF': 'refs/heads/main', 'GITHUB_EVENT_NAME': 'workflow_dispatch',
         'GITHUB_WORKFLOW_REF': REPOSITORY + '/.github/workflows/daily-market.yml@refs/heads/main',
-        'GITHUB_RUN_ID': '8001', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': sha}
+        'GITHUB_RUN_ID': '8001', 'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': sha,
+        'GITHUB_WORKFLOW_SHA': sha}
 
 
 def test_workflow_uses_the_existing_serial_writer_and_no_new_source_secret_route(history):
@@ -319,27 +320,16 @@ def test_public_preflight_requires_both_deployment_and_explicit_calendar_grant(h
     monkeypatch.setattr(publication, 'AUTHORIZATION_FILE', policy_file)
     grant_file = tmp_path / 'repair.json'; grant_file.write_bytes(encoded({'enabled': enabled, 'repair': history[2]}))
     monkeypatch.setattr(repair, 'POLICY_FILE', grant_file)
-    calls = []
-    class Native:
-        def request(self, method, path):
-            calls.append(path)
-            assert method == 'GET'
-            if path == visibility.PREFIX:
-                return {'id': publication.REPOSITORY_ID, 'full_name': publication.REPOSITORY,
-                    'private': False, 'archived': False, 'default_branch': 'main'}
-            assert path == visibility.PREFIX + '/actions/runs/8001'
-            return {'id': 8001, 'head_sha': env['GITHUB_SHA'], 'head_branch': 'main',
-                'event': 'workflow_dispatch', 'run_attempt': 1, 'path': visibility.WORKFLOW,
-                'name': visibility.WORKFLOW_NAME, 'status': 'in_progress',
-                'repository': {'id': publication.REPOSITORY_ID}, 'head_repository': {'id': publication.REPOSITORY_ID}}
+    from test_daily_visibility import NativeAPI
+    api = NativeAPI()
     if enabled:
-        report, code = visibility.preflight(event, env, Native(), use_authorization=True)
+        report, code = visibility.preflight(event, env, api, use_authorization=True)
         assert code == 0 and report['runtime_authorized'] and report['repository_visibility'] == 'public'
         assert report['source_requests'] == 0 and report['records_read'] is False
     else:
         with pytest.raises(RecordError, match='NOT_AUTHORIZED'):
-            visibility.preflight(event, env, Native(), use_authorization=True)
-    assert len(calls) == 3  # No source, Store, archive or provider credential call.
+            visibility.preflight(event, env, api, use_authorization=True)
+    assert len(api.calls) == 15  # Code/approval metadata, no source/Store/archive access.
 
 
 def test_normal_reading_summary_preserves_repair_budget_and_safe_failure_category():

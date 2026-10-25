@@ -11,6 +11,7 @@ from decision_kernel.domain.records import RecordError
 from decision_kernel.infrastructure.github_store import GitHubBinding
 from decision_kernel.infrastructure import runtime_publication as policy
 from decision_kernel.interfaces import daily_visibility_cli as visibility
+from test_daily_visibility import NativeAPI as VisibilityNative
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def context(operation="update", event="workflow_dispatch", workflow="daily-marke
     env = {"GITHUB_REPOSITORY": policy.REPOSITORY, "GITHUB_REPOSITORY_ID": str(policy.REPOSITORY_ID),
            "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": policy.REPOSITORY + "/.github/workflows/" + workflow + "@refs/heads/main",
            "GITHUB_EVENT_NAME": event, "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40,
-           "GITHUB_RUN_ID": "8001"}
+           "GITHUB_RUN_ID": "8001", "GITHUB_WORKFLOW_SHA": "a" * 40}
     payload = {"schedule": "35 10 * * 1-5"} if event == "schedule" else {
         "inputs": {"operation": operation, "code_sha": "a" * 40}}
     return selected, env, payload
@@ -47,6 +48,7 @@ def context(operation="update", event="workflow_dispatch", workflow="daily-marke
 
 class Native:
     def __init__(self, private=False):
+        self.execution = VisibilityNative(private=private)
         self.meta = {"id": policy.REPOSITORY_ID, "full_name": policy.REPOSITORY,
                      "private": private, "archived": False, "default_branch": "main"}
         self.run = {"id": 8001, "head_sha": "a" * 40, "head_branch": "main", "event": "workflow_dispatch",
@@ -66,6 +68,8 @@ class Native:
             return {"ref": "refs/heads/main", "object": {"type": "commit", "sha": "a" * 40}}
         if "/compare/" in path:
             return {"status": "diverged", "merge_base_commit": {"sha": "b" * 40}}
+        if any(marker in path for marker in ("/contents/", "/git/commits/", "/actions/workflows/ci.yml/runs?")):
+            return self.execution.request(method, path)
         pytest.fail("No source, artifact, records or write API permitted: " + path)
 
 
@@ -175,7 +179,9 @@ def test_public_daily_enters_normal_runtime_instead_of_metadata_only(grant, oper
     assert code == 0 and report["runtime_authorized"] is True
     assert report["repository_visibility"] == "public" and report["status"] == "public-runtime-pending"
     assert report["reason_code"] is None and report["publication_authority"] == grant[0]["authorization_ref"]
-    assert report["source_requests"] == 0 and report["records_read"] is False and len(api.calls) == 3
+    assert report["source_requests"] == 0 and report["records_read"] is False
+    assert report["runtime_version"]["workflow_ci_run"] == 6001
+    assert all(method == "GET" and "/records" not in path for method, path in api.calls)
     assert "作业获准接续" in visibility.summary(report)
 
 
@@ -189,8 +195,8 @@ def test_normal_publication_revocation_returns_explicit_block_without_source(gra
     doc, path = grant
     doc["enabled"] = False; path.write_text(json.dumps(doc))
     _, env, event = context()
-    report, code = visibility.preflight(event, env, Native(), use_authorization=True)
-    assert code == 2 and report["runtime_authorized"] is False and report["status"] == "blocked"
+    with pytest.raises(RecordError, match="DAILY_EXECUTION_PUBLICATION_REVOKED"):
+        visibility.preflight(event, env, Native(), use_authorization=True)
 
 
 def test_release_checks_real_visibility_and_does_not_pretend_public_is_private(grant):

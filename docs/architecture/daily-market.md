@@ -49,7 +49,7 @@ v4 的已授权日历传输失败恢复使用 v5，保留同一完整主表阶�
 
 - 原 FTShare 基线或当前周期有 source hold、failed 或未知 in-flight；日历来源失败、历史开闭市被改写、两所最后交易日冲突。
 - 一个来源请求已预留但传输或 Store 效果不明；按原引用对账，不能借新 run 或新日期重发。
-- 原生 private / main / 当前 CI 不再成立、原生额度不足、Store API 准入或容量不足。
+- 原生可见性/公开授权、批准执行版本或主线可达性不再成立，原生额度不足，Store API 准入或容量不足。
 - 发现另一个后继、重复序号、控制链缺口、旧根或配置范围变化。读取失败不会被解释为没有历史，重新开一份预算。
 
 只有安全的未取源 pending 可以继续。已失败或未知的周期没有自动解锁入口；来源 owner 核清真实条件与原副作用后，按现行有限修复合同处理，不能只改 ID、删控制记录或换 Seed。日历 one-shot `ftshare-calendar-continuity-20261018` 的原两次预算和终态保持，本模块不调用它。
@@ -63,9 +63,25 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
   --out "$RUNNER_TEMP/dos2-daily-market"
 ```
 
-自动 `schedule` 的代码 SHA 来自受信 `GITHUB_SHA`；原手动 `operation=update|status|recover-late|repair-calendar|reconcile-write` 继续要求确切 `code_sha`。两个恢复入口各自加载固定获审配置。宿主重新核原生仓库 ID / 可见性与部署授权、当前 main、自己的工作流与 run / attempt 1，以及该代码最新一次合格 main CI。不能伪装成旧手动核验宿主。业务回执分别记录真实 `invocation=schedule|external-clock|update|status|recover-late|repair-calendar|reconcile-write` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、代码、事件及 invocation，不能把普通更新回执换标签当成补更。
+自动 `schedule` 的原生工作流 SHA 来自受信 `GITHUB_SHA`；原手动入口继续要求确切 `code_sha` 输入与这个原生触发版本相符。输入选择原工作流身份，执行代码按下节的受审部署配置选择。两个恢复入口各自加载执行树内固定获审配置。业务回执分别记录真实 `invocation` 和供执行及消费者使用的 `operation=update|status`；下游核相同的原生运行、执行代码、批准凭据、事件及 invocation，不能把普通更新回执换标签当成补更。
 
-**当前 main 的核法是"包含"，不是"相等"。** 运行执行的是 Actions 为它自己 `head_sha` 检出的那棵树，之后 main 前进并不改变这棵树，因此不能因为一次合并就把已在途中、请求已经花掉的运行判废。判定改为：`GITHUB_REF=refs/heads/main` 与 `code_sha == GITHUB_SHA` 保证该代码是派发时刻的 main；`code_sha` 仍可从当前 main 到达（`compare` 的 `ahead`/`identical` 且 `merge_base == code_sha`）才算身份成立。真正要拒绝的是被重写抹掉的历史（`diverged`/`behind`），以及任何答不上来的情况——一律拒绝、不猜。相等仍是快路径，所以只有 main 确实前进时才付一次全历史 `compare`，其结果按当时 main 记在发起该问题的 API 客户端上。
+### 批准的执行版本与在线撤销
+
+`config/daily-runtime-version.json` 是仅适用于本 daily 宿主的部署选择。初始 `mode=current-main`、`enabled=true`、`pinned=null` 保持每次运行执行其原生触发版本。`mode=pinned` 时，`pinned` 必须同时提供 `code_sha`、`tree_sha`、已通过的原生 `main_ci_run` 和具名 `approval_ref`；不接受调用者、来源正文或任意环境变量自报批准。确切代码树固定该次方法、schema、业务配置和读取器，没有第二套动态方法或发布注册表。
+
+| 身份 | 取得与用途 |
+|---|---|
+| `workflow_sha` | 原生 `GITHUB_SHA` / `GITHUB_WORKFLOW_SHA` 和 `run.head_sha`；保留原 `main` dispatch、首次 attempt、工作流路径、事件及单主时钟核验。 |
+| `code_sha` | 已选定的实际执行提交；status/daily 用它 checkout，启动时核真实 Git HEAD、tree 和 tracked 工作区。不会改写任何 `GITHUB_*`。 |
+| `runtime_version` | 选择时的部署配置 commit/摘要、模式、代码树、协议、workflow/execution 两份 CI、批准引用；行情、Discovery、Reading、最终发布贯穿同一冻结凭据。 |
+
+visibility 无来源密钥预检从**最新原生 main 的确切 commit**读取版本配置与公开授权，核两个代码身份的适用 main CI，以及执行树包含本版 `daily-runtime-v1` 接口。固定接口标识、批准代码树、CI 与受审配置共同构成准入，标识文件本身不认证代码正确性。下游接收凭据后重新核入场证明和实际 checkout；环境里的 JSON 只是传输，不授予权限。旧代码没有受支持接口就不能成为 pinned 目标。接口标识不与最新 main 的整个实现文件 hash 逐次比较，普通工程修改不自动撤销此前已批准的兼容版本。
+
+每个后继工作单元、来源 HTTP 前、每次实际 records CAS POST 前及输出释放前，重新读取仓库和最新 main ref。配置和祖先证明仅按确切 commit 缓存；两个 SHA 都必须仍可从当前 main 到达。main 普通前进且批准内容不变时，同一运行继续沿原冻结版本；不重新领取最新 main 或预算。`enabled=false`、批准内容切换、公开授权撤销/范围不足、历史被重写或无法核验均停止受影响效果。当前日常组合会展示已存 AI Brief 与可能包含的 Watch 采用，故同时核 `market/sources/research/reading/brief/handoff/watch` 发布范围；这不启用 Watch 或新增检查。已入场任务依赖自身两份 CI，最新开发提交尚无 CI 不会追溯作废它；新 dispatch 的 workflow 版本仍须有适用 CI。
+
+在线授权最坏为 6 次 GET（仓库、main、两份配置、两个祖先比较）；来源并发核验另有最多 12 次 GET。原 writer/readback 预算计入 CAS 前的独立授权复核，价格单元仍预留 476 次，结算 220 次，不扩大原 512 硬上限、来源额度或五次等待上限。来源已发送而撤销阻止保存时，保留原持久预留和已花费计数；没有成功保存的响应不能称已保管。已发 POST 的未知效果继续只读对账，后续版本不得自动重发。
+
+首次启用 pinned 分两步：先合入带本协议且保持 current-main 的完整工程组，取得实际 main SHA/tree/CI；再在旧运行安全排空、未知效果对账、新旧记录读取兼容成立后，以普通配置 PR 指定这个已存在的批准版本。切换 PR、真实启用与一次正常后继运行分别留证，合成测试和工程 CI 不代签生产切换。回退先停止新的执行并对账在途；保留新旧记录的 reader，不能只退代码而丢失已写对象的读取能力。
 
 只有 `external-clock` / `clock-probe` 接受固定 `code_sha=current-main`，并立即绑定该次原生 `GITHUB_SHA`；旧手动入口不接受这个标记。真实宿主明确加载固定 clock 配置，缺失或损坏即停止。被选中的自动生产在 visibility 阶段、注入来源密钥前先核当前 main 和 CI，实际宿主与消费者再次检查。`clock-probe` 只进入独立只读 job，输出 `probe.json` / `probe.md`，0 来源请求、0 records 读写、0 dispatch/通知；不得把它转入普通 status 后读取业务。配置、实际启用、自然来源和消费者采用仍按外部时钟合同分别验收。
 
@@ -79,7 +95,7 @@ python -m decision_kernel.interfaces.daily_market_cli runtime \
 
 只有主动检查发现余量不足、未出现 `throttled`、且最近实际 core 响应提供有效的未来一小时内 `reset` 时，才能等待该原生窗口。每次睡眠最多 60 秒；初始窗口之后最多 **5 次实际刷新等待**，累计等待不超过 **5 小时**，工作流作业上限 **330 分钟**。这是有限的同次运行等待，不重新进入 `run_daily`，不重建来源 client、不重新开始 receipt、不把单股槽位、预留或累计来源额度置零。等待期间持续更新安全回执，记录等待次数、累计时间和各原生资源的最近观察。
 
-到达 reset 之后，沿用原 API、令牌和共享 `GitHubRateLimits`，实际读取仓库 private、当前 main、本次 run 和最新 main CI 四个原生响应。只有响应证明 core 的 reset 已前进，且所有已观察资源仍满足 512 预留，才开始下一个单元。GraphQL 余量不足时直接暂停：普通 GET 不能刷新 GraphQL，墙钟经过旧 reset 也不能补写额度。缺少、过期或未前进的 headers、超出等待边界，以及真实 403 / 429 / 权限或 CI 变化都保留暂停或失败；不把这些情况改成普通重试。刚好跨过 reset 而最后观察仍是旧窗口时允许保守暂停，不保证每次额度不足都自动恢复。
+到达 reset 之后，沿用原 API、令牌和共享 `GitHubRateLimits`，实际核仓库、当前 main 下的执行/公开授权及本次原生 run，最坏 7 次 GET；入场已验的两份静态 CI 不在每个单元重复读取。只有响应证明 core 的 reset 已前进，且所有已观察资源仍满足 512 预留，才开始下一个单元。GraphQL 余量不足时直接暂停：普通 GET 不能刷新 GraphQL，墙钟经过旧 reset 也不能补写额度。缺少、过期或未前进的 headers、超出等待边界，以及真实 403 / 429 / 权限变化都保留暂停或失败；不把这些情况改成普通重试。刚好跨过 reset 而最后观察仍是旧窗口时允许保守暂停，不保证每次额度不足都自动恢复。
 
 完成周期的独立保存随后仍执行正常市场读取、工作台读取和输出前原生检查。工程门禁以实际 native API wire 的 core / GraphQL 分开计数，核完整 2 + 12 原始请求和尾部消费者余量，不以新建 API 对象的局部计数代替令牌额度。新窗口等待不能重放来源 failed、source hold 或未知 in-flight；这些状态继续按原引用核对。
 
@@ -128,13 +144,15 @@ source `result.json`在原来源入口结束时封存；Discovery和Reading分�
 
 ## 暂停、回退与证明边界
 
-可以在 GitHub 原生界面停用本工作流，或经普通 PR 将本专属配置 `enabled` 置为 false。暂停不删除历史、不清除失败、不取消已有在途操作；在途结果仍按原引用核对。恢复 enabled 只恢复原合同，不能解锁已失败周期。代码回退使用普通反向 PR；新增 records 原件与它们的现役只读支持继续保留，不强制回退业务分支。
+可以在 GitHub 原生界面停用本工作流；需阻止在途任务继续产生效果时，经普通 PR 将 `daily-runtime-version.json.enabled` 置为 false，由在线边界核验。`daily-market.json.enabled` 属于所选执行树内的业务配置，修改开发主线的这份文件不会暗改已固定的生产树。暂停不删除历史、不清除失败、不取消已经发出的请求；在途效果仍按原引用核对。恢复 enabled 只恢复原合同，不能解锁已失败周期。代码回退使用普通反向 PR；新增 records 原件与它们的现役只读支持继续保留，不强制回退业务分支。
 
 工程测试包括同日零重放、真实日历休市、新日期继承累计额度、日历拒绝 / 历史冲突 / FTShare hold 跨日阻断、未知预留以及独立 Git 恢复。手工扩面集成回归复用原保管与正常 reader，核多个已存新增 owner 的继承、跨日确切桥接端点、后来的失败不破坏旧历史、实际最新尝试与首个阻断、r000 前竞争、外来后继在来源前停止、未知写后的原周期恢复，以及窗口 / 日历 / 旧 owner 变化拒绝。两股合成宿主的 2 + 4 请求只用于这些跨层语义；正式六股预算仍由完整 2 + 12 模型核验。
 
 延迟回归另核原生午夜创建、显式补更与普通早盘更新的区别、周五至周六及严格 24 小时边界、周日和周一早盘无窗口、队列跨下一槽仍固定原日、真实创建与采集时钟、旧周期剩余预留及 hold、日历不包含当前未收盘日和下游 invocation 一致性。原生 Git/API 模型另核普通 1000 core / 1000 GraphQL 额度下的同 run 完整 2 + 12、独立新窗口响应、五次刷新上限、陈旧 headers 与拒绝停止、完成后的消费者余量。合成数据和合成时间测试只证明工程语义，不是已经等待未来五小时或已经连续更新多日的证据。首次真实运行、原生 schedule 启用、显式补更、每个后续自然交易日、人工工作台体验和长期持续性分别记录；一轮成功不能签未来 uptime 或全市场可用。
 
 ## 组件复用与退出
+
+2026-10-25 核读 GitHub 官方 [workflow_dispatch 事件身份](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)、[原生变量](https://docs.github.com/en/actions/reference/workflows-and-actions/variables)与本仓固定版本的 [checkout ref 输入](https://github.com/actions/checkout/blob/3d3c42e5aac5ba805825da76410c181273ba90b1/action.yml)。批准执行版本复用既有 Actions job 输出和确切 SHA checkout；原生变量保持平台值，没有另建发布服务或改用任意 ref。此依据说明平台接线能力，不证明本仓已经完成 pinned 生产启用。
 
 2026-10-19 核读 GitHub 官方 [schedule 事件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule) 和 [workflow concurrency](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency)。原生 schedule 只从默认分支触发，可能延迟或丢弃；因此本合同使用实际运行 / 日历 / 来源时钟，而不把 cron 字符串称作准点 SLA。选择已有 Actions 配置与 Python 标准库窄适配，不另装通用调度、监控或备份平台。
 

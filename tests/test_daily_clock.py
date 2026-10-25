@@ -77,7 +77,7 @@ def test_queued_clock_cannot_publish_admission_after_main_or_ci_changes(
         DECISION_OS_STORE_TOKEN="synthetic-clock-only")
     assert visibility.main(["--use-runtime-authorization"], env=env, api_factory=lambda _: api) == 2
     report = json.loads(capsys.readouterr().out)
-    assert report["reason_code"] == ("FTSHARE_MAIN_MOVED" if fault == "old-checkout" else "DAILY_MARKET_MAIN_CI")
+    assert report["reason_code"] == ("DAILY_EXECUTION_OFF_MAIN" if fault == "old-checkout" else "DAILY_EXECUTION_MAIN_CI")
     assert not output.exists() and report["source_requests"] == 0
     assert report["records_read"] is report["records_written"] is False
 
@@ -107,7 +107,7 @@ def test_probe_preflight_never_admits_a_business_job(tmp_path, monkeypatch, prim
     event["inputs"]["code_sha"] = clock.CURRENT_MAIN
     api = VisibilityAPI(private=private)
     api.run.update(name=clock.PROBE_RUN_TITLE, display_title=clock.PROBE_RUN_TITLE)
-    monkeypatch.setattr(visibility, "native_publication_basis",
+    monkeypatch.setattr(visibility, "select_execution",
         lambda *a, **k: pytest.fail("Metadata has no business-publication prerequisite."))
     report, code = visibility.preflight(event, env, api, use_authorization=True, clock=approved)
     assert code == 0 and report["status"] == "clock-probe-metadata-only"
@@ -322,7 +322,7 @@ def test_external_public_route_and_release_use_existing_revocable_authority(tmp_
     assert code == 0 and report["operation"] == "update" and report["invocation"] == clock.EXTERNAL_CLOCK
     assert report["runtime_authorized"] is report["admitted"] is True
     assert report["publication_authority"] == grant[0]["authorization_ref"]
-    assert report["native_proof"]["main_ci_run"] == 6001 and len(api.calls) == 7
+    assert report["native_proof"]["main_ci_run"] == 6001 and len(api.calls) == 15
     event_file = tmp_path / "event.json"
     event_file.write_bytes(encoded(event))
     for name, value in {**env, "GITHUB_EVENT_PATH": str(event_file)}.items():
@@ -334,8 +334,10 @@ def test_external_public_route_and_release_use_existing_revocable_authority(tmp_
     assert native.calls == [cli.PREFIX, cli.PREFIX + "/git/ref/heads/main"]
     doc, path = grant
     path.write_text(json.dumps({**doc, "enabled": False}))
-    report, code = visibility.preflight(event, env, api, use_authorization=True, clock=approved_clock)
-    assert code == 2 and report["runtime_authorized"] is report["admitted"] is False
+    # The revocation is a new native commit, never mutable content at the old SHA.
+    api.main["object"]["sha"] = "c" * 40
+    with pytest.raises(RecordError, match="DAILY_EXECUTION_PUBLICATION_REVOKED"):
+        visibility.preflight(event, env, api, use_authorization=True, clock=approved_clock)
 
 
 def test_workflow_probe_is_a_separate_read_only_job_with_exact_native_markers():

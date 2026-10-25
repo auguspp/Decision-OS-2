@@ -18,7 +18,7 @@ import time
 
 from decision_kernel.domain.records import RecordError, require
 from decision_kernel.infrastructure.git_ancestry import SCHEMA as ANCESTRY_SCHEMA, LocalGitAncestry
-from decision_kernel.infrastructure.git_tree import SCHEMA as TREE_SCHEMA, LocalGitTree
+from decision_kernel.infrastructure.git_tree import BLOB_SCHEMA, SCHEMA as TREE_SCHEMA, LocalGitTree
 from decision_kernel.infrastructure.github_store import GitHubBinding, MAX_RESPONSE, MAX_TREE_ENTRIES
 from decision_kernel.interfaces import (
     auction_commands, auction_next_session_commands, close_structure_commands, delivery_commands,
@@ -106,7 +106,7 @@ def mirror(flag: str | None, environ) -> LocalGitAncestry | None:
 
 
 def receipt(operation: str, binding: GitHubBinding, *, started: str, finished: str,
-            duration_ms: int, code: int, ancestry=None, tree_reader=None) -> dict:
+            duration_ms: int, code: int, ancestry=None, tree_reader=None, blob_reader=None) -> dict:
     return {"schema": SCHEMA, "operation": operation, "runner": "local",
             "store": {"repository": binding.repository, "branch": binding.branch,
                       "anchor": binding.anchor, "store_id": binding.store_id,
@@ -119,6 +119,9 @@ def receipt(operation: str, binding: GitHubBinding, *, started: str, finished: s
             "tree_inventory": {**(tree_reader.stats() if tree_reader is not None else
                                  {"schema": TREE_SCHEMA, "answered": 0, "declined": 0}),
                                "mirror": "local-git-graph" if tree_reader is not None else "absent"},
+            "blob_content": {**(blob_reader.blob_stats() if blob_reader is not None else
+                               {"schema": BLOB_SCHEMA, "answered": 0, "declined": 0}),
+                             "mirror": "local-git-graph" if blob_reader is not None else "absent"},
             "started_at": started, "finished_at": finished,
             "duration_ms": duration_ms, "exit_code": code}
 
@@ -163,14 +166,14 @@ def main(argv: list | None = None) -> int:
     # credential in the process for the duration of the command.
     os.environ[STORE_TOKEN] = os.environ[READ_TOKEN]
     try:
-        code = store_cli.execute(args, ancestry=ancestry, tree_reader=tree_reader,
+        code = store_cli.execute(args, ancestry=ancestry, tree_reader=tree_reader, blob_reader=tree_reader,
                                  read_binding=binding)
     finally:
         os.environ.pop(STORE_TOKEN, None)
         finished_at = datetime.now(timezone.utc).isoformat()
         record = receipt(args.store_command, binding, started=started_at, finished=finished_at,
                          duration_ms=int((time.monotonic() - clock) * 1000), code=code,
-                         ancestry=ancestry, tree_reader=tree_reader)
+                         ancestry=ancestry, tree_reader=tree_reader, blob_reader=tree_reader)
         print(json.dumps({"local_read_receipt": record}, sort_keys=True), file=sys.stderr)
         target = os.environ.get("DECISION_OS_READ_RECEIPT")
         if target:

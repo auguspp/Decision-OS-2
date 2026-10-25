@@ -508,7 +508,12 @@ class GitHubStore:
         row = entries[path]
         if row["sha"] in self._blobs:
             return self._blobs[row["sha"]]
-        value = self._get("git/blobs/" + row["sha"])
+        # Trusted local-read composition may answer only after this Store has
+        # admitted the exact tree and selected its validated regular blob row.
+        # The same wire-shaped validation and immutable cache remain below.
+        read_tree_blob = getattr(self.api, "read_tree_blob", None)
+        value = (read_tree_blob(self.repository, row) if callable(read_tree_blob)
+                 else self._get("git/blobs/" + row["sha"]))
         require(isinstance(value, dict) and value.get("encoding") == "base64"
                 and value.get("sha") == row["sha"] and value.get("size") == row["size"]
                 and isinstance(value.get("content"), str), "REMOTE_BLOB_INVALID")

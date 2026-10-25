@@ -20,6 +20,7 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SHA, SourceInput, SourceRef, require
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.git_tree import LocalTreeUnavailable
+from decision_kernel.infrastructure.github_reading import reading_scope
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore, MAX_REQUESTS
 
 
@@ -30,14 +31,33 @@ class _PublicReadAPI(GitHubAPI):
     own GitHubStore. A caught native denial cannot turn into a publishable partial
     result after the repository or permission later changes back.
     """
-    def __init__(self, api, binding, *, tree_reader=None):
+    def __init__(self, api, binding, *, tree_reader=None, blob_reader=None):
         self._delegate, self._repository_path = api, "/repos/" + binding.repository
         self._failure = None
         self._tree_reader = tree_reader
+        self._blob_reader = blob_reader
         self._native_trees = set()
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
+
+    def read_tree_blob(self, repository, row):
+        """Internal Store hook, only after its complete tree validation.
+
+        The Store selected this row from a checked exact commit/tree/path. An
+        arbitrary blob GET never gets local eligibility. Keep the original
+        response shape so the same Store still verifies encoding, size and OID.
+        """
+        if self._failure is not None:
+            raise self._failure
+        if self._blob_reader is not None and "/repos/" + repository == self._repository_path:
+            try:
+                return self._blob_reader.read_blob(row["sha"], row["size"])
+            except LocalTreeUnavailable:
+                # A missing/corrupt local object is not a missing Store object.
+                # The existing transport owns the sole fallback and its budget.
+                pass
+        return self.request("GET", "/repos/" + repository + "/git/blobs/" + row["sha"])
 
     def request(self, method, path, payload=None):
         if self._failure is not None:
@@ -135,7 +155,7 @@ def _load(path: Path) -> dict:
     return value
 
 
-def execute(args: argparse.Namespace, *, ancestry=None, tree_reader=None,
+def execute(args: argparse.Namespace, *, ancestry=None, tree_reader=None, blob_reader=None,
             read_binding: GitHubBinding | None = None) -> int:
     """Execute once; a local reader may supply its already checked public binding.
 
@@ -164,7 +184,7 @@ def execute(args: argparse.Namespace, *, ancestry=None, tree_reader=None,
                     raise RecordError("REMOTE_READ_ONLY")
                 api = GitHubAPI.from_environment()
                 if read_binding is not None:
-                    api = _PublicReadAPI(api, binding, tree_reader=tree_reader)
+                    api = _PublicReadAPI(api, binding, tree_reader=tree_reader, blob_reader=blob_reader)
                 backend = GitHubStore(binding, api, ancestry=ancestry)
                 if read_binding is not None:
                     def before_export():
@@ -187,7 +207,17 @@ def execute(args: argparse.Namespace, *, ancestry=None, tree_reader=None,
                 if handler is decision_preparation_commands and args.binding is not None:
                     checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
             elif args.store_command in research_commands.COMMANDS:
-                result = research_commands.execute(args, store, _load, before_export=before_export)
+                if read_binding is not None and args.store_command == "research-catalogue":
+                    # Catalogue already chooses one exact snapshot. Reuse the
+                    # existing expiring reader for this local JSON operation;
+                    # entry/exit and final export still check native authority.
+                    # Room owns its own scope before HTML generation and must
+                    # not be wrapped by an outer scope that would exit too late.
+                    with reading_scope(backend, fail_closed=True) as reader:
+                        result = research_commands.execute(args, VersionedStore(reader), _load,
+                                                           before_export=before_export)
+                else:
+                    result = research_commands.execute(args, store, _load, before_export=before_export)
             elif args.store_command == outcome_review_commands.COMMAND:
                 result = outcome_review_commands.execute(args, store, _load)
             elif args.store_command == close_structure_commands.COMMAND:

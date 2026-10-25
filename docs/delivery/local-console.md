@@ -6,7 +6,7 @@
 
 ## 为什么值得搬
 
-对最近 100 次运行的观测（2026-10-23，只是快照，不进契约）：`research-runtime` 被派发 51 次，其中 **39 次只读**；只读运行的中位耗时 37 秒、p90 101 秒，且其中 5 次在只读阶段就失败。本地读取省去 runner 派发，但仍需访问 GitHub；下面分别说明祖先证明和树目录的本地加速，实际端到端耗时仍取决于宿主链路与镜像可用性。搬走的收益不是机器费（本仓 public，分钟数本就不计费），而是三样更贵的东西：
+对最近 100 次运行的观测（2026-10-23，只是快照，不进契约）：`research-runtime` 被派发 51 次，其中 **39 次只读**；只读运行的中位耗时 37 秒、p90 101 秒，且其中 5 次在只读阶段就失败。本地读取省去 runner 派发，但仍需访问 GitHub；下面说明祖先证明、完整树目录与确切正文的本地复用，以及 Catalogue 对现有单次读取作用域的复用。实际端到端耗时仍取决于宿主链路与镜像可用性。搬走的收益不是机器费（本仓 public，分钟数本就不计费），而是三样更贵的东西：
 
 1. **延迟**：等 37–100 秒读一份 catalogue。
 2. **噪音**：只读也会因为 runner/checkout 变红，红一次就要人解释一次。
@@ -59,11 +59,13 @@ binding 先通过共享结构与策略校验。`visibility=private` 且 `private
                "answered": 1, "declined": 0},
   "tree_inventory": {"schema": "local-git-tree-v1", "mirror": "local-git-graph",
                      "answered": 1, "declined": 0},
+  "blob_content": {"schema": "local-git-blob-v1", "mirror": "local-git-graph",
+                   "answered": 1, "declined": 0},
   "started_at": "…", "finished_at": "…", "duration_ms": 820, "exit_code": 0
 }
 ```
 
-`ancestry` 保留原有祖先证明计数；新增的 `tree_inventory` 单独记录完整树目录尝试。两者的 `answered` 是本地对象图答上的次数，`declined` 是本地尝试拒绝、交回原远端路径的次数；`mirror=absent` 表示未提供镜像，启用时为 `local-git-graph`。其中 `tree_inventory.answered` 只计本地完整输出，后续 Store 校验仍另行负责。计数不记录提交 id，也不证明整个读取成功。镜像落后或对象缺失可以导致回落；目录超限、不完整或不支持的仓库配置也会导致回落，不能把所有 `declined` 都诊断为需要 fetch。
+`ancestry` 保留原有祖先证明计数；`tree_inventory` 单独记录完整树目录尝试，`blob_content` 单独记录确切正文字节尝试。各项 `answered` 是本地对象图答上的次数，`declined` 是本地尝试拒绝、交回原远端路径的次数；`mirror=absent` 表示未提供镜像，启用时为 `local-git-graph`。本地完整输出仍须通过原 Store 与应用层校验，计数不证明整个读取成功，也不记录提交 id、路径、正文或凭据。镜像落后或对象缺失可以导致回落；目录超限、正文损坏或不支持的仓库配置也会导致回落，不能把所有 `declined` 都诊断为需要 fetch。
 
 回执说明的是**这次读所声明的身份与执行情况**，不是「已验证」。`identity.token=read-only-required` 表示凭据要求，不证明 token 的实际权限已被核验；只读权限资格须由宿主提供原生权限依据。回执不能替代 Ready/Gate 原件，也不能替任何研究提交或 Human Decision 签字。
 
@@ -72,7 +74,7 @@ binding 先通过共享结构与策略校验。`visibility=private` 且 `private
 ```bash
 export DECISION_OS_READ_TOKEN=<fine-grained PAT, Contents: Read-only>
 
-# Fetch explicitly before reading; tree inventory does not fetch missing objects.
+# Fetch explicitly before reading; local object reads never fetch missing data.
 git fetch origin records:refs/remotes/origin/records
 
 python -m decision_kernel.interfaces.local_read \
@@ -105,7 +107,7 @@ python -m decision_kernel.interfaces.local_read \
 
 计划文件与 HTML 路径须为新文件；重复读取时使用新的文件名，不覆盖已有原件。`as_of` 是此次阅读时钟，已存 Brief、研究和行情仍显示其原日期，缺失不会变成今天的新内容。Research 与 Odds 只取本次有界页；若返回 `partial` / `next_cursor`，按返回的确切后继请求接续，不能把尾部未读写成没有结果。AI Brief 与 Odds 页均绑定同一 Room 快照。
 
-`--git-mirror` 也可由 `DECISION_OS_GIT_MIRROR` 提供。同一镜像可回答祖先证明与已核确切树的完整目录；本地不能回答时，分别回落原有 `compare` 和树目录 GET。不给镜像就保留原有远端读取路径。树目录加速不会自动补镜像，需由用户在读取之外显式执行 `git fetch`。
+`--git-mirror` 也可由 `DECISION_OS_GIT_MIRROR` 提供。同一镜像可回答祖先证明、已核确切树的完整目录，以及其中已通过 Store 校验的普通文件正文；本地不能回答时，分别回落原有 `compare`、树目录或 blob GET。不给镜像就保留原有远端对象读取路径。本地读取不会自动补镜像，需由用户在读取之外显式执行 `git fetch`。
 
 令牌要求：**只读**。公开仓理论上可匿名读，但匿名会撞跑 API 限额且无法区分调用者，所以仍要求一个只读令牌，而不是复用运行时令牌。`DECISION_OS_STORE_TOKEN` 是运行时唯一 writer 用的名字，本地一律拒绝。入口核读令牌是否存在并禁止环境中的 writer 令牌，不查询或认证 token 的实际授权范围；把具写能力的 OAuth token 放进 `DECISION_OS_READ_TOKEN` 不会让它变成只读凭据。使用这种凭据的获准读路径验证仍须保留其权限偏离，不能签收只读凭据资格。
 
@@ -146,7 +148,7 @@ python -m decision_kernel.interfaces.local_read \
 
 ## 同一镜像回答确切树目录
 
-[#246](https://github.com/auguspp/Decision-OS-2/issues/246) 记录了另一处真实阻塞：2026-10-25 的 WorkBuddy 验证中，祖先证明已由本地回答，但 records 的递归树列表仍需下载约 2.36 MB JSON，在该宿主链路超时或断流。该现场使用经用户批准的宽权限 OAuth、Python 3.13.14 和 `PYTHONPATH=src`，凭据与加载方式的偏离按原回执保留，不作为只读凭据或标准安装的验收。树目录加速只处理这一类请求，不改变正文读取、权限或保存格式；实现与 CI 不能代替修复后的本机补验。
+[#246](https://github.com/auguspp/Decision-OS-2/issues/246) 记录了另一处真实阻塞：2026-10-25 的 WorkBuddy 验证中，祖先证明已由本地回答，但 records 的递归树列表仍需下载约 2.36 MB JSON，在该宿主链路超时或断流。该现场使用经用户批准的宽权限 OAuth、Python 3.13.14 和 `PYTHONPATH=src`，凭据与加载方式的偏离按原回执保留，不作为只读凭据或标准安装的验收。初次树目录修复只处理这一类请求，不改变正文读取、权限或保存格式。[原机补验](https://github.com/auguspp/Decision-OS-2/issues/246#issuecomment-6395373457)随后确认 main `41301272f4031a2ff296ba955900edb68a8288b6` 的原功能阻塞已解除；Catalogue 138.7 秒、Room 189.3 秒的成功读取仍有性能不足，由 [#249](https://github.com/auguspp/Decision-OS-2/issues/249) 继续处理。这些是各自确切版本的现场事实，不保证后续版本的耗时。
 
 本地入口的 `_PublicReadAPI` 继续包装原生 GET。只有它已从**本仓确切 commit 的原生响应**取得、且响应 `sha` 与请求 commit 匹配的 `tree.sha`，才允许用 `LocalGitTree.read` 回答该树的递归目录请求。本地结果仍交给原 `GitHubStore._tree` 执行相同的目录校验，不另设一份 Store 读取规则。
 
@@ -158,6 +160,20 @@ python -m decision_kernel.interfaces.local_read \
 - **执行机器与 Git 对象库仍须可信。** 使用本地 Git 对象不等于审计整个 object store，也不代替远端可见性及原有记录校验。
 
 是否实际命中看本次 `tree_inventory` 回执；是否读到所需资料看原 stdout 结果及其确切引用。该计数不能证明 HTML 已打开、附件已下载，或研究已完成采用。
+
+## 确切正文与一次 Catalogue 读取
+
+完整树目录通过 `GitHubStore._tree` 的原校验后，`GitHubStore._read` 才选取目标普通文件行。只有这个受信内部接点可以调用本地 API 的 `read_tree_blob(repository, row)`；普通 blob GET 不会因为镜像里恰有同一对象就取得本地读取资格。该接点不进入 binding、计划文件或来源 JSON，也不另建一份树路径准入表。
+
+同一镜像以 `git cat-file` 读取 exact blob OID 的原始字节，不读取工作区、分支同名文件或经过 filter/textconv 转换的内容。正文读取复用树目录的受限进程环境、partial/promisor 拒绝、禁协议/懒取/替换对象以及有限缓冲与时限；原单 blob 4 MiB 和响应 8 MiB 上限保留。类型、长度与 Git blob 摘要均相符才返回。原 Store 随后继续核 base64、长度和 OID，应用继续核 SHA-256、manifest、引用和内容资格。
+
+本地无答案只回到原 API 的一次确切 blob GET，不重试、不另建客户端、不重置512次累计请求预算。仓库不匹配不走本地；已观测权限拒绝或可见性变化形成的失败闩在本地读取前也生效。Book、Room 和独立子 reader 使用同一 API，保留同一失败与预算状态。
+
+本地 `research-catalogue` 另复用 Room 已有的短期 `reading_scope(fail_closed=True)`：入口取得实时远端 snapshot，范围内按同一 snapshot 核每个确切版本与 marker，出口再核实时仓库、分支和该 snapshot 的可达性，最终 JSON 导出前仍核原生可见性。这样避免同一页的每个正文字段反复做完整准入，没有跨命令缓存权限或分支头。cursor 仍指向原 snapshot；普通主线前进不替换当前页，改写导致原 snapshot 不再可达则拒绝导出。
+
+这项作用域复用只适用于本地 Catalogue。Room 保留自己在渲染前结束的原作用域与导出前复核，其他共享 CLI、写入与生产宿主的读取节奏不变。权限、传输或范围失败即使被某个组件转成局部缺口，也不能洗成最终可导出的成功页。
+
+`tests/test_git_blob.py`、`tests/test_local_blob_mirror.py` 与 `tests/test_local_read.py` 保护上述字节、回落、同快照消费者及撤权边界。合成测试可以证明请求减少与结果相同；Windows 上的实际耗时仍须按 #249 的原机回执验收。回退本组时同时回退接线、正文回执与 Catalogue 作用域；既有 records、历史 blob 与引用格式没有迁移，原远端 reader 保持可读。
 
 ## 稳定边界：为什么工作台可以直接调它
 

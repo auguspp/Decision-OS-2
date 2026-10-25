@@ -17,9 +17,38 @@ from decision_kernel.interfaces import auction_next_session_commands
 from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_source_use import audit_demonstrated
 from decision_kernel.application.versioned_store import VersionedStore
-from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef
+from decision_kernel.domain.records import BlobRef, MAX_BYTES, RecordError, RevisionInput, SourceInput, SourceRef, require
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.infrastructure.github_store import GitHubAPI, GitHubBinding, GitHubStore
+
+
+class _PublicReadAPI(GitHubAPI):
+    """One local read session, sharing the original transport and its budgets.
+
+    Nested readers reuse this same API, including readers that instantiate their
+    own GitHubStore. A caught native denial cannot turn into a publishable partial
+    result after the repository or permission later changes back.
+    """
+    def __init__(self, api, binding):
+        self._delegate, self._repository_path = api, "/repos/" + binding.repository
+        self._failure = None
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def request(self, method, path, payload=None):
+        if self._failure is not None:
+            raise self._failure
+        try:
+            require(method == "GET", "LOCAL_READ_REFUSES_WRITE_COMMAND")
+            value = self._delegate.request(method, path, payload)
+            if path == self._repository_path:
+                require(isinstance(value, dict) and value.get("private") is False,
+                        "LOCAL_READ_PUBLIC_STORE_ONLY")
+            return value
+        except RecordError as error:
+            self._failure = error
+            raise
 
 
 def configure(commands) -> None:
@@ -81,8 +110,19 @@ def _load(path: Path) -> dict:
     return value
 
 
-def execute(args: argparse.Namespace, *, ancestry=None) -> int:
+def execute(args: argparse.Namespace, *, ancestry=None, read_binding: GitHubBinding | None = None) -> int:
+    """Execute once; a local reader may supply its already checked public binding.
+
+    This internal argument is not a command-line authority flag. It preserves
+    the local console's exact preflight identity and restricts both native reads
+    and final exports; ordinary hosted/shared CLI binding semantics are unchanged.
+    """
     try:
+        if read_binding is not None:
+            require(args.binding is not None and isinstance(read_binding, GitHubBinding)
+                    and not read_binding.write_enabled and read_binding.visibility == "public"
+                    and not read_binding.private_upgrade_allowed, "LOCAL_READ_BINDING_INVALID")
+        before_export = None
         if args.store_command == "init-synthetic":
             if args.binding is not None:
                 raise RecordError("REMOTE_INITIALIZATION_NOT_SUPPORTED")
@@ -93,10 +133,19 @@ def execute(args: argparse.Namespace, *, ancestry=None) -> int:
             if args.binding is None:
                 backend = GitStore(args.path)
             else:
-                binding = GitHubBinding.from_dict(_load(args.binding))
+                binding = read_binding if read_binding is not None else GitHubBinding.from_dict(_load(args.binding))
                 if args.store_command in ("put-source", "submit-revision", "checkpoint-research", *delivery_commands.WRITE_COMMANDS, *odds_commands.WRITE_COMMANDS, *decision_preparation_commands.WRITES) and not binding.write_enabled:
                     raise RecordError("REMOTE_READ_ONLY")
-                backend = GitHubStore(binding, GitHubAPI.from_environment(), ancestry=ancestry)
+                api = GitHubAPI.from_environment()
+                if read_binding is not None:
+                    api = _PublicReadAPI(api, binding)
+                backend = GitHubStore(binding, api, ancestry=ancestry)
+                if read_binding is not None:
+                    def before_export():
+                        # Constructor admission already checked native metadata
+                        # before records. Recheck the same adapter after reading
+                        # and rendering, before each JSON/HTML export.
+                        require(backend.live_visibility() == "public", "LOCAL_READ_PUBLIC_STORE_ONLY")
             store = VersionedStore(backend)
             if args.store_command in delivery_commands.COMMANDS + odds_commands.COMMANDS + decision_preparation_commands.COMMANDS:
                 def fresh_reader():
@@ -112,7 +161,7 @@ def execute(args: argparse.Namespace, *, ancestry=None) -> int:
                 if handler is decision_preparation_commands and args.binding is not None:
                     checked_output_visibility(backend, "decision-preparation", "DECISION_PREPARATION_PRIVATE_CUSTODY_REQUIRED")
             elif args.store_command in research_commands.COMMANDS:
-                result = research_commands.execute(args, store, _load)
+                result = research_commands.execute(args, store, _load, before_export=before_export)
             elif args.store_command == outcome_review_commands.COMMAND:
                 result = outcome_review_commands.execute(args, store, _load)
             elif args.store_command == close_structure_commands.COMMAND:
@@ -139,7 +188,10 @@ def execute(args: argparse.Namespace, *, ancestry=None) -> int:
             else:
                 result = store.search(args.query, entity_id=args.entity_id, limit=args.limit,
                                       cursor=_load(args.cursor) if args.cursor else None)
-        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        output = json.dumps(result, ensure_ascii=False, sort_keys=True)
+        if before_export is not None:
+            before_export()
+        print(output)
         if args.store_command in odds_commands.WRITE_COMMANDS:
             return 0 if result["readback"]["status"] == "verified" else 2
         if args.store_command in decision_preparation_commands.WRITES:

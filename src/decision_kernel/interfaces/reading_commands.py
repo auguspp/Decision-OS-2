@@ -152,17 +152,20 @@ def configure(actions):
     room.add_argument("--market-registry", type=Path, help="trusted local Relay registry for market/global roots; never source-provided")
 
 
-def execute(args, store, load):
+def execute(args, store, load, *, before_export=None):
     registry = None
     if getattr(args, "market_registry", None) is not None:
         from decision_kernel.application.relay_registry import RelayRegistry
         registry = RelayRegistry(args.market_registry)
     result = perform(store, {"plan": load(args.input)}, public=False, market_registry=registry)
     from decision_kernel.application.reading_ai_brief import selected as ai_selected
-    if ai_selected(result["plan"]):
+    if ai_selected(result["plan"]) or before_export is not None:
         from decision_kernel.interfaces.reading_page import render_page
         html = render_page(result)
-        check_ai_brief_output(store, result)
+        if ai_selected(result["plan"]):
+            check_ai_brief_output(store, result)
+        if before_export is not None:
+            before_export()
         write_html(args.out, html)
     else:
         write_page(args.out, result)

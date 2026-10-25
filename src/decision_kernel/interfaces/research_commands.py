@@ -48,9 +48,9 @@ def configure(actions) -> None:
     fixing.add_argument("--ref", type=Path, required=True, help="exact saved research BlobRef JSON")
 
 
-def execute(args, store, load) -> dict:
+def execute(args, store, load, *, before_export=None) -> dict:
     if args.store_command == reading_commands.COMMAND:
-        return reading_commands.execute(args, store, load)
+        return reading_commands.execute(args, store, load, before_export=before_export)
     if args.store_command in agenda_commands.LOCAL_COMMANDS:
         return agenda_commands.execute(args, store, load)
     if args.store_command == "audit-source-use":

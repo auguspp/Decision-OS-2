@@ -1,6 +1,6 @@
 {
   "schema": "daily-runtime-policy-v1",
-  "enabled": true,
+  "enabled": false,
   "mode": "current-main",
   "pinned": null
 }

@@ -40,6 +40,11 @@ class _PublicReadAPI(GitHubAPI):
     def __getattr__(self, name):
         return getattr(self._delegate, name)
 
+    def check_read_session(self):
+        """Expose the existing refusal latch without a request or new admission."""
+        if self._failure is not None:
+            raise self._failure
+
     def read_tree_blob(self, repository, row):
         """Internal Store hook, only after its complete tree validation.
 

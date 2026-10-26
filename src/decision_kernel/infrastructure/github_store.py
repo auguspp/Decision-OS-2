@@ -359,6 +359,9 @@ class GitHubStore:
         self._blobs: dict[str, bytes] = {}
         self._blob_bytes = 0
         self._ancestor_proofs: set[tuple[str, str]] = set()
+        # Only an explicit _ReadingScope reuses these fully checked historical
+        # answers. Ordinary Store reads and new Store instances remain cold.
+        self._reading_history: dict[tuple[str, str], str] = {}
         self._ancestry = ancestry  # Off unless the caller supplies a local graph.
         self._ancestry_sources = {"remote_compare": 0, "local_graph": 0, "fallbacks": 0}
         self._branch_node: str | None = None
@@ -585,6 +588,10 @@ class GitHubStore:
     def last_change(self, head: str, path: str) -> str:
         self.check_commit(head)
         self._path(path)
+        return self._last_change(head, path)
+
+    def _last_change(self, head: str, path: str) -> str:
+        """Answer an admitted exact head/path; ordinary calls never memoize."""
         value = self._get("commits?" + urlencode(dict(sha=head, path=path, per_page=1)))
         require(isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict), "RECEIPT_COMMIT_MISSING")
         original = _sha(value[0].get("sha"))

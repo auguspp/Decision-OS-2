@@ -50,6 +50,9 @@ def test_wheel_installs_without_checkout_or_runtime_dependencies(tmp_path):
                     "from decision_kernel.application.rss_intake import read_capture"],
                    cwd=outside, env=env, check=True, capture_output=True, text=True)
 
+    from test_local_read import installed_local_read_stdio
+    installed_local_read_stdio(python, outside, env)
+
     # Extend this same real installation consumer; do not build a second wheel/pilot.
     store = outside / "synthetic.git"
     def command(*args):

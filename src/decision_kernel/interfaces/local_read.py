@@ -8,8 +8,10 @@ one implementation of every read; what it adds is a hard gate in front of it.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timezone
+import io
 import json
 import os
 from pathlib import Path
@@ -159,6 +161,18 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list | None = None) -> int:
+    # JSON and diagnostics have one wire encoding, including Windows pipes.
+    # Keep text-only embedding/capture streams and restore caller-owned codecs.
+    with ExitStack() as restore:
+        for stream, errors in ((sys.stdout, "strict"), (sys.stderr, "backslashreplace")):
+            if isinstance(stream, io.TextIOWrapper):
+                encoding, previous_errors = stream.encoding, stream.errors
+                stream.reconfigure(encoding="utf-8", errors=errors)
+                restore.callback(stream.reconfigure, encoding=encoding, errors=previous_errors)
+        return _run(argv)
+
+
+def _run(argv: list | None = None) -> int:
     parser = _parser()
     try:
         rest, flag = _split_mirror(list(sys.argv[1:] if argv is None else argv))

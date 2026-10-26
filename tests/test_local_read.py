@@ -3,9 +3,12 @@ import base64
 from collections import Counter
 from dataclasses import asdict, replace
 from http.client import IncompleteRead
+import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -189,6 +192,131 @@ def records(console, monkeypatch):
 
 def run_console(console, *args):
     return local_read.main(["--binding", str(console.binding), *args])
+
+
+def _encoded_console(monkeypatch, encoding, command):
+    """Observe bytes at the same TextIOWrapper boundary as redirected Windows IO."""
+    out_bytes, err_bytes = io.BytesIO(), io.BytesIO()
+    with io.TextIOWrapper(out_bytes, encoding=encoding, errors="strict", newline="\n") as out, \
+            io.TextIOWrapper(err_bytes, encoding=encoding, errors="backslashreplace", newline="\n") as err:
+        with monkeypatch.context() as patch:
+            patch.setattr(sys, "stdout", out)
+            patch.setattr(sys, "stderr", err)
+            status = command()
+            assert sys.stdout is out and sys.stderr is err
+            assert (out.encoding, out.errors) == (encoding, "strict")
+            assert (err.encoding, err.errors) == (encoding, "backslashreplace")
+            out.flush()
+            err.flush()
+            return status, out_bytes.getvalue(), err_bytes.getvalue()
+
+
+@pytest.mark.parametrize("text", ["中文", "中文🙂"], ids=["gbk-text", "outside-gbk"])
+def test_catalogue_emits_exact_utf8_bytes_independent_of_host_encoding(
+        console, records, monkeypatch, text):
+    store = VersionedStore(console.api.git)
+    reference = store.submit_revision("unicode-research", RevisionInput(
+        "unicode-case", "r1", "full", "Synthetic retained body " + text,
+        "Synthetic mandate " + text, "synthetic", (),
+        unresolved=("Synthetic encoding fixture; no business evidence.",)))
+    snapshot = console.api.git.head()
+    console.api.requests.clear()
+
+    baseline_code, baseline_out, baseline_err = _encoded_console(
+        monkeypatch, "utf-8", lambda: run_console(console, "research-catalogue", "--limit", "4"))
+    baseline_requests = list(console.api.requests)
+    console.api.requests.clear()
+    actual_code, actual_out, actual_err = _encoded_console(
+        monkeypatch, "gbk", lambda: run_console(console, "research-catalogue", "--limit", "4"))
+
+    assert actual_code == baseline_code == 0
+    assert actual_out == baseline_out
+    assert text.encode("utf-8") in actual_out and not actual_out.startswith(b"\xef\xbb\xbf")
+    page = json.loads(actual_out.decode("utf-8"))
+    assert page["snapshot"] == snapshot
+    item = next(item for item in page["items"] if item["case_id"] == "unicode-case")
+    assert item["mandate"] == "Synthetic mandate " + text
+    assert item["reference"] == asdict(reference)
+    baseline_receipt = json.loads(baseline_err.decode("utf-8"))["local_read_receipt"]
+    actual_receipt = json.loads(actual_err.decode("utf-8"))["local_read_receipt"]
+    for receipt in (baseline_receipt, actual_receipt):
+        for clock in ("started_at", "finished_at", "duration_ms"):
+            receipt.pop(clock)
+    assert actual_receipt == baseline_receipt
+    assert console.api.requests == baseline_requests
+    assert console.api.writes == 0 and console.api.git.head() == snapshot
+    assert local_read.STORE_TOKEN not in os.environ
+
+
+def test_argparse_nonascii_error_is_utf8_and_restores_stream_settings(console, monkeypatch):
+    def rejected():
+        with pytest.raises(SystemExit) as error:
+            run_console(console, "research-catalogue", "--未知🙂")
+        return error.value.code
+
+    status, out, err = _encoded_console(monkeypatch, "gbk", rejected)
+    assert status == 2 and out == b""
+    message = err.decode("utf-8")
+    assert "--未知🙂" in message and "local_read_receipt" not in message
+    assert console.api.requests == [] and console.api.writes == 0
+    assert local_read.STORE_TOKEN not in os.environ
+
+
+def test_plain_text_capture_remains_open_and_receives_the_same_json(console, records, monkeypatch):
+    out, err = io.StringIO(), io.StringIO()
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", out)
+        patch.setattr(sys, "stderr", err)
+        assert run_console(console, "research-catalogue") == 0
+        assert sys.stdout is out and sys.stderr is err
+    assert not out.closed and not err.closed
+    assert json.loads(out.getvalue())["snapshot"] == records.snapshot
+    assert json.loads(err.getvalue())["local_read_receipt"]["exit_code"] == 0
+    assert console.api.writes == 0 and local_read.STORE_TOKEN not in os.environ
+
+
+def installed_local_read_stdio(python, outside, env):
+    """Exercise the existing installed wheel's module without any real API call."""
+    path = outside / "installed-local-read-binding.json"
+    path.write_text(json.dumps(BINDING), encoding="utf-8")
+    program = """
+import json, os, runpy, sys
+from decision_kernel.interfaces import store_cli
+mode, binding = sys.argv[1:]
+# -I ignores PYTHONIOENCODING: select GBK at the actual stream boundary instead.
+sys.stdout.reconfigure(encoding='gbk', errors='strict')
+sys.stderr.reconfigure(encoding='gbk', errors='backslashreplace')
+os.environ['DECISION_OS_READ_TOKEN'] = 'synthetic-installed-read'
+for name in ('DECISION_OS_STORE_TOKEN', 'DECISION_OS_GIT_MIRROR', 'DECISION_OS_READ_RECEIPT'):
+    os.environ.pop(name, None)
+def execute(args, **kwargs):
+    assert mode == 'read' and args.store_command == 'research-catalogue'
+    print(json.dumps({'synthetic': '中文🙂'}, ensure_ascii=False))
+    return 0
+store_cli.execute = execute
+sys.argv = ['local_read', '--binding', binding, 'research-catalogue']
+if mode == 'bad-args':
+    sys.argv.append('--未知🙂')
+try:
+    runpy.run_module('decision_kernel.interfaces.local_read', run_name='__main__')
+finally:
+    assert (sys.stdout.encoding, sys.stdout.errors) == ('gbk', 'strict')
+    assert (sys.stderr.encoding, sys.stderr.errors) == ('gbk', 'backslashreplace')
+    assert 'DECISION_OS_STORE_TOKEN' not in os.environ
+"""
+    for mode in ("read", "bad-args"):
+        result = subprocess.run([str(python), "-I", "-c", program, mode, str(path)],
+                                cwd=outside, env=env, capture_output=True, timeout=30)
+        stdout, stderr = result.stdout.decode("utf-8"), result.stderr.decode("utf-8")
+        if mode == "read":
+            assert result.returncode == 0
+            assert result.stdout == '{"synthetic": "中文🙂"}\n'.encode("utf-8")
+            assert json.loads(stdout) == {"synthetic": "中文🙂"}
+            receipt = json.loads(stderr)["local_read_receipt"]
+            assert receipt["exit_code"] == 0 and receipt["identity"]["write"] == "not-requested"
+        else:
+            assert result.returncode == 2 and stdout == ""
+            assert "--未知🙂" in stderr and "local_read_receipt" not in stderr
 
 
 @pytest.fixture

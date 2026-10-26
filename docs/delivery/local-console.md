@@ -73,6 +73,16 @@ binding 先通过共享结构与策略校验。`visibility=private` 且 `private
 
 回执说明的是**这次读所声明的身份与执行情况**，不是「已验证」。`identity.token=read-only-required` 表示凭据要求，不证明 token 的实际权限已被核验；只读权限资格须由宿主提供原生权限依据。回执不能替代 Ready/Gate 原件，也不能替任何研究提交或 Human Decision 签字。
 
+## 输出编码
+
+本地入口生成的 stdout JSON、stderr 错误 JSON、receipt 和参数诊断使用 **UTF-8**，包括 Windows 的管道和文件重定向；消费端应显式按 UTF-8 解码，不根据本机 locale 猜测。JSON 对象、中文及其他 Unicode 字符保持原值，receipt schema 不变；`DECISION_OS_READ_RECEIPT` 文件和 HTML 原本也使用 UTF-8。
+
+入口在参数解析前配置 Python 的标准文本流，因此含中文的参数错误也使用同一编码。标准 stdout 严格编码，stderr 对无法编码的代理字符保留反斜杠表示；不改变 stdin、系统 locale、换行或缓冲策略。直接调用 `main()` 时，正常返回或抛出异常后恢复调用者的原编码和错误策略，不关闭其流。解释器随后打印的未捕获异常 traceback 使用恢复后的宿主设置。`StringIO` 等纯文本捕获仍接收 `str`；其后续字节编码及自定义合并流由宿主负责。配置或输出失败不会被吞掉后当作正常读取成功。
+
+[#221 的原机回执](https://github.com/auguspp/Decision-OS-2/issues/221#issuecomment-6410105462)在旧版 `3d4879d` 观察到 GBK stdout：命令退出 0，但 UTF-8 消费端无法读取 JSON。旧版本可显式使用 `python -I -X utf8 -m decision_kernel.interfaces.local_read ...`；仅设置 `PYTHONIOENCODING=utf-8` 对 `-I` 无效，因为隔离模式忽略所有 `PYTHON*` 环境变量。当前入口不要求额外 UTF-8 启动开关。
+
+实现复用 Python 标准库的 [TextIOWrapper.reconfigure](https://docs.python.org/3.13/library/io.html#io.TextIOWrapper.reconfigure)；隔离模式与显式 UTF-8 选项见 [Python 命令行文档](https://docs.python.org/3.13/using/cmdline.html)。专属字节回归和原单次 cold-wheel 消费者保护该入口，入口退役时同步退出，未扩成其他 CLI 的全局编码政策。工程测试不代替新版本的 Windows 现场回执。
+
 ## 用法
 
 ```bash

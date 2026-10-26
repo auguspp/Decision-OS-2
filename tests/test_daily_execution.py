@@ -127,7 +127,6 @@ def test_current_main_has_no_self_referential_future_commit():
     assert bound["runtime_version"]["mode"] == "current-main"
     assert bound["runtime_version"]["workflow_ci_run"] == bound["runtime_version"]["execution_ci_run"] == 101
     assert bound["runtime_version"]["approval_ref"] is None
-    assert json.loads(Path("config/daily-runtime-version.json").read_bytes()) == native.policies[WORKFLOW_SHA]
 
 
 def test_pinned_runtime_and_native_workflow_have_distinct_proofs():
@@ -381,3 +380,46 @@ def test_actual_checkout_and_tracked_bytes_must_match_frozen_tree(tmp_path):
     path.write_text("{}\n")
     with pytest.raises(RecordError, match="^DAILY_EXECUTION_CHECKOUT$"):
         execution.verify_checkout(identity, root=tmp_path)
+
+
+@pytest.mark.parametrize("invocation", ["status", "update", "recover-late", "repair-calendar",
+    "reconcile-write", "release-master", "external-clock"])
+def test_suspended_deployment_refuses_business_preflight_without_records_or_sources(invocation):
+    from decision_kernel.application.daily_clock import run_title
+    from decision_kernel.interfaces.daily_visibility_cli import preflight
+
+    deployed = execution.policy(json.loads(Path(execution.POLICY_PATH).read_bytes()))
+    assert deployed == {"schema": execution.POLICY_SCHEMA, "enabled": False,
+        "mode": "current-main", "pinned": None}
+    native = Native()
+    native.policies[WORKFLOW_SHA] = deployed
+    native.run.update(name=run_title(invocation), display_title=run_title(invocation))
+    event = {"inputs": {"operation": invocation,
+        "code_sha": "current-main" if invocation == "external-clock" else WORKFLOW_SHA}}
+    clock = {"schema": "daily-market-clock-v1", "primary": "external-cron"}
+    with pytest.raises(RecordError, match="^DAILY_EXECUTION_DISABLED$"):
+        preflight(event, native.env, native, use_authorization=True, clock=clock)
+    # This is the existing metadata-only gate, before any business job can run.
+    assert native.calls == [("GET", path) for path in (
+        execution.PREFIX, execution.PREFIX + "/actions/runs/8001", execution.PREFIX,
+        execution.PREFIX + "/git/ref/heads/main",
+        execution.PREFIX + "/contents/" + execution.POLICY_PATH + "?ref=" + WORKFLOW_SHA,
+        execution.PREFIX + "/contents/" + execution.PUBLIC_PATH + "?ref=" + WORKFLOW_SHA)]
+
+
+def test_suspension_does_not_turn_clock_probe_into_business_admission():
+    from decision_kernel.application.daily_clock import run_title
+    from decision_kernel.interfaces.daily_visibility_cli import preflight
+
+    native = Native()
+    native.policies[WORKFLOW_SHA] = json.loads(Path(execution.POLICY_PATH).read_bytes())
+    native.run.update(name=run_title("clock-probe"), display_title=run_title("clock-probe"))
+    report, code = preflight({"inputs": {"operation": "clock-probe", "code_sha": "current-main"}},
+        native.env, native, use_authorization=True,
+        clock={"schema": "daily-market-clock-v1", "primary": "external-cron"})
+    assert code == 0 and report["status"] == "clock-probe-metadata-only"
+    assert report["admitted"] is False and report["runtime_authorized"] is False
+    assert report["records_read"] is False and report["records_written"] is False
+    assert report["source_requests"] == 0
+    assert native.calls == [("GET", path) for path in (
+        execution.PREFIX, execution.PREFIX + "/actions/runs/8001", execution.PREFIX)]

@@ -42,7 +42,11 @@ CI 沿 Python/pytest 默认行为，在每个新 runner 内生成临时字节码
 
 时长仅为分配提示：优先读取精确 base 的最新一次 main 合格最终产物。未取得合格 base 摘要时，保持其失败原因和 `baseline=None`，只额外解析一次 `base^1`，按相同原生运行、摘要、原件哈希与时长格式规则核第一父提交的最新一次 main 产物；仅采用其中时长，以独立 `timing_fallback` 保留 head/run/attempt/artifact/digest 和仅供分配的标记。父也不合格、无有效时长或读取失败就保持无提示，不继续查祖先，也不跳过同一 head 的最新失败。base 摘要已有效而仅时长文件有误时，保留原 baseline 赋值。此提示不授予 content 或 merge_reuse 资格；独立 merge_reuse 证据覆盖时长时清除该标记。
 
-现役保留八个 runner，使用锁定 pytest-split 的 `least_duration`；分片数跟随证据组，片内使用 pytest-xdist 的 `loadfile` 与 `--no-loadscope-reorder`，保留原文件顺序，避免按测试数量把耗时较长的单测试文件排到末尾。使用 xdist 现成的 `-n auto --maxprocesses=4`，按实际可用 CPU 启用最多四个 worker；同一片中的同文件测试仍在同一 worker，共用原模块夹具。[GitHub 官方规格](https://docs.github.com/actions/using-jobs/choosing-the-runner-for-a-job)中公开仓库的标准 `ubuntu-latest` 为四 CPU，私有仓库为两 CPU；当前锁无 psutil，xdist 沿系统 CPU affinity 检测，实际 worker 数可从每片 `junit.log` 读回。[xdist 文档](https://pytest-xdist.readthedocs.io/en/stable/distribution.html)说明自动检测、上限与文件分组；没有增加 runner、依赖或另建调度器。两 CPU 环境仍使用两个 worker，合同组和实际空片不启用 xdist。后续可按完整 CI 合同继续校准参数；未知新测试照常执行，原 300 秒测试进程时限、完整集合和实际运行门禁不变。需要回退时恢复固定 `-n 2` 并同步步名与本说明，不改变原件或共享保护。
+现役保留八个 runner，使用锁定 pytest-split 的 `least_duration`；分片数跟随证据组，片内复用 pytest-xdist 3.8.0 原生 `worksteal`。worker 队列不足时，可重新分配其他 worker 尚未开始的测试，避免节点分片后又把同文件的多个慢测试锁在一个 worker 的末尾；已经开始的测试不会被抢占。[xdist 文档](https://pytest-xdist.readthedocs.io/en/stable/distribution.html)说明该动态分配及其与 `load`、`loadfile` 的区别。没有另建调度器、增加 runner 或依赖。
+
+同文件不再保证同 worker，模块夹具可能在多个 worker 各构造一次。现役共享夹具使用各 worker 的独立临时目录或内存对象，实际测试须继续满足隔离与可重复执行；重复构造的成本和整体收益由完整运行验收，不承诺每个分片都变快。原 `loadfile --no-loadscope-reorder` 的文件串行和原文件顺序保证随本次参数调整退出。
+
+继续使用 `-n auto --maxprocesses=4`，按实际可用 CPU 启用最多四个 worker；实际 worker 数从每片 `junit.log` 读回。合同组和实际空片不启用 xdist。未知新测试照常执行，原 300 秒测试进程时限、0 worker restart、完整 collection/JUnit/并集和原生 Gate 保持。该参数属于 CI policy，变更后的 Ready 和 main 均须实际 full；不能借旧成功或修改分片时限取得资格。回退按普通反向 PR 恢复原调度参数并同步本说明，仍须完整验证，已产生的失败和原件继续保留。
 
 pytest 保留致命信号的 faulthandler，显式 `faulthandler_timeout=0` 停用异步定时线程栈输出；外层测试进程仍有 300 秒硬限，worker 异常退出不重启、不计通过。此前实际 main 的 worker 在 60 秒诊断输出中途失联，原件没有退出码或信号，根因尚未确认（[#10 原始检查点](https://github.com/auguspp/Decision-OS-2/issues/10#issuecomment-6265853675)）。[CPython 的并发 faulthandler 报告](https://github.com/python/cpython/issues/116008)支持停用可选异步诊断的风险缓解；不能据此确认本次解释器根因。代价是较长测试不再自动输出第 60 秒线程栈，原超时、失败和完整证据门禁保持。
 

@@ -4,16 +4,30 @@
 
 本页区分业务责任与当前工作流入口。机器可读的工作流结构清单为 `docs/architecture/workflow-estate.json`，文件、触发和入口一致性由 `tests/test_workflow_estate.py` 守着；其处置说明描述当前部署，不把 GitHub、runner 或供应商名固定成 Kernel 规则。运行次数与最后运行时间只作为某一时刻的观测，不写进契约，也不作为退役依据。进度、认领和验收回原 Issue，本页不另建状态库。
 
+<a id="daily-suspension"></a>
+
+## 日更部署暂停与用途收窄
+
+沿用户“非必要可以取消或者简化”的[本次裁决](https://github.com/auguspp/Decision-OS-2/issues/221#issuecomment-6420206840)，旧的完整主表刷新→固定六股行情→Discovery→自动阅读页组合不再作为架构推进的必经任务。`config/daily-runtime-version.json` 使用已有 `enabled=false` 撤销此 daily 宿主的执行资格，保留 `mode=current-main / pinned=null`；不新增暂停框架，也不继续为了旧链提速而默认补跑。
+
+暂停在原 `daily_visibility_cli` 元数据预检处生效：`external-clock`、`update`、`recover-late`、`status` 及该宿主的三个恢复操作均以 `DAILY_EXECUTION_DISABLED` 拒绝，尚未进入来源密钥作业或 records 消费。已冻结运行仍受原在线边界检查；已发出的请求和未知写不能被这个开关撤销。`clock-probe` 是独立的零业务元数据检查，继续保留，不能借它取得业务准入。
+
+这不关闭独立 `research-runtime`、本地 Catalogue/Room、已保存 Brief、Odds 历史、资料保管/恢复或完整 CI，也不停止公告/新闻等其他已授权任务。它确实停止该 daily 宿主生成新的周期行情、Discovery 和配套阅读页；缺少新行情的消费者继续显示原日期、unknown/partial，不承诺暂停期间的新鲜度或连续覆盖。`ashare-data` 的原按需接口仍受原权限、前驱和用途限制，不能用来绕过这个未确认周期，也不是任意证券最新价格服务的已验替代。
+
+`daily-market.json` 中的原六股、日期、预算与主表策略不改，保留恢复历史所需的原意图；当前阻断由部署开关负责。恢复须重新明确实际消费者及有界范围、对账未知效果，并经受审配置 PR 和适用 CI；不能因下一次 tick、换日期或改 generation 自动启用。全域 Radar 的覆盖责任独立保留，不以暂停或六股样本宣称已完成，也不把它作为接收一份研究的前置。
+
+外部 cron-job.org 的 `Decision OS2 Daily Market` 任务须单独停用并读回；配置合入不等于服务商已经停钟。在服务商停用前，旧 tick 最多进入被拒的元数据预检，不能称完全没有 runner 开销。GitHub workflow 原生注册状态、外部 job 状态及代码部署开关分别留证，不用删除运行历史清理界面。当前暂停先保留专属与共享代码，真正退出实现时再按下方退役步骤清理；暂停不冒称外部替代已经完成。
+
 <a id="business-responsibilities"></a>
 
 ## 业务责任、可复用能力与退出条件
 
-优先复用 WorkBuddy 等外部工作台、已有模型和数据能力；仍由当前 owner 维护确切研究、来源资格、保管和历史合同。候选替代必须先有真实输入、真实消费者与可重开的证据，再裁定停采或退役。本表不启动替代服务，不迁移真源，不恢复 Watch 或扩大来源预算。
+优先复用 WorkBuddy 等外部工作台、已有模型和数据能力；仍由当前 owner 维护确切研究、来源资格、保管和历史合同。候选替代必须先有真实输入、真实消费者与可重开的证据，再裁定退役；用户明确暂停的旧 daily 部署按上节处理，不伪造已存在替代者。本表不启动替代服务，不迁移真源，不恢复 Watch 或扩大来源预算。
 
 | 业务责任 | 当前输入 | 实际调用者 | owner / 可复用外部能力 | 处置 | 历史责任与退出条件 |
 |---|---|---|---|---|---|
 | 研究接收与版本连续性 | 获准委托、来源、部分进展/普通修订、确切前驱 | 获准研究宿主经 `research-runtime`；受信 store CLI；Catalogue / Room 后继读取 | #7 研究用例、#6 保管；WorkBuddy 优先且可替换，外部模型承担研究 | **保留 Kernel、收窄宿主适配**；当前内置方法仍由自己的版本合同维护 | 新宿主须实际读、写、独立读回及未知写对账；同一 case / 前驱 / 未决项不得丢失；历史方法字节和旧意图继续可恢复 |
-| #10 市场日周期与机械发现 | 当前 FTShare A 股日线及用途合格的其他市场来源；规则、日期与覆盖范围 | 外部单主时钟 → `daily-market`；MarketDiscovery、Odds、日常阅读 | #10；#12 来源适配；合格行情服务可按用途替换供应方 | **保留当前生产，按用途窄适配**；不由本表改为按需或切源 | 替代须覆盖真实目标范围、时钟、分母、缺失和资格，消费者及回退通过后才停止旧入口的新采集；原市场 SourceRef / 发现事件仍可读 |
+| #10 市场日周期与机械发现 | 当前 FTShare A 股日线及用途合格的其他市场来源；规则、日期与覆盖范围 | 原 `daily-market` 部署暂停；MarketDiscovery、Odds、日常阅读保留历史消费 | #10；#12 来源适配；合格行情服务可按用途替换供应方 | **暂停旧组合生产，按实际消费者收窄**；保留历史及独立读数 | 暂停不签新覆盖或外部替代；恢复/替代须明确真实范围、时钟、分母、缺失和资格，未知效果先对账；原市场 SourceRef / 发现事件仍可读 |
 | 公告目录与发现 | 有界公告目录元数据、取得时间与原定位 | `announcement-discovery` 定时/显式运行；发现与 hosted handoff 采用 | #12；可复用获准公告检索/连接器 | **保留现役采集、候选窄适配** | 替代须证明同一范围、时间、分页完整性及正文权利边界；目录元数据不冒充公告全文，原目录/来源回执保留 |
 | 新闻 intake、滚动与交接 | 已获准 NewsNow/Relay 切片、原引用、失败/恢复回执 | `news-intake` / `news-rolling` / `news-custody` / `news-handoff`；Brief、Quick 与 Room | #12 新闻来源、#13 交付；成熟新闻服务与工作台读取可复用 | **保留当前消费者，优先复用，必要时窄适配** | 真正替换需保留 24h 窗口、可用时间、缺项、去重和实际采用关系；新生产依赖切断后专属退出，旧切片/Brief 精确重开 |
 | RSS 固定源接入 | 固定 feed 范围、获准元数据与失败表示；原件另核权利 | `rss-intake`；联合新闻视图、恢复与阅读消费者 | #48 / #12；成熟 feed 服务或工作台连接器可替代 | **候选退役，当前保留** | 先证明替代覆盖同一源范围、时效、权利和失败语义并被消费者采用；零近期运行/零直接引用不足以停采；旧 SourceRef 与失败回执保留 |
@@ -28,8 +42,8 @@
 
 | 证据 | 怎么取 | 它证明什么 | 它**不**证明什么 |
 |---|---|---|---|
-| 文件在 main | `.github/workflows/*.yml` | 这个入口现在可以被触发 | 有人在用 |
-| 注册项在 GitHub | `actions/workflows` 列表的 `state` | GitHub 记得这个工作流曾经存在 | 文件还在 |
+| 文件在 main | `.github/workflows/*.yml` | 这个入口文件存在 | 当前部署获准执行或有人在用 |
+| 注册项在 GitHub | `actions/workflows` 列表的 `state` | GitHub 记得这个工作流曾经存在 | 文件还在或业务准入已启用 |
 | 真实运行 | `actions/workflows/<id>/runs` 的计数与最后时间 | 它被执行过 | 有人还需要它 |
 | 有消费者 | 代码、测试、文档里的引用 | 删掉会打断谁 | 它还在正常运行 |
 
@@ -44,8 +58,8 @@
 | `ci.yml` | `pull_request` + `push` | — | **保留（当前工程通路）**：现役 Ready/Gate 核 GitHub 原生事件与回执，full CI 保持 |
 | `research-runtime.yml` | 仅 dispatch | `research_runtime` | **保留（当前研究接收）**：经原保管层与单主写入/CAS；获准只读操作另属本地优先 |
 | `store-runtime.yml` | 仅 dispatch | `store_runtime` | **保留（当前保管部署）**：备份/健康与独立恢复责任保留，执行位置不是永久核心约束 |
-| `daily-market.yml` | 仅 dispatch（外部单主时钟 18:35 打 `external-clock`） | `daily_market_cli` 等 4 个 | **保留（生产）**：#10 自然日周期唯一目标 |
-| `announcement-discovery.yml` | `schedule 20 10 * * *` + dispatch | `announcement_discovery_cli` | **保留（生产）**：当前唯一带原生 `schedule` 的文件；`daily-market` 另由外部时钟 dispatch |
+| `daily-market.yml` | 仅 dispatch；外部旧任务另行停用 | `daily_market_cli` 等 4 个 | **部署暂停，代码保留**：由 daily-runtime-version 的 enabled=false 阻断业务；保留零业务 clock-probe，不代签服务商已停钟 |
+| `announcement-discovery.yml` | `schedule 20 10 * * *` + dispatch | `announcement_discovery_cli` | **保留（生产）**：当前唯一带原生 `schedule` 的文件；不因 daily 部署暂停而停用 |
 | `market-custody.yml` | 仅 dispatch | `market_custody_cli` | **保留（生产）**：与 store 同权限边界 |
 | `relay-source-runtime.yml` | 仅 dispatch | `relay_source_runtime`、`relay_bulk_check_cli` | **保留（生产）**：采集写 records 并持供应商密钥 |
 | `news-intake.yml` | 仅 dispatch | `news_cli` | **保留（生产）**：新闻台唯一可执行入口 |
@@ -82,16 +96,16 @@
 
 上述一次性菜单退出是既有工程清理，不证明任何现役业务已由外部能力替代，也不抵扣 #221 后续“真实消费者迁移后退役”的验收。Actions artifact 仍受保留期约束，历史可恢复责任不能仅凭运行列表长期存在来证明。
 
-`rss-intake` 仍停在裁定阶段（需先证明替代 intake 的范围、时效、权利、失败语义与真实采用）。其余现役条目保留；本次合同对齐不执行生产停采或退役。
+`rss-intake` 仍停在裁定阶段（需先证明替代 intake 的范围、时效、权利、失败语义与真实采用）。除本页明确暂停的 daily 部署外，其余现役条目保留，不由这项暂停扩大停采或退役范围。
 
 ## 与只读工作台的分界
 
-本地只读已经有现役入口；生产写入与时钟继续沿当前部署。永久约束是授权、同一真源、单主 writer/CAS、唯一调度责任和可恢复证据；“所有写入/备份必须永远由 GitHub 执行”不属于该约束。等价替换未验收前，以下边界继续有效：
+本地只读已经有现役入口；除暂停的 daily 宿主外，其他生产写入与时钟继续沿当前部署。永久约束是授权、同一真源、单主 writer/CAS、唯一调度责任和可恢复证据；“所有写入/备份必须永远由 GitHub 执行”不属于该约束。等价替换未验收前，以下边界继续有效：
 
 | 已可按现役权限本地执行 | 当前仍留在原部署，不能从本表推定迁移 |
 |---|---|
 | `local_read.READ_ONLY` 中的既有 CLI（目录、阅读室、议程、odds/valuation 读数、交付校验/打开等） | `research-runtime` 全部写 operation 和原只读未知写对账；原单主 writer/CAS |
-| `market-source-check` 全部分支 | `daily-market` 的周期写入；外部单主时钟仍只 dispatch 原目标 |
+| `market-source-check` 全部分支 | `daily-market` 周期写入目前暂停，不因此授权本地接管；外部原任务独立停用 |
 | `relay-capabilities`（密钥可得时） | `announcement-discovery` 的 `schedule` |
 | `ashare-data` 的 `status` | `sync`/`repair`、`relay-source-runtime` 采集、news 链写入 |
 

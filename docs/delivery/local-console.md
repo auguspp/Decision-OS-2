@@ -179,6 +179,14 @@ python -m decision_kernel.interfaces.local_read \
 
 `tests/test_git_blob.py`、`tests/test_local_blob_mirror.py` 与 `tests/test_local_read.py` 保护上述字节、回落、同快照消费者及撤权边界。合成测试可以证明请求减少与结果相同；Windows 上的实际耗时仍须按 #249 的原机回执验收。回退本组时同时回退接线、正文回执与 Catalogue 作用域；既有 records、历史 blob 与引用格式没有迁移，原远端 reader 保持可读。
 
+## 复用已核的确切路径历史
+
+Catalogue、Room 与其 Book 消费者可能重复恢复同一研究文件的原始提交。现有读取作用域按本次查询的完整提交 SHA 与精确路径复用已经通过原校验的历史答案，同一个 Store owner 最多保留128条；普通 Store 直接调用和新建独立 reader 仍走原查询。首次答案须完成原提交、祖先关系及路径字节一致性校验，失败不保存，容量满后继续原路。
+
+这只减少重复的 `commits?sha=<exact SHA>&path=<exact path>&per_page=1` 请求。仓库元数据和 `records` ref 是当前可见性、权限与可达性事实，不能因页面读取同一个 snapshot 而缓存。原 Room/Book 入场和退出、发布资格、渲染后与最终 JSON 导出检查完整保留；本地 API 已锁存的拒绝在历史答案命中前也必须继续抛出。
+
+作用域关闭后不能再使用；新命令、新 Store 与保存后的独立 fresh-reader 不继承答案。合成请求差异与真实宿主耗时分别举证，不把唯一 URL 数量或平均请求耗时换算成保证收益。该复用由现役 Store/读取作用域维护，退出时同步退出答案容器、接线及专属测试，保留原始引用恢复与所有实时门禁。
+
 ## 一次命令内复用 Git 对象进程
 
 启用镜像后，一次本地命令只构造一个共享对象 reader，供祖先、目录与正文读取使用。首个对象问题先核镜像配置，再实际探测 Git 是否支持 `--no-lazy-fetch`。支持时，一次命令内复用 `git cat-file --batch-command` 的对象类型与原始正文通道，并在所有后续 Git 进程上显式禁止懒取；目录仍用有界 `ls-tree`，祖先关系仍执行真实 `merge-base --is-ancestor`。这不建立提交、祖先关系或正文缓存，也不缓存实时权限。
@@ -206,6 +214,7 @@ GitHub 上的对应 workflow **全部保留**：本地优先不等于停用入�
 ```bash
 python -m pytest tests/test_local_read.py -q      # 白名单、预检与实际可见性、正常读取和导出、回执
 python -m pytest tests/test_local_read_batch.py -q # 共享图与对象读取、命令结束收尾、下一次配置预检
+python -m pytest tests/test_reading_history.py -q # 确切路径历史复用、拒绝锁存、独立reader
 python -m pytest tests/test_workflow_estate.py -q # 入口清单与仓库一致
 ```
 

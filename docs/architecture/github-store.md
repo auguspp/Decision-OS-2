@@ -53,7 +53,11 @@ HTTP固定HTTPS host api.github.com、正常TLS校验，不跟重定向、不用
 
 一次有界 Room 或本地 Catalogue 可使用现有 `reading_scope(fail_closed=True)`，在入口固定实际远端 snapshot，范围内复用其已核确切版本关系，出口再次检查实时仓库/ref及 snapshot 可达性。作用域随调用结束失效；它不跨命令保存权限，最终 JSON/HTML 导出仍执行各入口的原生可见性复核。普通适配器每次读取的检查和其他消费者行为保持原状。
 
-该有限复用服务于研究交付保存后新reader核验同一清单时的重复compare开销，不增加读取范围或第二存储入口。fresh-reader仍新建独立GitHubStore及全部缓存，复用同一API的累计512次预算；不能为绕过限额重建API。CLI每个显式操作新建API实例，保存后的delivery、artifact及共用入口的Odds/Watch读回复用该实例，fresh绑定仍只读；下一次独立CLI调用才建立新的预算。长期宿主在明确操作边界管理预算。Git对象/祖先关系缓存随实例退出，不跨操作持久化。
+既有读取作用域还可复用同一 Store owner 内最多128条已完整核验的路径历史答案，键为完整提交 SHA 与精确路径，值为原始版本所在提交。每次调用仍先按原作用域检查提交和路径；首次查询继续使用固定 `sha`、`path`、`per_page=1` 的原生提交历史接口，完成返回形状、原 SHA、anchor→original→本次查询提交及两版本路径字节一致性核验后才保存答案。不同提交或路径不共用，错误和未验证响应不入缓存；容量满后继续原查询。普通 `GitHubStore.last_change` 不启用此复用，独立 fresh-reader 的答案集合仍为空。
+
+路径历史命中也须服从原作用域的有效期和终态；本地 API 已观测的拒绝通过无网络的会话检查继续传播，不能因命中跳过、清除或恢复该拒绝。此复用不保存仓库元数据、当前 ref、权限或发布资格，不移除 Room、Book、HTML/JSON 出口的任何实时检查，也不改变同 API 的累计请求预算。
+
+既有祖先关系复用服务于研究交付保存后新reader核验同一清单时的重复compare开销，不增加读取范围或第二存储入口。fresh-reader仍新建独立GitHubStore及全部缓存，复用同一API的累计512次预算；不能为绕过限额重建API。CLI每个显式操作新建API实例，保存后的delivery、artifact及共用入口的Odds/Watch读回复用该实例，fresh绑定仍只读；下一次独立CLI调用才建立新的预算。长期宿主在明确操作边界管理预算。Git对象/祖先关系缓存随实例退出，不跨操作持久化。
 
 ## 安装后调用与GPT读取
 
@@ -75,5 +79,7 @@ decision-os store --binding config/store-binding.json read-source --ref /runtime
 沿PR #19核读的官方原语：[createCommitOnBranch](https://docs.github.com/en/graphql/reference/commits)、[Git树及truncated](https://docs.github.com/en/rest/git/trees)、[blob](https://docs.github.com/en/rest/git/blobs)、[提交历史/比较](https://docs.github.com/en/rest/commits/commits)。祖先证明复用依据[Git提交对象和提交图](https://git-scm.com/docs/gitglossary)的确切对象关系，仍使用现役compare验证，不替换版本、传输或事务机制。
 
 test_github_store.py的真实Git/模拟GitHub与test_github_transport.py继续保护原合同，包括暖祖先缓存后的live权限/分支变化、错误不缓存、容量满回退及同API硬预算；test_github_visibility.py复用相同模型，保护private默认、public显式选择、marker不匹配、元数据漂移、只读默认、发送前复核、公开模式幂等和并发CAS。test_research_delivery_integration.py以真实512限制的传输和原生Git保护多commit原件交付后的独立读回；test_store_cli_budget.py在真实CLI入口验证保存与fresh读回累计上限、共用消费者和已知回执保留，再以独立只读调用完成核验。模拟响应不证明真实token或托管写入成功；远端完整CI与真实数据验收分别记录。
+
+`tests/test_reading_history.py` 保护读取作用域的确切历史答案复用、失败/容量/新 reader 边界及暖答案后的原生拒绝。该复用退出时同步移除其 owner 容器、scope 接线及专属反例；原提交历史校验、live 检查、独立读回与累计预算仍由原 Store 维护。
 
 退役时同步处理适配器/绑定/CLI/HTTP的专属配置与测试，保留共享精确引用、前驱、意图和保留语义。生产备份/恢复/健康、第一份正常成果保存和真实消费者采用由#6/#13按启用范围验收；代码回退不自动删除数据，不把备份job成功当恢复成功。

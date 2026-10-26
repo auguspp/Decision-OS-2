@@ -12,6 +12,8 @@ from decision_kernel.infrastructure.github_store import (
     GitHubStore, MAX_ANCESTOR_PROOFS, _sha,
 )
 
+MAX_READING_HISTORY = 128
+
 
 @contextmanager
 def reading_scope(backend, *, fail_closed=False):
@@ -55,6 +57,7 @@ class _ReadingScope(GitHubStore):
         self.owner, self.snapshot, self.repository = owner, snapshot, owner.repository
         self.binding = replace(owner.binding, write_enabled=False)
         self.api = owner.api
+        self._reading_history = owner._reading_history
         self.active, self._checked = True, set()
         self.fail_closed, self.terminal_failure = fail_closed, None
 
@@ -165,7 +168,30 @@ class _ReadingScope(GitHubStore):
 
     @_terminal_read
     def last_change(self, head, path):
+        # A warm child must not bypass the parent scopes that its former GET
+        # traversed, including a local refusal that never reached the API.
+        owner = self.owner
+        while isinstance(owner, _ReadingScope):
+            owner._active()
+            owner = owner.owner
+        # A nested consumer may have caught a denial from this same API. Check
+        # its existing latch even when this exact history answer needs no GET.
+        check = getattr(self.api, "check_read_session", None)
+        if callable(check):
+            check()
         return super().last_change(head, path)
+
+    def _last_change(self, head, path):
+        # The parent last_change already checked scope, exact head and path.
+        # Cache only the original routine's fully verified success, never its
+        # wire response, mutable authority or a failed/missing answer.
+        key = (head, path)
+        if key in self._reading_history:
+            return self._reading_history[key]
+        original = super()._last_change(head, path)
+        if len(self._reading_history) < MAX_READING_HISTORY:
+            self._reading_history[key] = original
+        return original
 
     def commit(self, files, *, expected):
         raise RecordError("READING_SCOPE_READ_ONLY")

@@ -128,7 +128,6 @@ def test_run_uses_creation_slot_even_if_queue_wait_crosses_next_slot():
     daily, _, _ = inspect(values)
     assert daily['schedule']['latest']['admission_slot']['business_date'] == '20261020'
     assert daily['schedule']['expected_slot']['business_date'] == '20261021'
-    assert daily['schedule']['expected_slot']['business_date'] == '20261021'
     assert daily['schedule']['status'] == 'not-observed'
 
 

@@ -128,6 +128,7 @@ def test_run_uses_creation_slot_even_if_queue_wait_crosses_next_slot():
     daily, _, _ = inspect(values)
     assert daily['schedule']['latest']['admission_slot']['business_date'] == '20261020'
     assert daily['schedule']['expected_slot']['business_date'] == '20261021'
+    assert daily['schedule']['expected_slot']['business_date'] == '20261021'
     assert daily['schedule']['status'] == 'not-observed'
 
 
@@ -245,12 +246,12 @@ def test_policy_or_schedule_transport_denial_stops_all_later_reads(tmp_path, tar
     assert not (tmp_path / 'out/health.md').exists()
 
 
-def test_original_worst_case_plus_clock_observation_uses_59_gets_without_sensitive_payload():
+def test_original_worst_case_plus_clock_observation_uses_60_gets_without_sensitive_payload():
     api = API(fixture(failure=True, self_run=True))
     report = health.inspect_runtime(BINDING, api, as_of=NOW,
         backup_run_id=101, self_run={'id': 999, 'run_attempt': 1})
-    assert report['native_reads'] == len(api.calls) == 59
-    assert health.MAX_READS == 62  # At most one additional external-entry detail.
+    assert report['native_reads'] == len(api.calls) == 60
+    assert health.MAX_READS == 63  # At most one additional external-entry detail.
     assert api.calls.count(POLICY_CONTENT) == 1 and api.calls.count(SCHEDULE_PAGE) == 2
     assert api.calls.count(CLOCK_CONTENT) == 1 and api.calls.count(DISPATCH_PAGE) == 2
     text = encoded(report).decode()

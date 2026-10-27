@@ -15,6 +15,7 @@ from decision_kernel.application.daily_clock import (
 from decision_kernel.application.daily_market import admission_slot, policy
 from decision_kernel.domain.records import RecordError, SHA, digest, require
 from decision_kernel.infrastructure.github_store import _json
+from decision_kernel.infrastructure.daily_execution import POLICY_PATH as RUNTIME_PATH, policy as runtime_policy
 
 WORKFLOW = "daily-market.yml"
 POLICY_PATH = "config/daily-market.json"
@@ -56,6 +57,14 @@ def read_clock_policy(get, main):
     raw, proof = _read_config(get, main, CLOCK_PATH, "HEALTH_DAILY_CLOCK_POLICY")
     approved = clock_policy(_json(raw))
     return {**proof, "primary": approved["primary"]}
+
+
+def read_runtime_policy(get, main):
+    """Observe deployment only; do not select/authorize an execution or read records."""
+    raw, proof = _read_config(get, main, RUNTIME_PATH, "HEALTH_DAILY_RUNTIME_POLICY")
+    approved = runtime_policy(_json(raw))
+    return {**proof, "enabled": approved["enabled"], "mode": approved["mode"],
+            "status": "enabled" if approved["enabled"] else "paused"}
 
 
 def clock_entry(row):

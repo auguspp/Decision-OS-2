@@ -33,10 +33,20 @@
 
 `odds-price-v1` 必填`price_id/kind/security/currency/share_count/price/as_of/note/evidence`。`kind`仅：
 
-- `declared-reference`：真实用户参考价或明确的分析假设，note如实记录谁提供、用于什么；模型给的价格不冒称用户给价。无来源时evidence=null，结果只标声明价格。**新的 `save-odds` 不再接受 evidence=null 直接落库**：必须先固定被引用的价格切片（`relay-observation` 或合格 `market` 路径）。确实要以纯声明价存档时，必须显式承认 `--allow-declared-only`，回执记 `price_evidence=declared-only-acknowledged`。已有的仅声明历史结果照旧可读、可重算，不受此收紧影响。
+- `declared-reference`：真实用户参考价、获准外部来源的参考观察或明确的分析假设，note如实记录谁提供、用于什么；模型给的价格不冒称用户给价。无来源时evidence=null，结果只标声明价格；有来源时可直接绑定通用SourceRef及数值、证券、日期定位，不要求把其他来源改名为Relay。**新的 `save-odds` 不再接受 evidence=null 直接落库**：默认须先固定被引用的价格切片，可沿本节的 `declared-reference + evidence`、`relay-observation` 或后文合格 `market` 路径。确实要以纯声明价存档时，必须显式承认 `--allow-declared-only`，回执记 `price_evidence=declared-only-acknowledged`。已有的仅声明历史结果照旧可读、可重算，不受此收紧影响。
 - `relay-observation`：必须有确切来源与数值、证券、报价日期定位；核原origin为现有Relay。evidence为`{source, value_locator, security_locator, date_locator}`，locator沿现役数值工具使用CSV行/列或文本start/end。保管原值匹配、日期代码匹配**仍不是合格Market或发行人认证**；币种、股类和股本仍由作者声明，PIT/复权/交易资格没有建立。
 
 as_of须含时区；其日历日期对应所选报价日，调用者应采用来源本地时区，不自动推断时区/收盘时间。价格必须正数，证券/股类/币种/股数匹配冻结规格。可替换price-id/来源引用/日期/数值等价格上下文，但不得改变规格；新报价不滚动目标日。若分配日已过去或价格日不早于退出日，拒绝计算，要求显式调整规格，不能静默删除旧现金流。历史价配后续研究、当前估值配新日期价格均带限制，不能称历史PIT或新研究。
+
+### 已固定的一般参考价切片
+
+外部宿主已经取得、且在本次授权范围内的必要切片，可直接复用 `SourceInput/SourceRef` 和现有条件Odds，不必先运行日更、刷新完整证券主表或创建供应商适配器。保存实际收到的表示：只保留一个报价时使用 `custody=excerpt`，写清原定位、接收时间、转换、日精度及币种/复权的声明依据；宿主文本摘要不冒充上游HTTP摘要。`published_at`未知时保留null，不把保存时间回填成报价可用时间。保管与公开依据沿原[研究宿主合同](runtime.md)，不由输入示例自授。
+
+正常接续是 `put-source → read-source → save-odds → read-odds`：`put-source`接原SourceInput字段；`read-source`直接接返回的完整SourceRef。将该引用放入 `price.evidence.source`，另给 `value_locator/security_locator/date_locator`；一行CSV分别用 `{row:1,column:<实际列名>}`。`kind=declared-reference`仍可使用这些证据；`save-odds`沿原 `{calculation:{spec_ref,price},rights_confirmed,rights_basis}`，`read-odds`接 `{reference:<实际ArtifactRef>}`。读操作不带写入字段，不重冻规格或更改研究current。
+
+核验成功时 `price_check.status=stored-price-security-date-match`，保存回执 `price_evidence=fixed-slice-verified`；独立 `read-odds`按原规格与固定来源重算。`market_qualification=not-established`、`original_verified=false`及币种/股类/股本的声明限制继续保留，不升级为最新合格行情、概率或Watch准入。仅有日期时须在note说明时区和本地日期锚，不虚构供应商报价时刻。新价格不刷新原估值日、经济假设或未决项；没有固定证据的默认保存拒绝保持，不靠 `--allow-declared-only` 取得固定证据资格。
+
+已保存结果沿现有 `read-odds-book` 被发现并返回确切 `open_payload`；Book的页内展示与 `read-odds`的算术重演分开，游标未耗尽仍只证明本页。真实采用回执见[#221](https://github.com/auguspp/Decision-OS-2/issues/221#issuecomment-6439787887)，同一固定快照的正常Book消费见[接续核验](https://github.com/auguspp/Decision-OS-2/issues/221#issuecomment-6440683777)；不以单证券用途代签全市场覆盖或整条生产替代。
 
 ### 已留存 FTShare 原始收盘价
 
@@ -107,7 +117,7 @@ FTShare合格收盘也可作为第二个价格输入：保存包装仍是`{calcu
 
 ### 现役显式宿主
 
-`research-runtime.yml` 新增`freeze-valuation/read-valuation/calculate-odds/save-odds/read-odds`，写操作只有freeze/save。读spec/result的payload为`{reference:<exact ref>}`；calculate与CLI相同。原code_sha、稳定submission_id、expected_head与公开产物约束保持，代码变化明确重新核验，读入口无写权限。无需第二个Secret或工作流。
+`research-runtime.yml` 新增`freeze-valuation/read-valuation/calculate-odds/save-odds/read-odds`，写操作只有freeze/save。读spec/result的payload为`{reference:<exact ref>}`；calculate与CLI相同。原code_sha、稳定submission_id、expected_head与公开产物约束保持，代码变化明确重新核验，读入口无写权限。无需第二个Secret或工作流。每次新保存前从目标仓库原生ref读取records head，并在派发前核对非空40位十六进制SHA；本地命令失败或空输出不能继续派发，dispatch被接收也不等于保存成功。
 
 未知写先按完全相同payload/submission_id调用`reconcile-valuation`或`reconcile-odds`（只读job）；缺意图返回SUBMISSION_NOT_FOUND_NO_WRITE，不顺便补写。确认状态后再恢复原意图。不是先换提交编号再试。公开Actions参数与输出不适合私密材料；原研究绑定仍只读配置。
 

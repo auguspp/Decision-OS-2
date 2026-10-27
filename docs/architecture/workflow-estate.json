@@ -316,7 +316,7 @@
     {
       "file": "odds-probability-sources.yml",
       "state": "registry-only",
-      "name": "odds-development-source",
+      "name": "odds-probability-development-source",
       "triggers": {
         "dispatch": null,
         "schedule": null,

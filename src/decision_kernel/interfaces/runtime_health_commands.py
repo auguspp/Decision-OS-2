@@ -53,6 +53,18 @@ def markdown(report):
                 lines.append(f"产物 {text(a['name'])}：{text(d['artifact_state'])}；到期 {text(a['expires_at'])}；{a['size_in_bytes']} 字节。仅元数据存在，未下载验字节。")
             else:
                 lines.append("没有取得当前attempt对应的产物；不借用旧attempt附件充数。")
+        deployment = p.get("runtime_policy")
+        if deployment:
+            lines += ["", "### 日更部署资格", "", "当前部署：" + text(deployment["status"]) + "。"]
+            if "enabled" in deployment:
+                lines += [f"固定main {text(deployment['main'])} / {text(deployment['path'])}；Git blob {text(deployment['git_blob'])}；SHA256 {text(deployment['sha256'])}。",
+                          f"enabled={text(deployment['enabled'])}；mode={text(deployment['mode'])}。仅观察配置，不授予执行资格。"]
+            if "error" in deployment:
+                lines.append("部署策略无法核验：" + text(deployment["error"]))
+            if deployment["status"] == "paused":
+                lines += ["旧日更已主动暂停：本次不检查独立schedule/dispatch周期页，不要求当前槽有新运行。",
+                          "上面的失败、在途和产物到期仍需分别处理；暂停不证明未知写已对账、历史缺口已恢复或行情新鲜。",
+                          "未查询外部服务商账户，不能据此证明外部任务已停用；本巡检不恢复或补跑任何任务。"]
         clock_policy = p.get("clock_policy")
         if clock_policy:
             lines += ["", "### 日更主时钟选择", ""]
@@ -62,7 +74,7 @@ def markdown(report):
             else:
                 lines.append("时钟策略无法核验：" + text(clock_policy.get("error", "unknown")))
         schedule = p.get("schedule")
-        if schedule:
+        if schedule and schedule.get("observation") != "not-requested":
             lines += ["", "### 日更自然 schedule 观察", "",
                       "当前观察：" + text(schedule["status"]) + "。手动status、update或恢复成功不填补自然触发证据。"]
             if "error" in schedule:
@@ -93,7 +105,7 @@ def markdown(report):
                           "自然子节只核原生运行摘要，不另读任务payload、jobs、附件或业务正文；成功不代签行情更新、Watch或Brief。",
                           "未观察到不推断GitHub未触发、排队丢弃或其他根因；24小时只是原入场限制，不是平台永久丢失的证明。"]
         external = p.get("external_entry")
-        if external:
+        if external and external.get("observation") != "not-requested":
             primary = (clock_policy or {}).get("primary")
             lines += ["", "### 外部时钟入口观察", "",
                       "当前观察：" + text(external["status"]) + "；" + ("被选为主时钟。" if primary == "external-cron" else "当前不作为主时钟验收依据。"),

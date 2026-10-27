@@ -1,6 +1,6 @@
 {
   "schema": "workflow-estate-v1",
-  "revision": "2026-10-23",
+  "revision": "2026-10-26",
   "owner": "#221 D",
   "dispositions": [
     "keep-core",
@@ -90,10 +90,10 @@
         "decision_kernel.interfaces.daily_discovery_cli"
       ],
       "disposition": "keep-ops",
-      "responsibility": "#10 natural-day market cycle, dispatched by the single external clock at 18:35 Asia/Shanghai",
+      "responsibility": "Suspended legacy full-master/six-stock daily deployment; preserve historical cycle, market and discovery readers while narrowing production by actual consumer needs",
       "consumers": "docs/architecture/daily-market.md, docs/engineering/external-daily-clock.md; 14 test modules",
-      "exit": "not retired: the external clock is the single production schedule and this workflow is its only target",
-      "note": "no schedule of its own; the trigger lives in the external clock, so a missing cron here is not evidence that the run cannot happen"
+      "exit": "code retained, not active production: daily-runtime-version.json enabled=false revokes business admission; resume requires an explicit accepted scope and unknown-effect reconciliation; history must remain readable before any code retirement",
+      "note": "no native schedule; the external service job must be disabled and read back separately. The deployment switch does not certify that job is off. clock-probe remains metadata-only and cannot admit business execution"
     },
     {
       "file": "announcement-discovery.yml",
@@ -111,7 +111,7 @@
       "disposition": "keep-ops",
       "responsibility": "Bounded public announcement-directory metadata capture into authorized records",
       "consumers": "tests/test_announcement_discovery.py; hosted handoff announcements",
-      "exit": "retained for the current daily capture mandate; it is the only present file with a native schedule, while daily-market is dispatched by the external clock; replacement needs equivalent scope, timing, rights and consumer adoption"
+      "exit": "retained for the current daily capture mandate; it is the only present file with a native schedule. The separate daily-market deployment is suspended; replacement of announcements still needs equivalent scope, timing, rights and consumer adoption"
     },
     {
       "file": "market-custody.yml",

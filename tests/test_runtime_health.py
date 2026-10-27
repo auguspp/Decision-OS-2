@@ -25,6 +25,7 @@ SCHEDULE_PAGE = '/actions/workflows/daily-market.yml/runs?branch=main&event=sche
 DISPATCH_PAGE = '/actions/workflows/daily-market.yml/runs?branch=main&event=workflow_dispatch&per_page=20'
 POLICY_CONTENT = '/contents/config/daily-market.json?ref=' + SHA
 CLOCK_CONTENT = '/contents/config/daily-market-clock.json?ref=' + SHA
+RUNTIME_CONTENT = '/contents/config/daily-runtime-version.json?ref=' + SHA
 
 
 def policy_content(raw=None, *, path='config/daily-market.json'):
@@ -40,6 +41,13 @@ def clock_content(primary='github-schedule'):
                           path='config/daily-market-clock.json')
 
 
+def runtime_content(enabled=True):
+    # Protocol fixtures remain enabled independently of the paused deployment.
+    return policy_content(encoded({'schema': 'daily-runtime-policy-v1', 'enabled': enabled,
+                                   'mode': 'current-main', 'pinned': None}),
+                          path='config/daily-runtime-version.json')
+
+
 def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, status='completed'):
     return {'id': ident, 'workflow_id': wid, 'run_attempt': attempt, 'head_sha': SHA,
             'head_branch': 'main', 'path': '.github/workflows/' + filename,
@@ -51,7 +59,8 @@ def run(wid, filename, ident, conclusion='success', *, attempt=1, stamp=STAMP, s
 
 def fixture(*, failure=False, self_run=False):
     values = {'': {'id': BINDING.repository_id, 'full_name': BINDING.repository, 'private': False,
-                   'default_branch': 'main'}, POLICY_CONTENT: policy_content(), CLOCK_CONTENT: clock_content()}
+                   'default_branch': 'main'}, POLICY_CONTENT: policy_content(), CLOCK_CONTENT: clock_content(),
+              RUNTIME_CONTENT: runtime_content()}
     for name in ('main', BINDING.branch):
         values['/git/ref/heads/' + name] = {'ref': 'refs/heads/' + name, 'object': {'type': 'commit', 'sha': SHA}}
     for wid, (filename, prefix) in enumerate(h.WORKFLOWS.items(), 1):
@@ -109,7 +118,7 @@ class API:
 def test_latest_failure_is_not_replaced_by_old_success_and_bytes_not_certified():
     api = API(fixture(failure=True)); report = h.inspect_runtime(BINDING, api, as_of=NOW, backup_run_id=101)
     assert report['status'] == 'needs-attention'
-    assert report['native_reads'] == len(api.calls) == 56
+    assert report['native_reads'] == len(api.calls) == 57
     for p in report['workflows']:
         assert p['latest']['run']['conclusion'] == 'failure'
         assert p['last_visible_success']['run']['conclusion'] == 'success'
@@ -421,3 +430,120 @@ def test_native_health_default_public_binding_still_rejects_private():
     values[""]["private"] = True
     with pytest.raises(RecordError, match="HEALTH_REPOSITORY_MISMATCH"):
         h.inspect_runtime(replace(BINDING, private_upgrade_allowed=False), API(values), as_of=NOW)
+
+
+@pytest.mark.parametrize('primary', ['github-schedule', 'external-cron'])
+def test_paused_deployment_retires_trigger_reads_not_ordinary_history(primary):
+    values = fixture()
+    values[CLOCK_CONTENT] = clock_content(primary)
+    enabled = API(values)
+    h.inspect_runtime(BINDING, enabled, as_of='2026-10-21T11:00:00Z')
+    values[RUNTIME_CONTENT] = runtime_content(False)
+    # Retired observations must not be needed to recognize a native pause.
+    for path in (POLICY_CONTENT, CLOCK_CONTENT, SCHEDULE_PAGE, DISPATCH_PAGE):
+        del values[path]
+    api = API(values)
+    report = h.inspect_runtime(BINDING, api, as_of='2026-10-21T11:00:00Z')
+    daily = report['workflows'][-1]
+    assert daily['status'] == 'paused' and report['status'] == 'metadata-ok'
+    assert daily['runtime_policy']['enabled'] is False
+    assert daily['runtime_policy']['main'] == SHA
+    assert api.calls.count(RUNTIME_CONTENT) == 1
+    assert len(enabled.calls) - len(api.calls) == 6  # Two configs plus four trigger-page reads.
+    for section in ('schedule', 'external_entry'):
+        assert daily[section]['status'] == 'deployment-paused'
+        assert daily[section]['observation'] == 'not-requested'
+        assert 'expected_slot' not in daily[section]
+        assert daily[section]['historical_gaps_resolved'] is False
+    assert daily['latest']['run']['id'] == 402
+    assert daily['external_entry']['provider_configuration'] == 'not-inspected'
+    assert report['writes'] == report['dispatches'] == report['notifications'] == 0
+    assert report['source_freshness'] == report['business_acceptance'] == 'not-inspected'
+    md = command.markdown(report)
+    assert '旧日更已主动暂停' in md and '目标槽原生运行：未观察到' not in md
+    assert 'PRIVATE_SENTINEL' not in md and 'SECRET' not in md
+
+
+@pytest.mark.parametrize('problem', ['failure', 'expired', 'active-older-run'])
+def test_pause_does_not_erase_failure_expiry_or_active_runs(problem):
+    values = fixture()
+    values[RUNTIME_CONTENT] = runtime_content(False)
+    if problem == 'failure':
+        values['/actions/runs/402']['conclusion'] = 'failure'
+        add_details(values, values['/actions/runs/402'], 'daily', 'dos2-daily-market')
+    elif problem == 'expired':
+        values['/actions/runs/402/artifacts?per_page=100']['artifacts'][0]['expired'] = True
+    else:
+        values['/actions/runs/401'].update(status='in_progress', conclusion=None)
+    report = h.inspect_runtime(BINDING, API(values), as_of=NOW)
+    daily = report['workflows'][-1]
+    assert daily['runtime_policy']['status'] == 'paused'
+    assert daily['status'] == ('in-progress' if problem == 'active-older-run' else 'needs-attention')
+    assert report['status'] == 'needs-attention'
+    if problem == 'failure':
+        assert daily['latest']['run']['conclusion'] == 'failure'
+        assert daily['last_visible_success']['run']['id'] == 401
+    elif problem == 'expired':
+        assert daily['latest']['artifact_state'] == 'expired'
+    else:
+        assert [run['id'] for run in daily['observed_active']] == [401]
+
+
+@pytest.mark.parametrize('fault', ['not-bool', 'missing', 'blob', 'wrong-path', 'duplicate', 'pinned-shape'])
+def test_unverified_deployment_is_unknown_not_paused_or_enabled(fault):
+    values = fixture()
+    deployed = values[RUNTIME_CONTENT] = runtime_content(False)
+    path = 'config/daily-runtime-version.json'
+    if fault == 'not-bool': values[RUNTIME_CONTENT] = runtime_content(0)
+    elif fault == 'missing': values[RUNTIME_CONTENT] = {'type': 'missing'}
+    elif fault == 'blob': deployed['sha'] = 'b' * 40
+    elif fault == 'wrong-path': deployed['path'] = 'config/daily-market.json'
+    elif fault == 'duplicate':
+        values[RUNTIME_CONTENT] = policy_content(b'{"enabled":true,"enabled":false}', path=path)
+    else:
+        values[RUNTIME_CONTENT] = policy_content(encoded({'schema': 'daily-runtime-policy-v1',
+            'enabled': False, 'mode': 'pinned', 'pinned': None}), path=path)
+    api = API(values)
+    report = h.inspect_runtime(BINDING, api, as_of=NOW)
+    daily = report['workflows'][-1]
+    assert daily['runtime_policy']['status'] == 'unknown'
+    assert daily['status'] == report['status'] == 'needs-attention'
+    assert SCHEDULE_PAGE not in api.calls and DISPATCH_PAGE not in api.calls
+    assert '部署策略无法核验' in command.markdown(report)
+
+
+@pytest.mark.parametrize('change', ['main-moves', 'default-changes', 'wrong-default'])
+def test_pause_requires_stable_native_main_and_default_branch(change):
+    values = fixture()
+    values[RUNTIME_CONTENT] = runtime_content(False)
+    if change == 'wrong-default': values['']['default_branch'] = 'other'
+    api = API(values)
+    def mutate(path, calls):
+        if change == 'main-moves' and path == '/git/ref/heads/main' and calls.count(path) == 2:
+            return {'ref': 'refs/heads/main', 'object': {'type': 'commit', 'sha': 'c' * 40}}
+        if change == 'default-changes' and path == '' and calls.count(path) == 2:
+            return {**values[''], 'default_branch': 'other'}
+    api.mutate = mutate
+    report = h.inspect_runtime(BINDING, api, as_of=NOW)
+    daily = report['workflows'][-1]
+    expected = 'unknown' if change == 'wrong-default' else 'changed-during-inspection'
+    assert daily['runtime_policy']['status'] == expected
+    assert daily['status'] != 'paused' and report['status'] == 'needs-attention'
+    assert '旧日更已主动暂停' not in command.markdown(report)
+
+
+@pytest.mark.parametrize('where', [RUNTIME_CONTENT, ''])
+def test_pause_does_not_bypass_permission_failure_or_final_output_guard(where, tmp_path):
+    values = fixture()
+    values[RUNTIME_CONTENT] = runtime_content(False)
+    api = API(values)
+    def deny(path, calls):
+        if path == where and (where or calls.count('') == 2):
+            raise StoreUnavailable('REMOTE_NOT_AUTHORIZED')
+    api.mutate = deny
+    with pytest.raises(RecordError, match='REMOTE_NOT_AUTHORIZED'):
+        command.execute(BINDING, api, tmp_path/'paused-health', as_of=NOW)
+    assert api.calls[-1] == where
+    receipt = json.loads((tmp_path/'paused-health/health.json').read_bytes())
+    assert receipt['status'] == 'unknown' and 'workflows' not in receipt
+    assert not (tmp_path/'paused-health/health.md').exists()

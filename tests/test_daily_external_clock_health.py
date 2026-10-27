@@ -10,7 +10,7 @@ from decision_kernel.domain.records import RecordError, StoreUnavailable, encode
 from decision_kernel.interfaces import runtime_health_commands as command
 from test_daily_schedule_health import CURRENT, inspect, natural, schedules
 from test_runtime_health import (
-    API, BINDING, CLOCK_CONTENT, DISPATCH_PAGE, NOW, POLICY_CONTENT, SHA, STAMP,
+    API, BINDING, CLOCK_CONTENT, DISPATCH_PAGE, NOW, POLICY_CONTENT, RUNTIME_CONTENT, SHA, STAMP,
     add_details, clock_content, fixture, policy_content, run,
 )
 
@@ -55,7 +55,7 @@ def test_external_primary_checks_daily_job_without_requiring_retired_native_slot
     assert daily['status'] == report['status'] == 'metadata-ok'
     assert api.calls.count(CLOCK_CONTENT) == 1 and api.calls.count(DISPATCH_PAGE) == 2
     assert all(path == '' or path.startswith('/git/ref/heads/') or path.startswith('/actions/')
-               or path in {CLOCK_CONTENT, POLICY_CONTENT} for path in api.calls)
+               or path in {CLOCK_CONTENT, POLICY_CONTENT, RUNTIME_CONTENT} for path in api.calls)
     assert report['writes'] == report['dispatches'] == report['notifications'] == 0
     text = encoded(report).decode()
     assert 'PRIVATE_SENTINEL' not in text and 'SECRET' not in text
@@ -231,7 +231,7 @@ def test_clock_or_dispatch_denial_stops_all_later_reads(tmp_path, target, occurr
     assert not (tmp_path / 'out/health.md').exists()
 
 
-def test_worst_case_one_extra_external_detail_keeps_62_gets_and_original_byte_bounds():
+def test_worst_case_one_extra_external_detail_keeps_63_gets_and_original_byte_bounds():
     values = fixture(failure=True, self_run=True)
     values[CLOCK_CONTENT] = clock_content('external-cron')
     rows = [natural(1000 + i, at=STAMP, conclusion='failure' if i == 19 else 'success') for i in range(20)]
@@ -243,7 +243,7 @@ def test_worst_case_one_extra_external_detail_keeps_62_gets_and_original_byte_bo
     api = API(values)
     report = health.inspect_runtime(BINDING, api, as_of=NOW, backup_run_id=101,
                                     self_run={'id': 999, 'run_attempt': 1})
-    assert report['native_reads'] == len(api.calls) == health.MAX_READS == 62
+    assert report['native_reads'] == len(api.calls) == health.MAX_READS == 63
     assert report['workflows'][-1]['external_entry']['latest_detail']['run']['id'] == 951
     assert api.calls.count('/actions/runs/951') == 1
     assert report['native_metadata_bytes'] < 8 * 1024 * 1024

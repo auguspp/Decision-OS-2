@@ -20,9 +20,19 @@ python -m decision_kernel.interfaces.store_runtime runtime-health \
 
 查看store-runtime、research-runtime、news-rolling、daily-market四个现役宿主。每个读取最近20个main运行，按窗口内实际attempt启动时刻排序，同时保留最近尝试与最近可见成功及原生event；新失败不会被旧成功顶替。总数量、返回数量、历史是否完整和窗口内在途条目明示。旧run在窗口外重试可能不在结果中，不能据此签全局无writer、没有其他活动采集、当前业务最新或允许切换。daily的`status`和`daily`作业分别标明；原生作业名不包含update/recover-late等确切输入时不猜具体操作。
 
-确切run/attempt的jobs与对应产物名、run/head、摘要声明、到期日期分别核对；不借旧attempt附件。jobs/artifact分页超过100不截断为完整，返回未知。末次重复核同运行、工作流和列表，变化显示changed-during-inspection，不自动重试；仓库身份/可见性与main/records再次核对。最多62个GET：原56（仓库/两分支前后6、四宿主各至多10、当前巡检自身3、指定backup4、自然schedule页前后2、固定生产策略1），另加固定clock配置1、独立dispatch页前后2、最多一条尚未核过的外部入口详情3；已有同run详情直接复用。同一原API的512累计预算不重置，元数据总8MiB、输出256KiB。供应商原文、任务payload、用户反馈、账号字段和签名下载地址不进入报告。
+确切run/attempt的jobs与对应产物名、run/head、摘要声明、到期日期分别核对；不借旧attempt附件。jobs/artifact分页超过100不截断为完整，返回未知。末次重复核同运行、工作流和列表，变化显示changed-during-inspection，不自动重试；仓库身份/可见性与main/records再次核对。最多63个GET：原56（仓库/两分支前后6、四宿主各至多10、当前巡检自身3、指定backup4、自然schedule页前后2、固定生产策略1），另加固定clock配置1、独立dispatch页前后2、最多一条尚未核过的外部入口详情3；已有同run详情直接复用；再加1次固定main部署开关读取。同一原API的512累计预算不重置，元数据总8MiB、输出256KiB。供应商原文、任务payload、用户反馈、账号字段和签名下载地址不进入报告。
 
 `metadata-ok` 仅表示本次有限原生执行/产物元数据检查通过，不叫“业务健康”。workflow `active` 不证明已配置schedule；作业成功不证明正文已保存或真实资料完整；产物未过期不证明字节校验/当前records覆盖/异地保管。临到期提示固定为剩余不超过7天，仅提示，不自动复制、删档或通知。指定backup仍必须是原生成功backup作业，不能用health或retain-guide替代；内容和恢复资格仍读取原report与bundle校验。
+
+## 主动暂停与历史问题分开
+
+先从同一固定main读取`config/daily-runtime-version.json`，复用原Contents身份/字节检查与`daily_execution.policy()`严格校验，仅保留部署状态、模式及证明；不调用执行准入，不读取records内容，也不替外部账户或已固定执行树签资格。
+
+已核`enabled=false`时，退出独立schedule/dispatch周期页及额外外部入口详情的观察，不再读取旧daily-market/clock配置或要求当前槽出现新run；两个子节明确`deployment-paused / observation=not-requested`，不是“已查到零运行”。仍前后核普通运行列表、最新尝试/最近可见成功的详情、到期、在途及最终权限。没有其他问题时宿主显示`paused`，不单凭主动暂停让整份巡检失败；已有失败、产物缺失/到期、在途、未知和变化不被改绿，仍需分别处理，不能把暂停解释成失败恢复或未知写已对账。
+
+坏配置保持unknown，不默认启用或暂停；权限/传输拒绝仍停止所有后续请求。读取中main或默认分支变化时暂停观察也降为changed，不改用新head重试。历史as-of不回签历史部署；外部任务停用须独立原生回执，报告不宣称服务商已停钟或数据新鲜。暂停后的路径在相同元数据下比启用路径少6个GET（两份配置和四次周期页），若原先需要额外外部详情则再少3个；相对旧版还需计入新增的1次部署配置读取，不能把请求数差额宣传成实机耗时提升。
+
+下列自然时点与外部入口观察仅在本次固定main部署明确enabled=true时执行。完整元数据最坏上界由62变为63，只增加这一份固定配置证据；原512累计API预算、8MiB/256KiB上界与所有来源预算不变。
 
 ## daily-market自然时点观察
 

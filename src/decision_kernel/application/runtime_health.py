@@ -22,9 +22,9 @@ WORKFLOWS = {
 RUN_LIMIT = 20
 DETAIL_LIMIT = 100
 # 6 repository/heads + 4*10 host metadata + 3 self + 4 explicit backup
-# + 4 independent trigger pages + 2 pinned policies + at most 3 extra GETs
+# + 4 independent trigger pages + 3 pinned policies + at most 3 extra GETs
 # for the latest external entry when absent from ordinary details. No body GET.
-MAX_READS = 62
+MAX_READS = 63
 MAX_METADATA_BYTES = 8 * 1024 * 1024
 ACTIVE = {"queued", "in_progress", "requested", "waiting", "pending"}
 CONCLUSIONS = {"success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure"}
@@ -221,6 +221,26 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
             schedule_before = dispatch_before = approved = clock_proof = None
             if filename == daily_schedule_health.WORKFLOW:
                 try:
+                    panel["runtime_policy"] = daily_schedule_health.read_runtime_policy(get, before["main"])
+                except StoreUnavailable:
+                    raise
+                except (KeyError, TypeError, ValueError) as error:
+                    panel["runtime_policy"] = {"status": "unknown", "error": str(error)
+                        if isinstance(error, RecordError) else "HEALTH_DAILY_RUNTIME_POLICY_SHAPE"}
+                # A deliberate pause retires periodic trigger inspection, not
+                # ordinary run/retention evidence or final access/head checks.
+                deployment = panel["runtime_policy"]["status"]
+                if deployment != "enabled":
+                    observation = {"status": "deployment-paused" if deployment == "paused" else "unknown",
+                        "observation": "not-requested", "business_result": "not-inspected",
+                        "historical_gaps_resolved": False}
+                    if deployment == "unknown":
+                        observation["error"] = "HEALTH_DAILY_RUNTIME_POLICY_UNAVAILABLE"
+                    panel["schedule"] = dict(observation)
+                    panel["external_entry"] = {**observation, "provider_configuration": "not-inspected",
+                                               "natural_origin": "unverified"}
+            if filename == daily_schedule_health.WORKFLOW and panel["runtime_policy"]["status"] == "enabled":
+                try:
                     approved, policy_proof = daily_schedule_health.read_policy(get, before["main"])
                     def schedule_page():
                         value = get(path + daily_schedule_health.SCHEDULE_QUERY)
@@ -391,6 +411,29 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
         if panel["status"] == "metadata-ok" and panel["latest"]["artifact_state"] != "metadata-available":
             panel["status"] = "needs-attention"
         if panel.get("path") == ".github/workflows/" + daily_schedule_health.WORKFLOW:
+            deployment = panel.get("runtime_policy", {})
+            if before["main"] != after["main"] or default_before != default_after:
+                deployment["status"] = "changed-during-inspection"
+                panel["status"] = "changed-during-inspection"
+                for name in ("schedule", "external_entry"):
+                    if panel.get(name, {}).get("observation") == "not-requested":
+                        panel[name]["status"] = "changed-during-inspection"
+            elif default_before != "main":
+                deployment.update(status="unknown", error="HEALTH_DEFAULT_BRANCH_NOT_MAIN")
+                if panel["status"] in {"metadata-ok", "not-run"}:
+                    panel["status"] = "needs-attention"
+                continue
+            elif deployment.get("status") == "paused":
+                if panel["status"] not in {"unknown", "changed-during-inspection", "needs-attention"}:
+                    if panel.get("observed_active"):
+                        panel["status"] = "in-progress"
+                    elif panel["status"] in {"metadata-ok", "not-run"}:
+                        panel["status"] = "paused"
+                continue  # No missed-slot obligation; no override of failures/expiry.
+            elif deployment.get("status") != "enabled":
+                if panel["status"] == "metadata-ok":
+                    panel["status"] = "needs-attention"
+                continue
             primary = panel.get("clock_policy", {}).get("primary")
             dependency = panel.get("schedule" if primary == GITHUB_SCHEDULE else "external_entry", {})
             allowed = {"native-success", "no-recent-slot"} if primary == GITHUB_SCHEDULE else {"daily-job-success", "no-recent-slot"}
@@ -406,12 +449,12 @@ def inspect_runtime(binding, api, *, as_of=None, expected_head=None, backup_run_
     changed = before != after or expected_head is not None and before[binding.branch] != expected_head
     changed = changed or self_run is not None and not self_verified
     result = {"schema": "runtime-health-v1", "repository": binding.repository, "as_of": evaluated,
-              "status": "needs-attention" if changed or any(p["status"] != "metadata-ok" for p in panels) or backup["status"] not in {"not-supplied", "inspected"} else "metadata-ok",
+              "status": "needs-attention" if changed or any(p["status"] not in {"metadata-ok", "paused"} for p in panels) or backup["status"] not in {"not-supplied", "inspected"} else "metadata-ok",
               "heads_before": before, "heads_after": after, "expected_records_head": expected_head,
               "heads_changed_or_unexpected": changed, "workflows": panels, "specified_backup": backup,
               "excluded_inspection": self_run if self_verified else None, "native_reads": len(evidence),
               "native_metadata_bytes": used, "evidence": evidence,
-              "scope": "four-delivery-hosts; latest-attempt-within-recent-20-main-runs; independent-daily-schedule-and-dispatch-pages; not-global-writer-lock",
+              "scope": "four-delivery-hosts; latest-attempt-within-recent-20-main-runs; independent-daily-schedule-and-dispatch-pages-when-deployment-enabled; not-global-writer-lock",
               "automatic_schedule": "not-established-by-workflow-active-state",
               "durable_backup": "not-established-by-actions-artifact",
               "source_freshness": "not-inspected", "business_acceptance": "not-inspected",

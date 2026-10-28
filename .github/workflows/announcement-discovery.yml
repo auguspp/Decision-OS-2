@@ -1,7 +1,6 @@
 name: decision-os-announcement-discovery
 on:
-  schedule:
-    - cron: '20 10 * * *'
+  # PAUSED 2026-10-28: Human requested no scheduled Kernel/OS2 tasks; restore cron from Git history to resume.
   workflow_dispatch:
     inputs:
       code_sha:

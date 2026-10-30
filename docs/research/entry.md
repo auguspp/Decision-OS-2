@@ -10,11 +10,11 @@
 
 研究可由 WorkBuddy 或其他获准宿主执行，沿[同一业务操作](runtime.md#kernel-operations)读取、保存和接续。`RevisionInput`／`VersionedStore` 已支持自由文本和部分成果保管，`checkpoint` 也不以来源使用核查通过作为保存前提；这不授予任务、来源或公开权限。保存资格、指定方法执行、经济充分性、数值用途与人工确认分别报告，不合成一个总 READY。
 
-当前 `prepare` 默认 Quick v1／Full v2，也可显式选择包内受信 `decision-os-research-external-full-v1`；新的宿主 `checkpoint` / `deliver` 按准备所得的确切摘要接收。选择位于 `prepare.method_id`，不能在 request/progress 自填方法名或“已批准”授予资格。外部合同沿原未决工作接续，单独核已保留证据的作者采用，不能继承默认Full的来源核查通过或消除原责任；详见[方法选择与接续](workflow.md#external-method)。方法文件与旧研究字节保持不变。
+当前 `prepare` 默认 Quick v1／Full v3，也可显式选择包内受信 `decision-os-research-external-full-v2`；新的宿主 `checkpoint` / `deliver` 按准备所得的确切摘要接收。选择位于 `prepare.method_id`，不能在 request/progress 自填方法名或“已批准”授予资格。外部合同沿原未决工作接续，单独核已保留证据的作者采用，不能继承默认Full的来源核查通过或消除原责任；详见[方法选择与接续](workflow.md#external-method)。历史方法文件与旧研究字节保持不变。
 
 ## 1. 先拿到实际方法，再执行研究
 
-新 Full 默认 `decision-os-research-full-v2`，Quick 仍是原 v1。当前内置 Full 已把旧 Kernel 的 Operating Method v3、经济结构、Review Gate、价格隐含经济闭合、经济对象镜头的适用方法返回到研究准备结果，而不是只给旧文档路径。适用责任不迁入旧研究schema、旧案例、旧阈值或旧任务状态。
+新 Full 默认 `decision-os-research-full-v3`，Quick 仍是原 v1。当前内置 Full 保留 v2 的经济结构、Review Gate、价格隐含经济闭合及适用经济对象镜头，并加入前稿恢复、重要情景覆盖、同口径归因和条件结果的决策用途纪律；外部 Full v2 采用相同新增纪律。完整方法实际返回到研究准备结果，而不是只给文档路径。适用责任不迁入旧研究schema、旧案例、旧阈值或旧任务状态。
 
 安装后可以**不访问存储、不需要凭据**直接读取：
 
@@ -33,6 +33,18 @@ python -m decision_kernel.methods.research --kind full
 ## 1.2 开局主动从信息池取材
 
 研究者从原委托提取公司/代码/别名、相关主题和问题用途，按[研究材料入口](evidence.md)生成`evidence_plan`并随正常`prepare`实际查询、读取池内未关联当前案例的来源；不要求用户先提供SourceRef。结果保留固定快照分页、原件/摘录/日期限制和未读范围。计划可同时经现役Registry检查`relay_plan`，接口不是只在池为空时才用；没有采用证据，不把检索命中或计划检查当成研究已完成。原成果继续沿SourceRef/checkpoint/deliver保存，没有第二信息库或后台模型。
+
+<a id="research-revision"></a>
+## 1.3 已有研究先恢复基线，再解释修订
+
+从现役案例目录、当前修订及必要前驱恢复适用研究，再查用户明确提到的历史材料；只找回某份旧稿不等于已找到最新判断。核原时点、经营驱动、重要情景、估值与概率、投资政策及未决挑战。在同一报告留下短表，不新建状态库或强制JSON字段：
+
+| 原判断/输入 | 本次判断/输入 | 变化类型 | 来源或纠错依据 | 经营/数值传导 | 对结论的影响 |
+|---|---|---|---|---|---|
+
+变化类型区分新期间事实、旧期间新增披露、已有资料的新分析/纠错、口径/资本/期限、估值判断和投资政策。旧基线可被纠错，历史接受不证明盈利和概率正确；没有新外部资料也可据旧材料发现错误。找不到前稿须说明实际检索范围及相依限制，不伪造前驱，也不阻止可独立进行的研究。投资者提问中的金额/预测、公司实际回答与兑现结果分别处理；原有未知不能重复包装为新利空，迟未验证则核原观察窗口。
+
+重要旧核心、上行、下行及有经济依据的外部预期须逐项保留、降权或有据排除。两版比较先统一归属、股类/币种、股数、价值日期、期限与现金/费用口径，再拆机械更新、经营/估值/概率变化和回报政策变化。历史概率回放不是当前胜率；加权分布与单情景不可直接相减声称价值下修。上述成果由研究者实质完成，方法身份或表格存在不能认证正确。
 
 ## 2. 一次委托内的执行责任
 
@@ -54,7 +66,7 @@ python -m decision_kernel.methods.research --kind full
 
 `continuation.actions` 来自既有工作底稿，不另存状态：已取得未分析 → 分析现有证据；已披露未核 → 获取与核验；当前无法识别 → 核查实际搜索边界并约束结论；未来事件 → 等实际证据，不把日期到达当事件发生；中断 → 核真实故障及剩余权限。重大项优先但不伪算信息价值，非重大缺口不全局阻塞。
 
-原已回答/重构的问题留在 `retained_findings`，不会默认重跑。新增问题不伪造历史答案。`unresolved_challenges` 保留待解决挑战；**新 Full v2、外部 Full，以及从外部合同转出的修订，必须用原 question_id 与 argument 对应回应，或继续标 unresolved**。可以在 response 说明为何证据/范围改变使原挑战不再适用，不能通过删除或改写原质疑消失它。已解决挑战无须每版机械重复，旧版可读。
+原已回答/重构的问题留在 `retained_findings`，不会默认重跑。新增问题不伪造历史答案。`unresolved_challenges` 保留待解决挑战；**新 Full v3、外部 Full，以及从外部合同转出的修订，必须用原 question_id 与 argument 对应回应，或继续标 unresolved**；原 Full v2 的挑战接续政策也保留。可以在 response 说明为何证据/范围改变使原挑战不再适用，不能通过删除或改写原质疑消失它。已解决挑战无须每版机械重复，旧版可读。
 
 来源覆盖只对本次 Reader 页负责：原游标、未返回数量、外部定位、缺失/不可用/损坏/摘录等限制照实返回。读完来源列表也不证明分析完成；损坏一项不污染不相关工作。
 
@@ -64,9 +76,9 @@ python -m decision_kernel.methods.research --kind full
 
 ## 4. 保存、历史和真正验收
 
-部分成果继续沿原 `checkpoint-research` 保存，不强迫填出虚假答案。原问题/来源/前驱合同不变。新 Full 默认 v2，也可明确采用受信外部合同，二者均保留挑战连续性；v1 的已保管正文、规范化字节、方法摘要保留，绝不事后重写旧报告为 v2。
+部分成果继续沿原 `checkpoint-research` 保存，不强迫填出虚假答案。原问题/来源/前驱合同不变。新 Full 默认 v3，也可明确采用外部Full v2，二者均保留挑战连续性；旧版已保管正文、规范化字节和方法摘要保留，绝不事后重写旧报告为新方法。
 
-方法升级时，新宿主 `checkpoint` 使用现役受信方法；找回旧意图用 `reconcile-checkpoint`，携带**原 payload、method_sha256、submission_id**，代码 SHA 则是本次实际核过并运行的 main。归档 Full v1 方法只用于精确重建；只读 job/后端禁止无回执时新写。不能把“重新准备方法”当作旧回执恢复，更不能换键制造第二份成果。细节见[宿主入口](runtime.md)。
+方法升级时，新宿主 `checkpoint` 使用现役受信方法；找回旧意图用 `reconcile-checkpoint`，携带**原 payload、method_sha256、submission_id**，代码 SHA 则是本次实际核过并运行的 main。归档 Full v1/v2、外部 Full v1 方法保留精确读取和重建；只读 job/后端禁止无回执时新写。不能把“重新准备方法”当作旧回执恢复，更不能换键制造第二份成果。细节见[宿主入口](runtime.md)。
 
 `research_assessment=not-performed` 始终真实：本程序检查引用/格式、列工作及阻止已登记挑战静默丢失，不理解经济真相。`concluded` 还需审阅实际工作成果，`DECLARED_CONCLUSION_REQUIRES_SUBSTANTIVE_REVIEW` 不签PASS。真实Full的研究深度由实际取证/计算/挑战/收口及用户反馈验收；用过方法、安装成功或CI通过均不能代替。
 
@@ -83,5 +95,7 @@ python -m decision_kernel.methods.research --kind full
 ## 7. 将研究中的条件价值接到 Odds
 
 已有冻结研究的受支持价值/未来现金产出，可以按[条件Odds入口](conditional-odds.md)保存可选`valuation-spec-v1`，再使用`freeze-valuation → calculate-odds → save-odds → read-odds`。保留确切研究、股类/币种/股数、价值与目标日期以及原条件，价格单变不改研究。当前公允价值只给估值距离；未来退出/分配现金才给名义累计回报。本首组不提供概率/风险政策、合格Market、自动价格订阅或人工Decision，无概率不补等权，算术通过不代签Full质量。完整原文模型仍可自由研究与按原合同保管，不能为调用计算器倒调模型。
+
+条件演示、当前经营判断、概率评估和投资政策分别交代。某情景若主导首笔、加减仓或退出，须说明选择依据、其他重要结果的风险、适用期限和会改变决定的证据；不能把示例静默升级为主方案。没有可信概率可以报告条件价位及盈亏平衡要求，不称已完成概率Odds。作者新选的回报/仓位政策明确为本次建议，不能冒充用户旧偏好；回报门槛折价不自动证明抗永久损失的安全边际。
 
 Full 后的持续跟踪沿 [Full 后 Watch](full-watch.md)：核对实际已存 Odds 对应的价格条件，以及原 Full 重大未决问题对价值输入／情景的影响，先由既有 Brief 交付实际变化。没有可用 Odds 时可保留有依据的问题跟踪；Quick 线索沿原研究议程。该入口不把 `checkpoint`／`deliver` 成功宣称为已自动登记或开始长期执行。

@@ -17,7 +17,7 @@ from decision_kernel.domain.research_work import (
     ResearchProgress, ResearchRequest, continue_request, read_workpaper, render_workpaper,
 )
 from decision_kernel.methods.research import (
-    EXTERNAL_METHOD_ID, continuation_method, research_method, stored_research_method,
+    continuation_method, is_external_method, research_method, stored_research_method,
 )
 
 
@@ -46,14 +46,14 @@ class ResearchWorkflow:
     def _method_continuity(request: ResearchRequest, previous: dict | None, method: dict) -> None:
         """Changing the external contract cannot erase the prior method's obligations.
 
-        Preserve the historical default v1-to-v2 upgrade/replay policy. This is a
+        Preserve historical default upgrade/replay policy. This is a
         submission check, not a permission grant or a restriction on read-only preparation.
         """
         if previous is None:
             return
         payload = previous["record"]["input"]
         old = stored_research_method(payload["kind"], payload["method"])
-        if method["id"] == EXTERNAL_METHOD_ID or (old and old["id"] == EXTERNAL_METHOD_ID):
+        if is_external_method(method) or is_external_method(old):
             token = method["id"] + "@sha256:" + method["sha256"]
             require(payload["method"] == token or bool(request.scope_change_reason.strip()),
                     "EXPLICIT_SCOPE_CHANGE_REQUIRED")
@@ -80,7 +80,7 @@ class ResearchWorkflow:
             previous["record"]["input"]["method"] if previous else None, method_id=method_id)
         require(evidence_plan is not None or evidence_cursor is None, "EVIDENCE_PLAN_REQUIRED_FOR_CURSOR")
         evidence = evidence_guidance(request)
-        if method["id"] == EXTERNAL_METHOD_ID:
+        if is_external_method(method):
             evidence.update(status="optional-not-requested", required=False,
                 instruction="信息池是可选来源；需要时使用原 evidence_plan 和固定游标，"
                             "实际采用的外部资料沿 SourceInput/SourceRef 保管。")
@@ -96,7 +96,7 @@ class ResearchWorkflow:
                 "evidence": evidence, "full_execution": execution_contract(request, evidence, method=method),
                 "method": method, "previous_context": previous_context,
                 "continuation": continuation_plan(request, previous_context),
-                "source_use": external_source_guidance() if method["id"] == EXTERNAL_METHOD_ID
+                "source_use": external_source_guidance() if is_external_method(method)
                               else source_use_guidance(request.kind),
                 "research_assessment": "not-performed", "execution_authority": "not-granted-by-preparation",
                 "persistence": "not-written"}
@@ -120,8 +120,9 @@ class ResearchWorkflow:
             old_work = read_workpaper(previous)
             old_payload = previous["record"]["input"]
             old_method = stored_research_method(old_payload["kind"], old_payload["method"])
-            preserve_challenges = method["id"] in ("decision-os-research-full-v2", EXTERNAL_METHOD_ID) or (
-                old_method is not None and old_method["id"] == EXTERNAL_METHOD_ID)
+            preserve_challenges = method["id"] in (
+                "decision-os-research-full-v2", "decision-os-research-full-v3"
+            ) or is_external_method(method) or is_external_method(old_method)
             if old_work is not None and preserve_challenges:
                 pending = {(c.question_id, c.argument) for c in old_work[1].challenges
                            if c.disposition == "unresolved"}

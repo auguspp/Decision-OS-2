@@ -15,7 +15,7 @@ from decision_kernel.domain.research_work import (
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.methods.research import research_method
 
-EXTERNAL_METHOD = "decision-os-research-external-full-v1"
+EXTERNAL_METHOD = "decision-os-research-external-full-v2"
 
 
 @pytest.fixture
@@ -97,8 +97,8 @@ def test_external_partial_roundtrip_retains_exact_method_without_expanding_workp
 
 
 @pytest.mark.parametrize("before_id,after_kind,after_id", [
-    ("decision-os-research-full-v2", "full", EXTERNAL_METHOD),
-    (EXTERNAL_METHOD, "full", "decision-os-research-full-v2"),
+    ("decision-os-research-full-v3", "full", EXTERNAL_METHOD),
+    (EXTERNAL_METHOD, "full", "decision-os-research-full-v3"),
     (EXTERNAL_METHOD, "quick", "decision-os-research-quick-v1"),
 ])
 def test_method_change_accounts_for_scope_and_cannot_drop_pending_challenge(system, before_id, after_kind, after_id):

@@ -23,7 +23,7 @@ from decision_kernel.domain.research_work import ResearchProgress, ResearchReque
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.methods.research import research_method
 
-EXTERNAL_METHOD = "decision-os-research-external-full-v1"
+EXTERNAL_METHOD = "decision-os-research-external-full-v2"
 
 
 def workbook_bytes():
@@ -169,8 +169,8 @@ def test_complete_full_then_delta_restores_original_and_pending_reframed_work(st
 
 
 @pytest.mark.parametrize("before_id,after_id", [
-    ("decision-os-research-full-v2", EXTERNAL_METHOD),
-    (EXTERNAL_METHOD, "decision-os-research-full-v2"),
+    ("decision-os-research-full-v3", EXTERNAL_METHOD),
+    (EXTERNAL_METHOD, "decision-os-research-full-v3"),
 ])
 def test_delivery_method_change_requires_reason_before_intent_or_material_staging(store, before_id, after_id):
     payload = delivery_payload(method_id=before_id)

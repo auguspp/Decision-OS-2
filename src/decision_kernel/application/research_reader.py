@@ -6,7 +6,7 @@ import re
 
 from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.application.research_source_use import acceptance_pending
-from decision_kernel.methods.research import EXTERNAL_METHOD_ID, stored_research_method
+from decision_kernel.methods.research import is_external_method, stored_research_method
 from decision_kernel.domain.records import (
     BlobRef, IntegrityError, MissingObject, RecordError, SourceRef,
     StoreUnavailable, encoded, identifier, require,
@@ -89,7 +89,7 @@ class ResearchReader:
         method = stored_research_method(payload["kind"], payload["method"])
         acceptance = {"status": "not-demonstrated", "operation": "audit-source-use",
                       "reference": asdict(reference)}
-        if method is not None and method["id"] == EXTERNAL_METHOD_ID:
+        if is_external_method(method):
             acceptance = acceptance_pending(asdict(reference), method=method)
         return {
             "schema": "research-context-v1", "research": research,

@@ -6,7 +6,7 @@
 
 ## 外部合同：核已保留证据的作者采用
 
-`decision-os-research-external-full-v1` 通过[方法入口](workflow.md#external-method)选择，保存沿原 checkpoint / deliver。`audit-source-use` 读取一次已保存 revision，经工作底稿一致性与受信方法表精确核 `id@sha256:摘要` 后才分派；不能在审计载荷写 method、approved 或状态选择外部通路。该分派不会新增另一遍 revision 读取。
+当前 `decision-os-research-external-full-v2` 通过[方法入口](workflow.md#external-method)选择，保存沿原 checkpoint / deliver。旧外部Full v1保留原字节及同一外部来源审计语义。`audit-source-use` 读取一次已保存 revision，经工作底稿一致性与有限受信方法表精确核 `id@sha256:摘要` 后才分派；名称前缀、自填 method、approved 或状态不能选择外部通路。该分派不会新增另一遍 revision 读取。
 
 外部 payload **只能包含 `reference`**，即原保存回执中的完整 BlobRef；CLI 用 `audit-source-use --input audit.json`，宿主用同名 operation。这里不接受未保存 request/progress、receipts、exceptions 或 reuse_run_ids；也不访问来源 URL、原生 Pool/Relay 回执或 Relay Registry，不产生来源请求和 records 写入。
 

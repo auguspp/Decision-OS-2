@@ -171,7 +171,7 @@ finally:
     # Same cold wheel: full method is usable offline, with no data-store credential.
     method = subprocess.run([str(python), "-I", "-m", "decision_kernel.methods.research", "--kind", "full"],
                             cwd=outside, env=no_host, check=True, capture_output=True, text=True)
-    assert json.loads(method.stdout)["id"] == "decision-os-research-full-v2"
+    assert json.loads(method.stdout)["id"] == "decision-os-research-full-v3"
     assert prepared["method"]["sha256"] == json.loads(method.stdout)["sha256"]
     assert resumed["continuation"]["actions"][0]["next_action"] == "完成合成计算"
     completed = command("prepare-research", "--case-id", "work")
@@ -269,7 +269,7 @@ finally:
 
     # Same cold wheel: an external contract survives partial save and independent
     # CLI continuation without adding fields to the existing research request.
-    external_id = "decision-os-research-external-full-v1"
+    external_id = "decision-os-research-external-full-v2"
     external_method = subprocess.run([str(python), "-I", "-m", "decision_kernel.methods.research",
         "--kind", "full", "--method-id", external_id], cwd=outside, env=no_host,
         check=True, capture_output=True, text=True)

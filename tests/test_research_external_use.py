@@ -4,6 +4,7 @@ from dataclasses import asdict, replace
 import pytest
 
 from decision_kernel.application.research_external_use import external_source_guidance
+from decision_kernel.application.research_reader import ResearchReader
 from decision_kernel.application.research_source_use import (
     SourceUseAudit, acceptance_pending, audit_demonstrated, execution_contract,
 )
@@ -17,6 +18,7 @@ from decision_kernel.domain.research_work import (
 )
 from decision_kernel.infrastructure.git_store import GitStore
 from decision_kernel.methods.research import EXTERNAL_METHOD_ID, research_method
+from decision_kernel.methods.external_full_v1 import external_full_method as external_v1
 
 
 @pytest.fixture
@@ -131,6 +133,25 @@ def test_challenge_adoption_does_not_require_every_auxiliary_source_to_be_adopte
     assert result["sources"][2]["limitation_count"] == 1
     assert probe.sources == refs and probe.revisions == [saved]
     assert result["acceptance_scope"] == "retained-representation-and-author-adoption-only"
+
+
+def test_archived_external_reader_and_audit_keep_their_original_source_contract(store, monkeypatch):
+    old = external_v1()
+    ref = add_source(store)
+    saved = save(store, progress(ref), method=old)
+    identity = {key: old[key] for key in ("id", "sha256")}
+    context = ResearchReader(store).resume(reference=saved)
+    assert context["source_use_acceptance"]["method"] == identity
+    assert context["source_use_acceptance"]["reason"] == "saved-research-is-not-proof-of-external-evidence-adoption"
+    probe = ReadProbe(store)
+    auditor = SourceUseAudit(probe)
+    monkeypatch.setattr(auditor, "_pool_recovery", lambda *args: pytest.fail("archived external became Pool work"))
+    before = store.backend.head()
+    result = auditor.audit({"reference": asdict(saved)})
+    assert result["schema"] == "research-external-source-use-audit-v1"
+    assert result["method"] == identity and result["status"] == "external-evidence-use-demonstrated"
+    assert probe.revisions == [saved] and probe.sources == [ref]
+    assert store.backend.head() == before
 
 
 @pytest.mark.parametrize("has_source", [False, True])

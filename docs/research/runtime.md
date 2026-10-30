@@ -27,7 +27,7 @@
 
 所有调用必须携带 `code_sha`：发出前读取并检查的当前 main 确切 SHA。触发时 main 已变就失败，不自动改代码。保存与对账携带原始稳定 `submission_id`；新保存还须 `expected_head`（写前 records 的确切 SHA，不能填 main 或 latest）。纯读取不接受提交键或预期写 head。
 
-新 `checkpoint.method_sha256` 来自本次 `prepare` 的 `result.method.sha256`，过期方法拒绝新宿主写入。只读对账则接受包内已知旧方法摘要，精确恢复原正文和提交意图；未知摘要明确拒绝，绝不替换为最新。方法文本版本存于安装包，不执行历史代码或下载脚本。Full 默认 v2，可明确选择 `decision-os-research-external-full-v1`；Quick 仍保留自己的 v1，原 Full v1 的可读/对账支持未退出。`method_id` 仅是 prepare 顶层选择项，不进入 request/progress 或 checkpoint/deliver 顶层；保存继续钉住原 method_sha256。
+新 `checkpoint.method_sha256` 来自本次 `prepare` 的 `result.method.sha256`，过期方法拒绝新宿主写入。只读对账则接受包内已知旧方法摘要，精确恢复原正文和提交意图；未知摘要明确拒绝，绝不替换为最新。方法文本版本存于安装包，不执行历史代码或下载脚本。Full 默认 v3，可明确选择 `decision-os-research-external-full-v2`；Quick 仍保留自己的 v1，原 Full v1/v2及外部Full v1的可读/对账支持未退出。`method_id` 仅是 prepare 顶层选择项，不进入 request/progress 或 checkpoint/deliver 顶层；保存继续钉住原 method_sha256。
 
 普通重复提交由原保管层按同意图恢复回执；原方法过期后应使用只读对账，而非更换提交键。新的保存由原生 CAS 仲裁，计划 head 必须匹配；没有第二存储引擎、锁或任务队列。
 
@@ -54,9 +54,9 @@
 | 决策准备与人工裁定边界 | `prepare-decision`、`save-decision-preparation`、`read-decision-preparation` | 同名 | 确切研究、备选行动、人工待裁定项及原判断历史，沿[准备合同](decision-preparation.md)与当前原生可见性/保管权利门；没有正式 Human Decision 的确认或交易入口 |
 | Review 与原预测兑现复核 | `research-outcome-review`；相邻研究版本 Review 在 `research-room` 中读取 | `reading-room` 的可选 `review` / `outcome` 计划，无独立 `outcome-review` operation | 确切前后研究、原预测、实际来源与指定市场窗口，沿[兑现复核](../delivery/outcome-review.md)；不改原预测、不把事后保存时间改成事前可用性 |
 
-普通 `RevisionInput` 接收和受信方法工作底稿均进入同一保管层。`ResearchWorkflow.checkpoint()` 不以来源审计通过作为保存前提，有待解决事项的进展可以保存。`prepare`、新的宿主 `checkpoint` / `deliver` 支持默认 Quick v1 / Full v2 和一个受信外部 Full 合同；`audit-source-use` 按已存确切方法身份分派，默认 Pool/Relay 与外部保留证据采用分别返回自己的 schema/status。任意自由 `method` 字符串仍可历史读回，但不因此取得受信方法资格；换方法也不能擦掉前驱尚未完成的责任。选择与后继规则见[外部合同](workflow.md#external-method)。
+普通 `RevisionInput` 接收和受信方法工作底稿均进入同一保管层。`ResearchWorkflow.checkpoint()` 不以来源审计通过作为保存前提，有待解决事项的进展可以保存。`prepare`、新的宿主 `checkpoint` / `deliver` 支持默认 Quick v1 / Full v3和外部Full v2；`audit-source-use` 按已存确切方法身份分派，默认 Pool/Relay 与外部保留证据采用分别返回自己的 schema/status，旧外部Full v1档案继续按原来源合同审计。任意自由 `method` 字符串仍可历史读回，但不因此取得受信方法资格；换方法也不能擦掉前驱尚未完成的责任。选择与后继规则见[外部合同](workflow.md#external-method)。
 
-外部方法首次准备或显式切换时提供 `method_id`；从已存外部研究继续而未指定时保留原合同，分页 payload 同样保留选择。外部无取材计划时 `evidence.status=optional-not-requested`，仍可主动调用原资料池。CLI 的 checkpoint 需通过 `--method-sha256` 携带准备结果，省略只选默认方法；宿主原必填摘要不变。跨外部方法边界的新提交须 `scope_change_reason`，delivery 在保管意图/附件之前检查该理由。旧 Full v1 的重建和默认升级不新增此理由门。
+外部方法首次准备或显式切换时提供 `method_id`；从已存外部研究继续而未指定时采用当前外部Full v2，保留外部来源合同，分页 payload 同样保留选择。外部无取材计划时 `evidence.status=optional-not-requested`，仍可主动调用原资料池。CLI 的 checkpoint 需通过 `--method-sha256` 携带准备结果，省略只选默认方法；宿主原必填摘要不变。涉及外部方法的身份变化，包括版本升级，后继新提交须 `scope_change_reason`，delivery 在保管意图/附件之前检查该理由。历史重建和默认Full升级不新增此理由门。
 
 接入方分别呈现**保存资格、方法合规、经济充分性、行情/概率资格、人工确认**。写入成功只证明该意图已由保管层接受；方法/数字核验、引用可读、研究充分、用户采用仍各需对应证据，不能合并为统一 `READY`。来源查询可以临时使用；实际支持结论的材料再按权利固定必要表示。机械扫描另外保留分母、覆盖时间、缺失和规则版本，不能以一次研究保存替代扫描完整性。
 
@@ -101,7 +101,7 @@ GitHub_MCP_All.actions_run_trigger
 
 从原 run 找回输入，使用对应 `reconcile-*`，保留原 payload、原方法摘要和 submission_id，可保留原 expected_head。只读 job 只能恢复回执，查无结果不能新写；当前分支前进不会把回执替成最新。升级后调用仍使用当前已审 main 的 `code_sha`，而不是运行旧代码。已知旧方法按原字节重建；未知方法或不可读前驱不能证明从未写入，须核原 Git 提交/意图/权限。
 
-新 Full v2 修订必须回应前驱未解决挑战或明确继续保留；旧 v1 的已接受历史只读对账仍按原政策重建，不因新增连续性检查而篡改原意图。已存在同键异内容明确冲突。普通工程权限不允许 force、删除或绕过平台拒绝。
+新 Full v3及外部Full v2修订必须回应前驱未解决挑战或明确继续保留；原Full v2/外部Full v1的挑战规则及更早Full v1的已接受历史按各自原政策重建，不因升级连续性检查而篡改原意图。已存在同键异内容明确冲突。普通工程权限不允许 force、删除或绕过平台拒绝。
 
 ## 6. 有限边界与实际证明
 

@@ -9,7 +9,9 @@ from decision_kernel.application.versioned_store import VersionedStore
 from decision_kernel.domain.records import BlobRef, Conflict, MissingObject, RecordError, RevisionInput, encoded
 from decision_kernel.domain.research_work import WORK_MARKER, ResearchProgress, ResearchRequest
 from decision_kernel.infrastructure.github_store import GitHubStore
-from decision_kernel.methods.research import research_method
+from decision_kernel.methods.research import EXTERNAL_METHOD_ID, is_external_method, research_method
+from decision_kernel.methods.full_v2 import full_method as full_v2
+from decision_kernel.methods.external_full_v1 import external_full_method as external_v1
 from decision_kernel.methods.research_v1 import research_method as legacy_method
 from test_research_runtime import host, invoke, source, work, request
 
@@ -17,7 +19,7 @@ from test_research_runtime import host, invoke, source, work, request
 def legacy_checkpoint(store, payload, submission):
     req = ResearchRequest.from_dict(payload["request"])
     progress = ResearchProgress.from_dict(payload["progress"])
-    method = legacy_method(req.kind)
+    method = research_method(req.kind, sha256=payload["method_sha256"])
     # Freeze the old wire shape rather than asking today's renderer to invent
     # its own historical fixture. Source references still come from real Git.
     old_request = {"case_id": req.case_id, "kind": req.kind, "mandate": req.mandate,
@@ -48,7 +50,7 @@ def test_prepare_integration_returns_real_saved_work_and_continuation_without_wr
     revision = invoke(host, tmp_path / "save", "checkpoint", payload, "first")["result"]["reference"]
     before, count = host.git.head(), host.writes
     prepared = invoke(host, tmp_path / "prepare", "prepare", {"case_id": "example"})["result"]
-    assert prepared["method"]["id"] == "decision-os-research-full-v2"
+    assert prepared["method"]["id"] == "decision-os-research-full-v3"
     assert prepared["request"]["predecessor"] == revision
     assert prepared["continuation"]["actions"][0]["action"] == "analyse-available-evidence"
     assert prepared["continuation"]["source_coverage"]["remaining"] == 0
@@ -57,13 +59,21 @@ def test_prepare_integration_returns_real_saved_work_and_continuation_without_wr
     assert host.git.head() == before and host.writes == count
 
 
-def test_method_upgrade_reconciles_old_intent_after_branch_and_case_advance(host, tmp_path):
+@pytest.mark.parametrize("old_method", [legacy_method("full"), full_v2(), external_v1()],
+                         ids=["full-v1", "full-v2", "external-v1"])
+def test_method_upgrade_reconciles_old_intent_after_branch_and_case_advance(host, tmp_path, old_method):
     ref = setup_source(host, tmp_path)
-    old = work(ref, method_sha256=legacy_method("full")["sha256"])
+    old = work(ref, method_sha256=old_method["sha256"])
     store = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
     original = legacy_checkpoint(store, old, "legacy")
     prepared = invoke(host, tmp_path / "prepare", "prepare", {"case_id": "example"})["result"]
-    newer = work(ref, request=prepared["request"], revision_id="r2")
+    assert prepared["method"]["id"] == (EXTERNAL_METHOD_ID if is_external_method(old_method)
+                                         else "decision-os-research-full-v3")
+    if is_external_method(old_method):
+        assert prepared["full_execution"]["schema"] == "external-full-execution-contract-v1"
+        prepared["request"]["scope_change_reason"] = "升级外部方法纪律，保留原问题、证据及来源合同"
+    newer = work(ref, request=prepared["request"], revision_id="r2",
+                 method_sha256=prepared["method"]["sha256"])
     invoke(host, tmp_path / "newer", "checkpoint", newer, "newer")
     before, count = host.git.head(), host.writes
     restored = invoke(host, tmp_path / "reconcile", "reconcile-checkpoint", old, "legacy")
@@ -75,9 +85,11 @@ def test_method_upgrade_reconciles_old_intent_after_branch_and_case_advance(host
     assert host.writes == count
 
 
-def test_archived_reconciliation_cannot_create_missing_intent_or_accept_changed_bytes(host, tmp_path):
+@pytest.mark.parametrize("old_method", [legacy_method("full"), full_v2(), external_v1()],
+                         ids=["full-v1", "full-v2", "external-v1"])
+def test_archived_reconciliation_cannot_create_missing_intent_or_accept_changed_bytes(host, tmp_path, old_method):
     ref = setup_source(host, tmp_path)
-    old = work(ref, method_sha256=legacy_method("full")["sha256"])
+    old = work(ref, method_sha256=old_method["sha256"])
     before, count = host.git.head(), host.writes
     with pytest.raises(MissingObject, match="SUBMISSION_NOT_FOUND_NO_WRITE"):
         invoke(host, tmp_path / "missing", "reconcile-checkpoint", old, "missing")
@@ -109,6 +121,32 @@ def test_pending_challenge_cannot_disappear_from_full_successor(host, tmp_path):
     restored = invoke(host, tmp_path / "restore", "prepare", {"case_id": "example"})["result"]
     assert restored["continuation"]["unresolved_challenges"] == []
     assert restored["previous_context"]["research"]["record"]["input"]["predecessor"] == original
+
+
+@pytest.mark.parametrize("old_method", [full_v2(), external_v1()], ids=["full-v2", "external-v1"])
+def test_archived_challenge_survives_current_method_upgrade(host, tmp_path, old_method):
+    ref = setup_source(host, tmp_path)
+    old = work(ref, method_sha256=old_method["sha256"])
+    challenge = {"question_id": "economics", "argument": "原核心盈利情景为何被删除？",
+                 "disposition": "unresolved", "response": "仍需有据处置", "evidence": [0]}
+    old["progress"]["challenges"] = [challenge]
+    store = VersionedStore(GitHubStore(replace(host.binding, write_enabled=True), host))
+    original = legacy_checkpoint(store, old, "prior")
+    prepared = invoke(host, tmp_path / "prepare", "prepare", {"case_id": "example"})["result"]
+    new = work(ref, request=prepared["request"], revision_id="r2",
+               method_sha256=prepared["method"]["sha256"])
+    head, count = host.git.head(), host.writes
+    if is_external_method(old_method):
+        with pytest.raises(RecordError, match="EXPLICIT_SCOPE_CHANGE_REQUIRED"):
+            invoke(host, tmp_path / "no-reason", "checkpoint", new, "next")
+        new["request"]["scope_change_reason"] = "更新外部方法版本，原研究责任不变"
+    with pytest.raises(RecordError, match="UNRESOLVED_CHALLENGE_MUST_BE_ADDRESSED"):
+        invoke(host, tmp_path / "drop", "checkpoint", new, "next")
+    assert host.git.head() == head and host.writes == count
+    new["progress"]["challenges"] = [{**challenge, "disposition": "changed", "response": "补回遗漏情景并限定结论"}]
+    saved = invoke(host, tmp_path / "respond", "checkpoint", new, "next")
+    assert saved["result"]["reference"] != asdict(original)
+    assert store.read_revision(original)["record"]["input"]["method"] == old_method["id"] + "@sha256:" + old_method["sha256"]
 
 
 def test_pre_upgrade_accepted_history_is_readable_despite_new_challenge_policy(host, tmp_path):

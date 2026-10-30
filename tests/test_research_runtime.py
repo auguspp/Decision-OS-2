@@ -12,7 +12,7 @@ from decision_kernel.methods.research import research_method
 from test_github_store import GitAPI
 
 CODE = "a" * 40
-EXTERNAL_METHOD = "decision-os-research-external-full-v1"
+EXTERNAL_METHOD = "decision-os-research-external-full-v2"
 
 
 @pytest.fixture

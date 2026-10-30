@@ -45,7 +45,7 @@ def test_historical_method_bytes_are_preserved_and_can_be_selected(kind):
 
 def test_full_upgrade_does_not_change_quick_or_omit_adopted_depth_disciplines():
     full = research_method("full")
-    assert full["id"] == "decision-os-research-full-v2" and full["sha256"] != LEGACY["full"]
+    assert full["id"] == "decision-os-research-full-v3" and full["sha256"] != LEGACY["full"]
     assert research_method("quick")["sha256"] == LEGACY["quick"]
     assert {"execution-loop", "economic-architecture", "financial-diagnostics", "contract-and-project-economics",
             "owner-cash-and-capital", "competition-and-reference-class", "substantive-challenge",
@@ -63,7 +63,7 @@ def test_unknown_or_foreign_method_never_silently_selects_latest(value):
 
 def test_installed_method_reader_needs_no_store_credentials_or_network(capsys):
     assert main(["--kind", "full"]) == 0
-    assert json.loads(capsys.readouterr().out)["id"] == "decision-os-research-full-v2"
+    assert json.loads(capsys.readouterr().out)["id"] == "decision-os-research-full-v3"
     assert main(["--kind", "full", "--sha256", LEGACY["full"]]) == 0
     assert json.loads(capsys.readouterr().out)["sha256"] == LEGACY["full"]
     assert main(["--kind", "full", "--sha256", "0" * 64]) == 2

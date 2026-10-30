@@ -15,14 +15,14 @@ from decision_kernel.application.research_external_use import (
 )
 from decision_kernel.domain.records import BlobRef, RecordError, SourceRef, checked_text, digest, encoded, require
 from decision_kernel.domain.research_work import ResearchProgress, ResearchRequest, read_workpaper
-from decision_kernel.methods.research import EXTERNAL_METHOD_ID, stored_research_method
+from decision_kernel.methods.research import is_external_method, stored_research_method
 
 
 def _external_method(kind: str, method: dict | None) -> dict | None:
     if not isinstance(method, dict) or not all(isinstance(method.get(key), str) for key in ("id", "sha256")):
         return None
     known = stored_research_method(kind, method["id"] + "@sha256:" + method["sha256"])
-    return known if known is not None and known["id"] == EXTERNAL_METHOD_ID else None
+    return known if is_external_method(known) else None
 
 
 def execution_contract(request: ResearchRequest, evidence: dict | None = None, *, method: dict | None = None) -> dict:
@@ -97,7 +97,7 @@ class SourceUseAudit:
             request, progress = work
             reference = asdict(ref)
             known = stored_research_method(request.kind, research["record"]["input"]["method"])
-            if known is not None and known["id"] == EXTERNAL_METHOD_ID:
+            if is_external_method(known):
                 require(set(payload) == {"reference"}, "EXTERNAL_SOURCE_USE_REFERENCE_ONLY")
                 return audit_external_source_use(self.store, reference=reference, request=request,
                                                  progress=progress, method=known)

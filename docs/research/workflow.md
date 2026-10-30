@@ -22,11 +22,11 @@
 
 ## 受信外部 Full 合同
 
-默认 Quick v1 / Full v2 保持原内容。获准外部研究宿主可显式选择 `decision-os-research-external-full-v1`：CLI 的 `prepare-research --method-id` 或宿主 `prepare` 顶层 `method_id`，也可离线读取 `python -m decision_kernel.methods.research --kind full --method-id decision-os-research-external-full-v1`。这是代码内有限的版本化合同，复用原 Full 研究纪律，允许合法外部来源及实际保留表示；不接受上传方法正文、任意执行模块、自报 approved 或动态插件。
+当前默认 Quick v1 / Full v3。获准外部研究宿主可显式选择 `decision-os-research-external-full-v2`：CLI 的 `prepare-research --method-id` 或宿主 `prepare` 顶层 `method_id`，也可离线读取 `python -m decision_kernel.methods.research --kind full --method-id decision-os-research-external-full-v2`。Full v3与外部Full v2同时加入[前稿恢复及判断修订纪律](entry.md#research-revision)，旧 Quick v1、Full v1/v2、外部Full v1的字节及摘要不改。这是代码内有限的版本化合同，允许合法外部来源及实际保留表示；不接受上传方法正文、任意执行模块、自报 approved 或动态插件。
 
-方法选择不进入 `ResearchRequest` / `ResearchProgress`，不改变工作底稿 schema。保存继续携带本次准备结果的 `method.sha256`：宿主 `checkpoint` / `deliver` 使用原 `method_sha256`，CLI `checkpoint-research` 用 `--method-sha256`（省略仍选择默认方法）。记录中的 `id@sha256:摘要` 与附录内 `id/sha256` 必须一致。新宿主写只接受当前 Quick v1、Full v2 或此外部合同；旧 Full v1 摘要继续可读及只读对账，不能因此新增宿主写入。
+方法选择不进入 `ResearchRequest` / `ResearchProgress`，不改变工作底稿 schema。保存继续携带本次准备结果的 `method.sha256`：宿主 `checkpoint` / `deliver` 使用原 `method_sha256`，CLI `checkpoint-research` 用 `--method-sha256`（省略仍选择默认方法）。记录中的 `id@sha256:摘要` 与附录内 `id/sha256` 必须一致。新宿主写只接受当前 Quick v1、Full v3 或外部Full v2；旧 Full v1/v2、外部Full v1摘要继续可读及只读对账，不能因此新增宿主写入。已归档方法不能通过 `method_id` 重新取得当前写资格，历史读取按确切摘要。
 
-从确切外部版本 `prepare(case_id/reference)` 或 `open-delivery` 接续，未显式换方法时沿用该外部合同；证据分页的 `next_prepare_payload` 保留选定方法。跨入或跨出外部合同须在后继提交的 `scope_change_reason` 说明变化；只读准备同 kind 的另一方法可先查看。原问题、来源移除说明及未解挑战继续保留，外部转 Quick 也不能删除旧未解挑战。默认 Full v1 到 v2 的既有升级及历史重放政策不变。
+从确切外部版本 `prepare(case_id/reference)` 或 `open-delivery` 接续，未显式换方法时升级到当前外部Full v2，不误换默认Pool/Relay合同；证据分页的 `next_prepare_payload` 保留选定方法。外部方法身份变化，包括v1到v2、跨入或跨出外部合同，须在后继提交的 `scope_change_reason` 说明；只读准备可先查看。原问题、来源移除说明及未解挑战继续保留，外部转 Quick 也不能删除旧未解挑战。默认Full的隐式准备升级到v3，原历史重放政策不变。新旧外部档案按有限受信ID与摘要识别，不按名称前缀授予资格。
 
 外部准备返回 `external-full-execution-contract-v1`，沿已有授权取材、保留真实表示、将 findings/challenges 的 evidence 下标绑定来源，保存后用精确引用核验。它不把 Pool/Relay 设为此外部合同的必需来源，也不把旧默认方法的未完成项改记成功。`audit-source-use` 从**实际存储的确切方法身份**分派：外部输入仅为 `{"reference": <已保存的完整 BlobRef>}`；核验范围和状态见[来源使用核查](source-use-audit.md#external-evidence-use)。
 

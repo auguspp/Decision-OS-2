@@ -101,7 +101,7 @@
       "name": "decision-os-announcement-discovery",
       "triggers": {
         "dispatch": true,
-        "schedule": "20 10 * * *",
+        "schedule": null,
         "pull_request": false,
         "push": false
       },
@@ -111,7 +111,7 @@
       "disposition": "keep-ops",
       "responsibility": "Bounded public announcement-directory metadata capture into authorized records",
       "consumers": "tests/test_announcement_discovery.py; hosted handoff announcements",
-      "exit": "retained for the current daily capture mandate; it is the only present file with a native schedule. The separate daily-market deployment is suspended; replacement of announcements still needs equivalent scope, timing, rights and consumer adoption"
+      "exit": "native schedule paused at Human request on 2026-10-28; retain the explicit dispatch entry and historical source receipts. Resuming scheduled capture requires explicit authorization; retaining the file is not authorization to resume. Replacement still needs equivalent scope, timing, rights and consumer adoption"
     },
     {
       "file": "market-custody.yml",

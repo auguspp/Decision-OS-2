@@ -11,6 +11,8 @@
 
 同一概率评估可用新的合格价格输入重算，目标日、股本、情景、概率与政策不变。若这些输入需要变更，先保留原评估并提交新的明确评估或研究/估值规格；不把改变假设叫做只换价格。新资料事实、机械核对、经济充分性和人工Decision分别验证。
 
+已有研究先按[基线与修订要求](entry.md#research-revision)恢复适用前稿，解释每个重要旧情景的保留、降权或排除；旧概率可以纠错，不能因历史接受自动恢复，也不能因换一套保守数字静默删除上行。历史分布回放只诊断变化，不冒充当前胜率。归一同口径后分别展示资本/期限、经营/估值/概率和政策对结果的影响，不把单情景与加权分布直接相比。
+
 ## 2. 概率评估 `odds-assessment-v1`
 
 必须包含`assessment_id/spec_ref/as_of/author_note`以及下列对象；as_of带时区，政策不得晚于评估，评估不得早于原研究/所用来源的实际保存时间。调用时也不得写未来评估。
@@ -29,6 +31,8 @@
 ## 3. 风险政策不是系统默认投资偏好
 
 `policy_id/as_of/rationale`标明本次研究使用的政策依据。`minimum_holding_period_days/maximum_holding_period_days`覆盖价格日至固定退出日；`max_quote_age_days/max_master_age_days/max_capital_age_days`是显式的可接受资料年龄，均为正整数、最大36525日。上限仅为有界输入，不是推荐以陈旧资料分析；真实用途须论证相称时效。
+
+作者新选的年化回报门槛、仓位或退出条件须标为本次建议并说明理由，不能冒称用户旧偏好。条件利润/倍数演示不能直接晋升主买卖线；主建议须说明所依据的当前经营判断、其他重要结果和改变决定的证据。概率若为主观估计，解释依据并检验关键权重变化；回报门槛折价不等于已经证明永久损失的安全边际。这些要求约束报告的实际判断，不新增本计算接口的年化、仓位或交易能力。
 
 `thresholds`按ACCEPTABLE_ODDS、ATTRACTIVE_ODDS、EXCEPTIONAL_ODDS顺序提供三组`minimum_return/minimum_positive_probability`，回报门槛严格递增、正收益概率门槛不递减。`model_risk_addons`四档及`uncertainty_addons`三档非负且单调，baseline环境加成必须为0。没有复制旧仓任何数值阈值作为当前默认。
 

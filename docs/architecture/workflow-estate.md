@@ -28,7 +28,7 @@
 |---|---|---|---|---|---|
 | 研究接收与版本连续性 | 获准委托、来源、部分进展/普通修订、确切前驱 | 获准研究宿主经 `research-runtime`；受信 store CLI；Catalogue / Room 后继读取 | #7 研究用例、#6 保管；WorkBuddy 优先且可替换，外部模型承担研究 | **保留 Kernel、收窄宿主适配**；当前内置方法仍由自己的版本合同维护 | 新宿主须实际读、写、独立读回及未知写对账；同一 case / 前驱 / 未决项不得丢失；历史方法字节和旧意图继续可恢复 |
 | #10 市场日周期与机械发现 | 当前 FTShare A 股日线及用途合格的其他市场来源；规则、日期与覆盖范围 | 原 `daily-market` 部署暂停；MarketDiscovery、Odds、日常阅读保留历史消费 | #10；#12 来源适配；合格行情服务可按用途替换供应方 | **暂停旧组合生产，按实际消费者收窄**；保留历史及独立读数 | 暂停不签新覆盖或外部替代；恢复/替代须明确真实范围、时钟、分母、缺失和资格，未知效果先对账；原市场 SourceRef / 发现事件仍可读 |
-| 公告目录与发现 | 有界公告目录元数据、取得时间与原定位 | `announcement-discovery` 定时/显式运行；发现与 hosted handoff 采用 | #12；可复用获准公告检索/连接器 | **保留现役采集、候选窄适配** | 替代须证明同一范围、时间、分页完整性及正文权利边界；目录元数据不冒充公告全文，原目录/来源回执保留 |
+| 公告目录与发现 | 有界公告目录元数据、取得时间与原定位 | `announcement-discovery` 显式入口保留；原定时于2026-10-28按用户要求暂停，历史发现与 hosted handoff 仍可读取 | #12；可复用获准公告检索/连接器 | **定时暂停，代码和历史保留** | 恢复定时须明确授权；替代须证明同一范围、时间、分页完整性及正文权利边界；目录元数据不冒充公告全文，原目录/来源回执保留 |
 | 新闻 intake、滚动与交接 | 已获准 NewsNow/Relay 切片、原引用、失败/恢复回执 | `news-intake` / `news-rolling` / `news-custody` / `news-handoff`；Brief、Quick 与 Room | #12 新闻来源、#13 交付；成熟新闻服务与工作台读取可复用 | **保留当前消费者，优先复用，必要时窄适配** | 真正替换需保留 24h 窗口、可用时间、缺项、去重和实际采用关系；新生产依赖切断后专属退出，旧切片/Brief 精确重开 |
 | RSS 固定源接入 | 固定 feed 范围、获准元数据与失败表示；原件另核权利 | `rss-intake`；联合新闻视图、恢复与阅读消费者 | #48 / #12；成熟 feed 服务或工作台连接器可替代 | **候选退役，当前保留** | 先证明替代覆盖同一源范围、时效、权利和失败语义并被消费者采用；零近期运行/零直接引用不足以停采；旧 SourceRef 与失败回执保留 |
 | 产业阅读与商品覆盖资格 | 确切产业阅读包、商品身份、时间/单位/地区、覆盖缺口 | `industry-read`、Reading Room、产业 Brief | #127；外部产业数据库/检索提供材料，现有 reader 维护资格 | **保留判断合同，外围按用途适配** | 外部材料接入须保留用途、权利、实际取得表示和覆盖限制；替换专属生产/投影前验证实际采用，历史阅读包与身份/资格版本继续可恢复 |
@@ -59,7 +59,7 @@
 | `research-runtime.yml` | 仅 dispatch | `research_runtime` | **保留（当前研究接收）**：经原保管层与单主写入/CAS；获准只读操作另属本地优先 |
 | `store-runtime.yml` | 仅 dispatch | `store_runtime` | **保留（当前保管部署）**：备份/健康与独立恢复责任保留，执行位置不是永久核心约束 |
 | `daily-market.yml` | 仅 dispatch；外部旧任务另行停用 | `daily_market_cli` 等 4 个 | **部署暂停，代码保留**：由 daily-runtime-version 的 enabled=false 阻断业务；保留零业务 clock-probe，不代签服务商已停钟 |
-| `announcement-discovery.yml` | `schedule 20 10 * * *` + dispatch | `announcement_discovery_cli` | **保留（生产）**：当前唯一带原生 `schedule` 的文件；不因 daily 部署暂停而停用 |
+| `announcement-discovery.yml` | 仅 dispatch；原生 schedule 已暂停 | `announcement_discovery_cli` | **定时暂停，入口保留**：2026-10-28按用户要求移除cron；登记的schedule为null，不因保留文件或修复登记恢复定时 |
 | `market-custody.yml` | 仅 dispatch | `market_custody_cli` | **保留（生产）**：与 store 同权限边界 |
 | `relay-source-runtime.yml` | 仅 dispatch | `relay_source_runtime`、`relay_bulk_check_cli` | **保留（生产）**：采集写 records 并持供应商密钥 |
 | `news-intake.yml` | 仅 dispatch | `news_cli` | **保留（生产）**：新闻台唯一可执行入口 |
@@ -96,17 +96,17 @@
 
 上述一次性菜单退出是既有工程清理，不证明任何现役业务已由外部能力替代，也不抵扣 #221 后续“真实消费者迁移后退役”的验收。Actions artifact 仍受保留期约束，历史可恢复责任不能仅凭运行列表长期存在来证明。
 
-`rss-intake` 仍停在裁定阶段（需先证明替代 intake 的范围、时效、权利、失败语义与真实采用）。除本页明确暂停的 daily 部署外，其余现役条目保留，不由这项暂停扩大停采或退役范围。
+`rss-intake` 仍停在裁定阶段（需先证明替代 intake 的范围、时效、权利、失败语义与真实采用）。本页分别记录 daily 部署与公告定时的暂停；其他条目按各自当前授权和暂停状态保留，不据此扩大退役或恢复执行范围。
 
 ## 与只读工作台的分界
 
-本地只读已经有现役入口；除暂停的 daily 宿主外，其他生产写入与时钟继续沿当前部署。永久约束是授权、同一真源、单主 writer/CAS、唯一调度责任和可恢复证据；“所有写入/备份必须永远由 GitHub 执行”不属于该约束。等价替换未验收前，以下边界继续有效：
+本地只读已经有现役入口；生产写入沿各自部署、授权和暂停状态，本表不恢复已停定时。永久约束是授权、同一真源、单主 writer/CAS、唯一调度责任和可恢复证据；“所有写入/备份必须永远由 GitHub 执行”不属于该约束。等价替换未验收前，以下边界继续有效：
 
 | 已可按现役权限本地执行 | 当前仍留在原部署，不能从本表推定迁移 |
 |---|---|
 | `local_read.READ_ONLY` 中的既有 CLI（目录、阅读室、议程、odds/valuation 读数、交付校验/打开等） | `research-runtime` 全部写 operation 和原只读未知写对账；原单主 writer/CAS |
 | `market-source-check` 全部分支 | `daily-market` 周期写入目前暂停，不因此授权本地接管；外部原任务独立停用 |
-| `relay-capabilities`（密钥可得时） | `announcement-discovery` 的 `schedule` |
+| `relay-capabilities`（密钥可得时） | `announcement-discovery` 的显式派发入口；原定时暂停，不授权本地接管或恢复 |
 | `ashare-data` 的 `status` | `sync`/`repair`、`relay-source-runtime` 采集、news 链写入 |
 
 只读本地化的实现见[本地工作台](../delivery/local-console.md)，实际业务命令对应见[操作映射](../research/runtime.md#kernel-operations)。本地入口拒绝写、对账及其明确排除的决策准备读取；实际调用身份也须为只读，不持有 records 通用写权限。环境变量名、只读 binding 或客户端白名单不能证明令牌原生无写权限，不能称为服务端隔离。镜像、索引和页面均为派生物。

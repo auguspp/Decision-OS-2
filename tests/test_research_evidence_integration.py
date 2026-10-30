@@ -104,7 +104,7 @@ def test_pool_failure_does_not_discard_previous_context_or_checked_interface_pla
 def test_old_prepare_still_returns_method_without_running_unscoped_pool_search(host, tmp_path, monkeypatch):
     monkeypatch.setattr(VersionedStore, 'search', lambda *a, **k: pytest.fail('no inferred unscoped scan'))
     result = invoke(host, tmp_path/'prepare', 'prepare', {'request':request()})['result']
-    assert result['evidence']['status'] == 'plan-required' and result['method']['id'] == 'decision-os-research-full-v2'
+    assert result['evidence']['status'] == 'plan-required' and result['method']['id'] == 'decision-os-research-full-v3'
     assert result['source_use']['available_from_start']
 
 
